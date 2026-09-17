@@ -5,6 +5,7 @@ docs/
 .playwright-mcp/
 contracts/go/
 contracts/ts/
+overlay/packages.lock.json
 pnpm-lock.yaml
 AGENTS.md
 CLAUDE.md
