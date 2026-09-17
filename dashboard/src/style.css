@@ -1,0 +1,155 @@
+:root {
+  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  color: #e8e9e6;
+  background: #171a19;
+  font-synthesis: none;
+  line-height: 1.5;
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 0 32px;
+}
+header,
+.brand,
+.section-heading,
+h2,
+button,
+dt,
+footer {
+  display: flex;
+  align-items: center;
+}
+header {
+  min-height: 100px;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid #414742;
+}
+.brand {
+  gap: 12px;
+  color: #d7ddb7;
+}
+h1 {
+  font-size: 22px;
+  font-weight: 600;
+  color: #f1f2ed;
+  margin: 0;
+}
+.milestone,
+dt,
+footer {
+  color: #afb8b2;
+}
+.milestone {
+  font-size: 14px;
+}
+section {
+  padding: 32px 0 48px;
+}
+.section-heading {
+  justify-content: space-between;
+  gap: 16px;
+}
+h2 {
+  font-size: 18px;
+  gap: 10px;
+  margin: 0;
+}
+button {
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid #687267;
+  border-radius: 4px;
+  background: #282e29;
+  color: #f1f2ed;
+  font: inherit;
+  cursor: pointer;
+}
+button:hover {
+  background: #394237;
+}
+button:focus-visible {
+  outline: 2px solid #d7ddb7;
+  outline-offset: 4px;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.connections {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 28px 0 0;
+  border-top: 1px solid #414742;
+  border-bottom: 1px solid #414742;
+}
+.connections > div {
+  padding: 24px 0;
+}
+dt {
+  gap: 8px;
+  font-size: 14px;
+}
+dd {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+}
+.connections dd {
+  font-size: 20px;
+}
+.online {
+  color: #90d5a7;
+}
+.details {
+  margin: 0;
+}
+.details > div {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  padding: 18px 0;
+  border-bottom: 1px solid #303632;
+}
+.details dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+footer {
+  border-top: 1px solid #414742;
+  padding: 20px 0;
+  justify-content: space-between;
+  font-size: 13px;
+  gap: 16px;
+}
+@media (max-width: 540px) {
+  main {
+    padding: 0 20px;
+  }
+  header {
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
+    padding: 20px 0;
+  }
+  .connections {
+    grid-template-columns: 1fr;
+  }
+  .connections > div {
+    padding: 18px 0;
+  }
+  .details > div {
+    grid-template-columns: 110px 1fr;
+  }
+  .connections dd {
+    font-size: 18px;
+  }
+}

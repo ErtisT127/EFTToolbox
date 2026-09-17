@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://efttoolbox.local/ipc.schema.json",
+  "$defs": {
+    "Status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocolVersion", "appVersion", "startedAt"],
+      "properties": {
+        "protocolVersion": { "type": "string", "const": "1" },
+        "appVersion": { "type": "string" },
+        "startedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ServerEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "sentAt", "status"],
+      "properties": {
+        "type": { "type": "string", "enum": ["snapshot", "heartbeat"] },
+        "sentAt": { "type": "string", "format": "date-time" },
+        "status": { "$ref": "#/$defs/Status" }
+      }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+build/
+_reference/
+docs/
+.playwright-mcp/
+contracts/go/
+contracts/ts/
+pnpm-lock.yaml
+AGENTS.md
+CLAUDE.md

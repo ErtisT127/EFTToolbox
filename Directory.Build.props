@@ -1,0 +1,11 @@
+<Project>
+    <PropertyGroup>
+        <Nullable>enable</Nullable>
+        <EnableNETAnalyzers>true</EnableNETAnalyzers>
+        <AnalysisLevel>10.0</AnalysisLevel>
+        <AnalysisMode>None</AnalysisMode>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <BaseOutputPath>$(MSBuildThisFileDirectory)build/dotnet/$(MSBuildProjectName)/bin/</BaseOutputPath>
+        <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)build/dotnet/$(MSBuildProjectName)/obj/</BaseIntermediateOutputPath>
+    </PropertyGroup>
+</Project>
