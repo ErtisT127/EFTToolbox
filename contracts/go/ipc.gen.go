@@ -7,8 +7,162 @@ type Status struct {
 	StartedAt       string `json:"startedAt"`
 }
 
+type ErrorBody struct {
+	Code string `json:"code"`
+}
+
 type ServerEvent struct {
 	Type   string `json:"type"`
 	SentAt string `json:"sentAt"`
 	Status Status `json:"status"`
+}
+
+type Point struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+type Projection struct {
+	Rotation float64   `json:"rotation"`
+	Bounds   []Point   `json:"bounds"`
+	ViewBox  []float64 `json:"viewBox"`
+}
+
+type Floor struct {
+	Id        string   `json:"id"`
+	Name      string   `json:"name"`
+	SvgGroups []string `json:"svgGroups"`
+}
+
+type Category struct {
+	Id      string `json:"id"`
+	Name    string `json:"name"`
+	GroupId string `json:"groupId"`
+	Color   string `json:"color"`
+	Symbol  string `json:"symbol"`
+	IconUrl string `json:"iconUrl"`
+}
+
+type BuiltinMarker struct {
+	Id            string   `json:"id"`
+	Name          string   `json:"name"`
+	CategoryId    string   `json:"categoryId"`
+	CategoryIds   []string `json:"categoryIds"`
+	FloorIds      []string `json:"floorIds"`
+	Position      Point    `json:"position"`
+	Outline       []Point  `json:"outline"`
+	TaskId        string   `json:"taskId"`
+	IconUrl       string   `json:"iconUrl"`
+	LabelSize     float64  `json:"labelSize"`
+	LabelRotation float64  `json:"labelRotation"`
+}
+
+type MapTask struct {
+	Id   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type MapSummary struct {
+	IconUrl      string `json:"iconUrl"`
+	Id           string `json:"id"`
+	Name         string `json:"name"`
+	Subtitle     string `json:"subtitle"`
+	DefaultFloor string `json:"defaultFloor"`
+}
+
+type MapData struct {
+	IconUrl       string          `json:"iconUrl"`
+	SchemaVersion int             `json:"schemaVersion"`
+	Id            string          `json:"id"`
+	Name          string          `json:"name"`
+	Subtitle      string          `json:"subtitle"`
+	DefaultFloor  string          `json:"defaultFloor"`
+	SvgUrl        string          `json:"svgUrl"`
+	Projection    Projection      `json:"projection"`
+	Floors        []Floor         `json:"floors"`
+	Categories    []Category      `json:"categories"`
+	Markers       []BuiltinMarker `json:"markers"`
+	Tasks         []MapTask       `json:"tasks"`
+	RaidDuration  float64         `json:"raidDuration"`
+	Players       string          `json:"players"`
+	Warnings      []string        `json:"warnings"`
+	Clock         MapClock        `json:"clock"`
+	BaseFloor     string          `json:"baseFloor"`
+	Tiles         []TileLayer     `json:"tiles"`
+}
+
+type Annotation struct {
+	Id       string  `json:"id"`
+	FloorId  string  `json:"floorId"`
+	Kind     string  `json:"kind"`
+	Points   []Point `json:"points"`
+	Color    string  `json:"color"`
+	Width    float64 `json:"width"`
+	Emoji    string  `json:"emoji"`
+	ImageId  string  `json:"imageId"`
+	Text     string  `json:"text"`
+	TextSize float64 `json:"textSize"`
+}
+
+type Annotations struct {
+	SchemaVersion int          `json:"schemaVersion"`
+	Items         []Annotation `json:"items"`
+}
+
+type MapPreference struct {
+	MapId            string    `json:"mapId"`
+	FloorId          string    `json:"floorId"`
+	HiddenCategories []string  `json:"hiddenCategories"`
+	CollapsedGroups  []string  `json:"collapsedGroups"`
+	ShowAnnotations  bool      `json:"showAnnotations"`
+	SelectedTasks    []string  `json:"selectedTasks"`
+	Center           []float64 `json:"center"`
+	Zoom             float64   `json:"zoom"`
+	TaskFilterActive bool      `json:"taskFilterActive"`
+	Basemap          string    `json:"basemap"`
+}
+
+type Preferences struct {
+	SchemaVersion int             `json:"schemaVersion"`
+	SelectedMap   string          `json:"selectedMap"`
+	Maps          []MapPreference `json:"maps"`
+	StickerUsage  []StickerUsage  `json:"stickerUsage"`
+}
+
+type StickerUsage struct {
+	Id    string `json:"id"`
+	Count int    `json:"count"`
+}
+
+type Sticker struct {
+	Id      string `json:"id"`
+	Name    string `json:"name"`
+	Group   string `json:"group"`
+	IconUrl string `json:"iconUrl"`
+}
+
+type DaylightPhase struct {
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+	Icon  string  `json:"icon"`
+	Label string  `json:"label"`
+}
+
+type MapClock struct {
+	Phases  []DaylightPhase `json:"phases"`
+	Rate    float64         `json:"rate"`
+	Offsets []float64       `json:"offsets"`
+	Fixed   []string        `json:"fixed"`
+}
+
+type TileLayer struct {
+	Id        string    `json:"id"`
+	FloorId   string    `json:"floorId"`
+	SourceUrl string    `json:"sourceUrl"`
+	Url       string    `json:"url"`
+	TileSize  int       `json:"tileSize"`
+	MinZoom   int       `json:"minZoom"`
+	MaxZoom   int       `json:"maxZoom"`
+	Transform []float64 `json:"transform"`
+	Bounds    []Point   `json:"bounds"`
 }

@@ -1,0 +1,33 @@
+{
+  "source": "Clock exceptions and sourced daylight phases; SVG groups, extents and projection come directly from the current reference map rules.",
+  "maps": {
+    "factory": {
+      "clock": {
+        "rate": 0,
+        "offsets": [],
+        "fixed": ["15:28:00", "03:28:00"]
+      }
+    },
+    "lab": {
+      "clock": {
+        "rate": 0,
+        "offsets": [],
+        "fixed": []
+      }
+    }
+  },
+  "clockSource": "the-hideout/tarkov-dev src/components/Time.jsx and src/modules/leaflet-control-raid-info.js @ 7ecdddf3a29d753fad14a461ca4c00921b620887",
+  "daylightSource": "https://www.eftarkov.com/news/web_63.html — community wiki day/night cycle; approximate light phases, affected by weather and location. Minutes after midnight.",
+  "daylightPhases": [
+    { "start": 0, "end": 300, "icon": "night", "label": "夜晚" },
+    { "start": 300, "end": 345, "icon": "dawn", "label": "黎明" },
+    { "start": 345, "end": 1290, "icon": "day", "label": "白天" },
+    { "start": 1290, "end": 1310, "icon": "dusk", "label": "日落" },
+    { "start": 1310, "end": 1440, "icon": "night", "label": "夜晚" }
+  ],
+  "defaultClock": {
+    "rate": 7,
+    "offsets": [3, 15],
+    "fixed": []
+  }
+}

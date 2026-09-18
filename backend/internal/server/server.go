@@ -13,9 +13,10 @@ import (
 
 const ProtocolVersion = "1"
 
-func New(ctx context.Context, version string, assets http.FileSystem) http.Handler {
+func New(ctx context.Context, version string, assets http.FileSystem, dataRoot string) http.Handler {
 	status := contracts.Status{ProtocolVersion: ProtocolVersion, AppVersion: version, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	mux := http.NewServeMux()
+	(&mapStore{root: dataRoot}).register(mux)
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")

@@ -6,8 +6,162 @@ export interface Status {
   startedAt: string;
 }
 
+export interface ErrorBody {
+  code: string;
+}
+
 export interface ServerEvent {
   type: "snapshot" | "heartbeat";
   sentAt: string;
   status: Status;
+}
+
+export interface Point {
+  x: number;
+  y: number;
+}
+
+export interface Projection {
+  rotation: number;
+  bounds: Array<Point>;
+  viewBox: Array<number>;
+}
+
+export interface Floor {
+  id: string;
+  name: string;
+  svgGroups: Array<string>;
+}
+
+export interface Category {
+  id: string;
+  name: string;
+  groupId: string;
+  color: string;
+  symbol: string;
+  iconUrl: string;
+}
+
+export interface BuiltinMarker {
+  id: string;
+  name: string;
+  categoryId: string;
+  categoryIds: Array<string>;
+  floorIds: Array<string>;
+  position: Point;
+  outline: Array<Point>;
+  taskId: string;
+  iconUrl: string;
+  labelSize: number;
+  labelRotation: number;
+}
+
+export interface MapTask {
+  id: string;
+  name: string;
+}
+
+export interface MapSummary {
+  iconUrl: string;
+  id: string;
+  name: string;
+  subtitle: string;
+  defaultFloor: string;
+}
+
+export interface MapData {
+  iconUrl: string;
+  schemaVersion: number;
+  id: string;
+  name: string;
+  subtitle: string;
+  defaultFloor: string;
+  svgUrl: string;
+  projection: Projection;
+  floors: Array<Floor>;
+  categories: Array<Category>;
+  markers: Array<BuiltinMarker>;
+  tasks: Array<MapTask>;
+  raidDuration: number;
+  players: string;
+  warnings: Array<string>;
+  clock: MapClock;
+  baseFloor: string;
+  tiles: Array<TileLayer>;
+}
+
+export interface Annotation {
+  id: string;
+  floorId: string;
+  kind: "marker" | "stroke";
+  points: Array<Point>;
+  color: string;
+  width: number;
+  emoji: string;
+  imageId: string;
+  text: string;
+  textSize: number;
+}
+
+export interface Annotations {
+  schemaVersion: number;
+  items: Array<Annotation>;
+}
+
+export interface MapPreference {
+  mapId: string;
+  floorId: string;
+  hiddenCategories: Array<string>;
+  collapsedGroups: Array<string>;
+  showAnnotations: boolean;
+  selectedTasks: Array<string>;
+  center: Array<number>;
+  zoom: number;
+  taskFilterActive: boolean;
+  basemap: string;
+}
+
+export interface Preferences {
+  schemaVersion: number;
+  selectedMap: string;
+  maps: Array<MapPreference>;
+  stickerUsage: Array<StickerUsage>;
+}
+
+export interface StickerUsage {
+  id: string;
+  count: number;
+}
+
+export interface Sticker {
+  id: string;
+  name: string;
+  group: string;
+  iconUrl: string;
+}
+
+export interface DaylightPhase {
+  start: number;
+  end: number;
+  icon: string;
+  label: string;
+}
+
+export interface MapClock {
+  phases: Array<DaylightPhase>;
+  rate: number;
+  offsets: Array<number>;
+  fixed: Array<string>;
+}
+
+export interface TileLayer {
+  id: string;
+  floorId: string;
+  sourceUrl: string;
+  url: string;
+  tileSize: number;
+  minZoom: number;
+  maxZoom: number;
+  transform: Array<number>;
+  bounds: Array<Point>;
 }

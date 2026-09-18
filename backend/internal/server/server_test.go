@@ -18,7 +18,7 @@ import (
 func TestHTTPAndWebSocket(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	srv := httptest.NewServer(New(ctx, "test-version", http.FS(fstest.MapFS{"index.html": {Data: []byte("dashboard")}})))
+	srv := httptest.NewServer(New(ctx, "test-version", http.FS(fstest.MapFS{"index.html": {Data: []byte("dashboard")}}), t.TempDir()))
 	defer srv.Close()
 	response, err := http.Get(srv.URL + "/api/status")
 	if err != nil {
@@ -61,7 +61,7 @@ func TestHTTPAndWebSocket(t *testing.T) {
 }
 
 func TestRejectForeignWebSocketOrigin(t *testing.T) {
-	srv := httptest.NewServer(New(context.Background(), "test", http.FS(fstest.MapFS{})))
+	srv := httptest.NewServer(New(context.Background(), "test", http.FS(fstest.MapFS{}), t.TempDir()))
 	defer srv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

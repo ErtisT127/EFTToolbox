@@ -7,9 +7,27 @@
       "additionalProperties": false,
       "required": ["protocolVersion", "appVersion", "startedAt"],
       "properties": {
-        "protocolVersion": { "type": "string", "const": "1" },
-        "appVersion": { "type": "string" },
-        "startedAt": { "type": "string", "format": "date-time" }
+        "protocolVersion": {
+          "type": "string",
+          "const": "1"
+        },
+        "appVersion": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "ErrorBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code"],
+      "properties": {
+        "code": {
+          "type": "string"
+        }
       }
     },
     "ServerEvent": {
@@ -17,9 +35,551 @@
       "additionalProperties": false,
       "required": ["type", "sentAt", "status"],
       "properties": {
-        "type": { "type": "string", "enum": ["snapshot", "heartbeat"] },
-        "sentAt": { "type": "string", "format": "date-time" },
-        "status": { "$ref": "#/$defs/Status" }
+        "type": {
+          "type": "string",
+          "enum": ["snapshot", "heartbeat"]
+        },
+        "sentAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "$ref": "#/$defs/Status"
+        }
+      }
+    },
+    "Point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
+      }
+    },
+    "Projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rotation", "bounds", "viewBox"],
+      "properties": {
+        "rotation": {
+          "type": "number"
+        },
+        "bounds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Point"
+          }
+        },
+        "viewBox": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "Floor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "svgGroups"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "svgGroups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "Category": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "groupId", "color", "symbol", "iconUrl"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "groupId": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string"
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "iconUrl": {
+          "type": "string"
+        }
+      }
+    },
+    "BuiltinMarker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "categoryId",
+        "categoryIds",
+        "floorIds",
+        "position",
+        "outline",
+        "taskId",
+        "iconUrl",
+        "labelSize",
+        "labelRotation"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "categoryId": {
+          "type": "string"
+        },
+        "categoryIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "floorIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "position": {
+          "$ref": "#/$defs/Point"
+        },
+        "outline": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Point"
+          }
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "iconUrl": {
+          "type": "string"
+        },
+        "labelSize": { "type": "number" },
+        "labelRotation": { "type": "number" }
+      }
+    },
+    "MapTask": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "MapSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "subtitle", "defaultFloor", "iconUrl"],
+      "properties": {
+        "iconUrl": { "type": "string" },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "subtitle": {
+          "type": "string"
+        },
+        "defaultFloor": {
+          "type": "string"
+        }
+      }
+    },
+    "MapData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "iconUrl",
+        "schemaVersion",
+        "id",
+        "name",
+        "subtitle",
+        "defaultFloor",
+        "svgUrl",
+        "projection",
+        "floors",
+        "categories",
+        "markers",
+        "tasks",
+        "raidDuration",
+        "players",
+        "warnings",
+        "clock",
+        "baseFloor",
+        "tiles"
+      ],
+      "properties": {
+        "iconUrl": { "type": "string" },
+        "schemaVersion": {
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "subtitle": {
+          "type": "string"
+        },
+        "defaultFloor": {
+          "type": "string"
+        },
+        "svgUrl": {
+          "type": "string"
+        },
+        "projection": {
+          "$ref": "#/$defs/Projection"
+        },
+        "floors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Floor"
+          }
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Category"
+          }
+        },
+        "markers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BuiltinMarker"
+          }
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MapTask"
+          }
+        },
+        "raidDuration": {
+          "type": "number"
+        },
+        "players": {
+          "type": "string"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "clock": {
+          "$ref": "#/$defs/MapClock"
+        },
+        "baseFloor": {
+          "type": "string"
+        },
+        "tiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TileLayer"
+          }
+        }
+      }
+    },
+    "Annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "floorId",
+        "kind",
+        "points",
+        "color",
+        "width",
+        "emoji",
+        "imageId",
+        "text",
+        "textSize"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "floorId": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["marker", "stroke"]
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Point"
+          }
+        },
+        "color": {
+          "type": "string"
+        },
+        "width": {
+          "type": "number"
+        },
+        "emoji": {
+          "type": "string"
+        },
+        "imageId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "textSize": {
+          "type": "number"
+        }
+      }
+    },
+    "Annotations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "items"],
+      "properties": {
+        "schemaVersion": {
+          "type": "integer"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Annotation"
+          }
+        }
+      }
+    },
+    "MapPreference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mapId",
+        "floorId",
+        "hiddenCategories",
+        "collapsedGroups",
+        "showAnnotations",
+        "selectedTasks",
+        "center",
+        "zoom",
+        "taskFilterActive",
+        "basemap"
+      ],
+      "properties": {
+        "mapId": {
+          "type": "string"
+        },
+        "floorId": {
+          "type": "string"
+        },
+        "hiddenCategories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "collapsedGroups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "showAnnotations": {
+          "type": "boolean"
+        },
+        "selectedTasks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "zoom": {
+          "type": "number"
+        },
+        "taskFilterActive": {
+          "type": "boolean"
+        },
+        "basemap": {
+          "type": "string"
+        }
+      }
+    },
+    "Preferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "selectedMap", "maps", "stickerUsage"],
+      "properties": {
+        "schemaVersion": {
+          "type": "integer"
+        },
+        "selectedMap": {
+          "type": "string"
+        },
+        "maps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MapPreference"
+          }
+        },
+        "stickerUsage": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StickerUsage"
+          }
+        }
+      }
+    },
+    "StickerUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "count"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        }
+      }
+    },
+    "Sticker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "group", "iconUrl"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "group": {
+          "type": "string"
+        },
+        "iconUrl": {
+          "type": "string"
+        }
+      }
+    },
+    "DaylightPhase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end", "icon", "label"],
+      "properties": {
+        "start": { "type": "number" },
+        "end": { "type": "number" },
+        "icon": { "type": "string" },
+        "label": { "type": "string" }
+      }
+    },
+    "MapClock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rate", "offsets", "fixed", "phases"],
+      "properties": {
+        "phases": { "type": "array", "items": { "$ref": "#/$defs/DaylightPhase" } },
+        "rate": {
+          "type": "number"
+        },
+        "offsets": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "fixed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "TileLayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "floorId",
+        "sourceUrl",
+        "url",
+        "tileSize",
+        "minZoom",
+        "maxZoom",
+        "transform",
+        "bounds"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "floorId": {
+          "type": "string"
+        },
+        "sourceUrl": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "tileSize": {
+          "type": "integer"
+        },
+        "minZoom": {
+          "type": "integer"
+        },
+        "maxZoom": {
+          "type": "integer"
+        },
+        "transform": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "bounds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Point"
+          }
+        }
       }
     }
   }

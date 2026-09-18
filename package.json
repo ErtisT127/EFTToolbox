@@ -3,14 +3,17 @@
   "private": true,
   "packageManager": "pnpm@11.3.0",
   "scripts": {
+    "toolbox": "node scripts/cli.mjs",
+    "test:maps": "node --test dashboard/test/map-tests.mjs",
     "contracts": "node contracts/generate.mjs",
     "contracts:check": "node contracts/generate.mjs --check",
     "build": "pnpm contracts && pnpm --filter @efttoolbox/dashboard build",
-    "lint": "node scripts/lint.mjs",
     "format": "prettier --write ."
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@mdi/js": "7.4.47",
+    "@xmldom/xmldom": "^0.9.12",
     "eslint": "10.10.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "^16.5.0",

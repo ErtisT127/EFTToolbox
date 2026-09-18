@@ -1,0 +1,24 @@
+{
+  "baseline": {
+    "repository": "TarkovTracker/tarkovdata",
+    "revision": "1b9bc2acbea0e873244d1819cba9d9fe0f14e26c"
+  },
+  "reference": {
+    "repository": "the-hideout/tarkov-dev",
+    "revision": "7ecdddf3a29d753fad14a461ca4c00921b620887"
+  },
+  "snapshots": [
+    "maps",
+    "maps_zh",
+    "maps_en",
+    "tasks",
+    "tasks_zh",
+    "tasks_en",
+    "items",
+    "items_zh",
+    "items_en",
+    "traders",
+    "traders_zh",
+    "traders_en"
+  ]
+}

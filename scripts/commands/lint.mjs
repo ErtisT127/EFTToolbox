@@ -1,9 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const root = fileURLToPath(new URL('../', import.meta.url));
+const root = fileURLToPath(new URL('../../', import.meta.url));
 process.chdir(root);
 
 function run(command, args, cwd = root) {
@@ -19,6 +19,7 @@ function jsTool(name, args) {
 console.log('React / TypeScript / formatting');
 jsTool('eslint/bin/eslint.js', [
   'dashboard/src',
+  'dashboard/test',
   'contracts/generate.mjs',
   'scripts',
   'eslint.config.mjs',
@@ -27,6 +28,17 @@ jsTool('eslint/bin/eslint.js', [
 jsTool('typescript/bin/tsc', ['--noEmit', '-p', 'dashboard/tsconfig.json']);
 jsTool('prettier/bin/prettier.cjs', ['--check', '.']);
 run(process.execPath, ['contracts/generate.mjs', '--check']);
+
+console.log('Dashboard i18n');
+const localeDir = path.join(root, 'dashboard', 'src', 'i18n', 'locales');
+const cjk = /[一-鿿]/;
+for (const file of sources(path.join(root, 'dashboard', 'src'))) {
+  if (file.startsWith(localeDir)) continue;
+  if (cjk.test(readFileSync(file, 'utf8'))) {
+    console.error(`Hardcoded Chinese outside the locale files: ${path.relative(root, file)}`);
+    process.exit(1);
+  }
+}
 
 console.log('Go');
 const localLint = path.join(
@@ -47,6 +59,13 @@ for (const module of ['backend', 'contracts/go']) {
     ['fmt', '--diff', '--config', path.join(root, '.golangci.yml'), './...'],
     path.join(root, module),
   );
+}
+
+function sources(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const name = path.join(directory, entry.name);
+    return entry.isDirectory() ? sources(name) : /\.tsx?$/.test(name) ? [name] : [];
+  });
 }
 
 function projects(directory) {

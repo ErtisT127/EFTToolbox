@@ -1,11 +1,12 @@
 param([int]$Port = 47831)
 $ErrorActionPreference = 'Stop'
-$projectRoot = Split-Path $PSScriptRoot -Parent
+$projectRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 Push-Location $projectRoot
 $serverProcess = $null
 try {
     & pnpm.cmd install --frozen-lockfile
     if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
+    if (-not (Test-Path 'data/upstream/catalog.json')) { throw 'Map cache missing; run pnpm toolbox data refresh first.' }
     & pnpm.cmd build
     if ($LASTEXITCODE -ne 0) { throw 'Dashboard build failed' }
     New-Item -ItemType Directory -Force build | Out-Null
@@ -13,7 +14,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Backend build failed' }
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = Join-Path $projectRoot 'build/EFTToolbox.exe'
-    $startInfo.Arguments = "-port $Port -dev-stdin"
+    $startInfo.Arguments = "-port $Port -dev-stdin -data `"$(Join-Path $projectRoot 'data')`""
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardInput = $true

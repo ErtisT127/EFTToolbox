@@ -1,0 +1,43 @@
+const [group, command, ...args] = process.argv.slice(2);
+
+const commands = {
+  'data:refresh': ['commands/data/refresh.mjs', []],
+  'data:sources': ['commands/data/sources.mjs', []],
+  'data:icons': ['commands/data/icons.mjs', args],
+  'data:svgs': ['commands/data/svgs.mjs', []],
+  'data:item-images': ['commands/data/item-images.mjs', []],
+  'data:prepare': ['commands/data/prepare.mjs', []],
+  'data:tiles': ['commands/data/tiles.mjs', args],
+  lint: ['commands/lint.mjs', []],
+  cache: ['commands/cache.mjs', [command, ...args]],
+};
+
+function usage() {
+  console.log(`Usage: pnpm toolbox <command> [options]
+
+Commands:
+  data refresh       Download and prepare all map data
+  data sources       Download upstream source snapshots
+  data icons         Download upstream map icons
+  data svgs          Download current map SVGs
+  data item-images   Download referenced item images
+  data prepare       Generate runtime map data
+  data tiles         Prefetch map tiles (--all, --count)
+  lint               Run repository lint checks
+  cache check|save   Check or save a build cache (dashboard|backend)`);
+}
+
+if (group === 'help' || group === '--help' || group === undefined) {
+  usage();
+  process.exit(0);
+}
+
+const key = group === 'data' ? `data:${command}` : group;
+const entry = commands[key];
+if (!entry) {
+  usage();
+  throw new Error(`Unknown command: ${group}${command ? ` ${command}` : ''}`);
+}
+
+process.argv = [process.argv[0], process.argv[1], ...entry[1]];
+await import(new URL(entry[0], import.meta.url));

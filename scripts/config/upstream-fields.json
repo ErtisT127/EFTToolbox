@@ -1,0 +1,622 @@
+{
+  "source": "Upstream field contract for data prepare. keys lists every field the snapshot may carry; unknown keys and vanished keys both fail the run. universal lists the fields present on every record of that surface, so a field disappearing from a single record is caught too.",
+  "surfaces": [
+    {
+      "path": "live.maps[*]",
+      "keys": [
+        "accessKeys",
+        "accessKeysMinPlayerLevel",
+        "artillery",
+        "bosses",
+        "btrStops",
+        "coordinateToCardinalRotation",
+        "description",
+        "enemies",
+        "extracts",
+        "hazards",
+        "id",
+        "locks",
+        "lootContainers",
+        "lootLoose",
+        "maxPlayerLevel",
+        "minPlayerLevel",
+        "name",
+        "nameId",
+        "normalizedName",
+        "players",
+        "raidDuration",
+        "scenePath",
+        "spawns",
+        "stationaryWeapons",
+        "switches",
+        "transits",
+        "wiki"
+      ],
+      "universal": [
+        "accessKeys",
+        "accessKeysMinPlayerLevel",
+        "bosses",
+        "btrStops",
+        "coordinateToCardinalRotation",
+        "description",
+        "enemies",
+        "extracts",
+        "hazards",
+        "id",
+        "locks",
+        "lootContainers",
+        "lootLoose",
+        "maxPlayerLevel",
+        "minPlayerLevel",
+        "name",
+        "nameId",
+        "normalizedName",
+        "players",
+        "raidDuration",
+        "scenePath",
+        "spawns",
+        "stationaryWeapons",
+        "switches",
+        "transits",
+        "wiki"
+      ]
+    },
+    {
+      "path": "live.maps[*].extracts[]",
+      "keys": [
+        "bottom",
+        "faction",
+        "id",
+        "name",
+        "outline",
+        "position",
+        "size",
+        "switch",
+        "switches",
+        "top",
+        "transferItem"
+      ],
+      "universal": ["bottom", "id", "name", "outline", "position", "switch", "switches", "top"]
+    },
+    {
+      "path": "live.maps[*].extracts[].position",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].extracts[].outline[]",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].transits[]",
+      "keys": [
+        "bottom",
+        "conditions",
+        "description",
+        "id",
+        "map",
+        "outline",
+        "position",
+        "size",
+        "top"
+      ],
+      "universal": ["bottom", "description", "id", "map", "outline", "position", "top"]
+    },
+    {
+      "path": "live.maps[*].transits[].position",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].transits[].outline[]",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].spawns[]",
+      "keys": ["categories", "position", "sides", "zoneName"],
+      "universal": ["categories", "position", "sides", "zoneName"]
+    },
+    {
+      "path": "live.maps[*].spawns[].position",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].bosses[]",
+      "keys": [
+        "escorts",
+        "mob",
+        "spawnChance",
+        "spawnLocations",
+        "spawnTime",
+        "spawnTimeRandom",
+        "spawnTrigger",
+        "supports",
+        "switch",
+        "switch_id"
+      ],
+      "universal": [
+        "escorts",
+        "mob",
+        "spawnChance",
+        "spawnLocations",
+        "spawnTime",
+        "spawnTrigger",
+        "supports"
+      ]
+    },
+    {
+      "path": "live.maps[*].bosses[].spawnLocations[]",
+      "keys": ["chance", "name", "positions", "spawnKey"],
+      "universal": ["chance", "name", "positions", "spawnKey"]
+    },
+    {
+      "path": "live.maps[*].bosses[].spawnLocations[].positions[]",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].locks[]",
+      "keys": [
+        "bottom",
+        "id",
+        "key",
+        "lockType",
+        "needsPower",
+        "outline",
+        "position",
+        "size",
+        "top"
+      ],
+      "universal": ["id", "key", "lockType", "needsPower", "position"]
+    },
+    {
+      "path": "live.maps[*].locks[].position",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].locks[].outline[]",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].switches[]",
+      "keys": [
+        "activatedBy",
+        "activates",
+        "bottom",
+        "door",
+        "id",
+        "name",
+        "outline",
+        "position",
+        "size",
+        "switchType",
+        "top"
+      ],
+      "universal": [
+        "activatedBy",
+        "activates",
+        "bottom",
+        "door",
+        "id",
+        "name",
+        "outline",
+        "position",
+        "size",
+        "switchType",
+        "top"
+      ]
+    },
+    {
+      "path": "live.maps[*].switches[].position",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].switches[].outline[]",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].stationaryWeapons[]",
+      "keys": ["position", "stationaryWeapon"],
+      "universal": ["position", "stationaryWeapon"]
+    },
+    {
+      "path": "live.maps[*].stationaryWeapons[].position",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].btrStops[]",
+      "keys": ["name", "x", "y", "z"],
+      "universal": ["name", "x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].hazards[]",
+      "keys": ["bottom", "hazardType", "id", "name", "outline", "position", "size", "top"],
+      "universal": ["hazardType", "id", "name", "outline", "position"]
+    },
+    {
+      "path": "live.maps[*].hazards[].position",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].hazards[].outline[]",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].artillery.zones[]",
+      "keys": ["botom", "id", "outline", "position", "size", "top"],
+      "universal": ["botom", "id", "outline", "position", "size", "top"]
+    },
+    {
+      "path": "live.maps[*].artillery.zones[].position",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].artillery.zones[].outline[]",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].lootContainers[]",
+      "keys": ["lootContainer", "position"],
+      "universal": ["lootContainer", "position"]
+    },
+    {
+      "path": "live.maps[*].lootContainers[].position",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.maps[*].lootLoose[]",
+      "keys": ["items", "position"],
+      "universal": ["items", "position"]
+    },
+    {
+      "path": "live.maps[*].lootLoose[].position",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "live.mobs[*]",
+      "keys": [
+        "equipment",
+        "health",
+        "id",
+        "imagePortraitLink",
+        "imagePosterLink",
+        "items",
+        "name",
+        "normalizedName"
+      ],
+      "universal": [
+        "equipment",
+        "id",
+        "imagePortraitLink",
+        "imagePosterLink",
+        "items",
+        "name",
+        "normalizedName"
+      ]
+    },
+    {
+      "path": "live.lootContainers[*]",
+      "keys": ["id", "name", "normalizedName"],
+      "universal": ["id", "name", "normalizedName"]
+    },
+    {
+      "path": "items.items[*]",
+      "keys": [
+        "accuracyModifier",
+        "ammoType",
+        "armorClass",
+        "armorDamage",
+        "avg24hPrice",
+        "backgroundColor",
+        "baseImageLink",
+        "basePrice",
+        "blocksHeadphones",
+        "buyFromTrader",
+        "categories",
+        "changeLast48h",
+        "changeLast48hPercent",
+        "conflictingCategories",
+        "conflictingItems",
+        "conflictingSlotIds",
+        "containsItems",
+        "damage",
+        "description",
+        "discardLimit",
+        "ergonomicsModifier",
+        "fragmentationChance",
+        "gridImageLink",
+        "handbookCategories",
+        "hasGrid",
+        "height",
+        "high24hPrice",
+        "iconLink",
+        "id",
+        "image512pxLink",
+        "image8xLink",
+        "inspectImageLink",
+        "lastLowPrice",
+        "lastOfferCount",
+        "lastScan",
+        "link",
+        "loudness",
+        "low24hPrice",
+        "maxDurability",
+        "minLevelForFlea",
+        "name",
+        "normalizedName",
+        "penetrationPower",
+        "projectileCount",
+        "properties",
+        "recoil",
+        "recoilModifier",
+        "ricochetChance",
+        "sellToTrader",
+        "shortName",
+        "stackMaxSize",
+        "tracer",
+        "tracerColor",
+        "types",
+        "updated",
+        "velocity",
+        "weight",
+        "width",
+        "wikiLink"
+      ],
+      "universal": [
+        "avg24hPrice",
+        "backgroundColor",
+        "baseImageLink",
+        "basePrice",
+        "buyFromTrader",
+        "categories",
+        "changeLast48h",
+        "changeLast48hPercent",
+        "conflictingCategories",
+        "conflictingItems",
+        "conflictingSlotIds",
+        "containsItems",
+        "discardLimit",
+        "gridImageLink",
+        "handbookCategories",
+        "height",
+        "iconLink",
+        "id",
+        "image512pxLink",
+        "image8xLink",
+        "inspectImageLink",
+        "lastLowPrice",
+        "lastOfferCount",
+        "lastScan",
+        "link",
+        "minLevelForFlea",
+        "name",
+        "normalizedName",
+        "properties",
+        "sellToTrader",
+        "shortName",
+        "types",
+        "updated",
+        "weight",
+        "width",
+        "wikiLink"
+      ]
+    },
+    {
+      "path": "items.handbookCategories[*]",
+      "keys": [
+        "children",
+        "id",
+        "imageLink",
+        "minLevelForFlea",
+        "name",
+        "normalizedName",
+        "parent"
+      ],
+      "universal": [
+        "children",
+        "id",
+        "imageLink",
+        "minLevelForFlea",
+        "name",
+        "normalizedName",
+        "parent"
+      ]
+    },
+    {
+      "path": "tasks.tasks[*]",
+      "keys": [
+        "availableDelaySecondsMax",
+        "availableDelaySecondsMin",
+        "experience",
+        "factionName",
+        "failConditions",
+        "failureOutcome",
+        "finishRewards",
+        "gameMode",
+        "id",
+        "kappaRequired",
+        "lightkeeperRequired",
+        "map",
+        "minPlayerLevel",
+        "name",
+        "neededKeys",
+        "normalizedName",
+        "objectives",
+        "otherRequirements",
+        "requiredPrestige",
+        "restartable",
+        "startRewards",
+        "taskImageLink",
+        "taskRequirements",
+        "trader",
+        "traderRequirements",
+        "wikiLink"
+      ],
+      "universal": [
+        "experience",
+        "factionName",
+        "failConditions",
+        "failureOutcome",
+        "finishRewards",
+        "id",
+        "kappaRequired",
+        "lightkeeperRequired",
+        "map",
+        "minPlayerLevel",
+        "name",
+        "normalizedName",
+        "objectives",
+        "restartable",
+        "startRewards",
+        "taskImageLink",
+        "taskRequirements",
+        "trader",
+        "traderRequirements",
+        "wikiLink"
+      ]
+    },
+    {
+      "path": "tasks.tasks[*].objectives[]",
+      "keys": [
+        "bodyParts",
+        "buildAttributes",
+        "compareMethod",
+        "containsAll",
+        "containsCategory",
+        "count",
+        "description",
+        "distance",
+        "dogTagLevel",
+        "effects",
+        "enemyHealthEffect",
+        "exitName",
+        "exitStatus",
+        "foundInRaid",
+        "globalVariable",
+        "healthEffect",
+        "id",
+        "item",
+        "items",
+        "level",
+        "maps",
+        "markerItem",
+        "maxDurability",
+        "minDurability",
+        "notWearing",
+        "optional",
+        "playerHealthEffect",
+        "possibleLocations",
+        "questItem",
+        "requiredKeys",
+        "shotType",
+        "skill",
+        "status",
+        "targetNames",
+        "task",
+        "timeFromHour",
+        "timeUntilHour",
+        "trader",
+        "traders",
+        "type",
+        "useAny",
+        "usingWeapon",
+        "usingWeaponMods",
+        "value",
+        "wearing",
+        "zones"
+      ],
+      "universal": ["description", "id", "optional", "type"]
+    },
+    {
+      "path": "tasks.tasks[*].objectives[].zones[]",
+      "keys": [
+        "bottom",
+        "id",
+        "map",
+        "name",
+        "outline",
+        "position",
+        "size",
+        "terrainElevation",
+        "top"
+      ],
+      "universal": ["bottom", "id", "map", "outline", "position", "top"]
+    },
+    {
+      "path": "tasks.tasks[*].objectives[].zones[].outline[]",
+      "keys": ["x", "y", "z"],
+      "universal": ["x", "y", "z"]
+    },
+    {
+      "path": "tasks.tasks[*].objectives[].possibleLocations[]",
+      "keys": ["map", "positions"],
+      "universal": ["map", "positions"]
+    },
+    {
+      "path": "rules[*]",
+      "keys": ["description", "id", "maps", "name", "normalizedName", "primaryPath"],
+      "universal": ["maps", "normalizedName"]
+    },
+    {
+      "path": "rules[*].maps[]",
+      "keys": [
+        "_heightRange",
+        "altMaps",
+        "author",
+        "authorLink",
+        "bounds",
+        "coordinateRotation",
+        "heightRange",
+        "key",
+        "labels",
+        "layers",
+        "maxZoom",
+        "minZoom",
+        "orientation",
+        "projection",
+        "specific",
+        "svgBounds",
+        "svgLayer",
+        "svgPath",
+        "tilePath",
+        "tileSize",
+        "transform"
+      ],
+      "universal": ["author", "key", "projection"]
+    },
+    {
+      "path": "rules[*].maps[].layers[]",
+      "keys": ["extents", "name", "show", "svgLayer", "tilePath"],
+      "universal": ["extents", "name", "show"]
+    },
+    {
+      "path": "rules[*].maps[].layers[].extents[]",
+      "keys": ["bounds", "height"],
+      "universal": ["height"]
+    },
+    {
+      "path": "rules[*].maps[].labels[]",
+      "keys": ["bottom", "position", "rotation", "size", "text", "top"],
+      "universal": ["position", "text"]
+    },
+    {
+      "path": "staticMarkers[*][*][]",
+      "keys": ["name", "position"],
+      "universal": ["name", "position"]
+    }
+  ]
+}
