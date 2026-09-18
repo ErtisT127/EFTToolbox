@@ -27,13 +27,13 @@ import {
   Undo2,
 } from 'lucide-react';
 import type L from 'leaflet';
-import type { Point, ServerEvent } from '../../../../contracts/ts/ipc.gen';
+import type { PlayerState, Point, ServerEvent } from '../../../../contracts/ts/ipc.gen';
 import { MapCanvas, type Tool, type ToolOptions } from './MapCanvas';
 import { StickerPicker } from './StickerPicker';
 import { LayerPanel } from './LayerPanel';
 import { TaskPanel } from './TaskPanel';
 import { ToolOptionsPanel } from './ToolOptionsPanel';
-import { Workspace, useWorkspace } from '../../stores/workspaceStore';
+import { reportClientLog, Workspace, useWorkspace } from '../../stores/workspaceStore';
 import { mapTimes, timePhase } from './lib/time';
 import { ZOOM_BOUND_EPSILON } from './lib/zoom';
 import type { MapClock } from '../../../../contracts/ts/ipc.gen';
@@ -77,9 +77,13 @@ const tools: { id: Tool; icon: typeof Hand }[] = [
   { id: 'eraser', icon: Eraser },
 ];
 
-function Connection() {
+function Connection({ onEvent }: { onEvent: (event: ServerEvent) => void }) {
   const { t } = useLocale();
   const [connected, setConnected] = useState(false);
+  const handler = useRef(onEvent);
+  useEffect(() => {
+    handler.current = onEvent;
+  }, [onEvent]);
   useEffect(() => {
     let stopped = false,
       socket: WebSocket;
@@ -89,7 +93,11 @@ function Connection() {
         `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`,
       );
       const current = socket;
-      function reconnect() {
+      let reconnecting = false;
+      function reconnect(reason: string, error = '', shouldLog = true) {
+        if (reconnecting) return;
+        reconnecting = true;
+        if (shouldLog) reportClientLog('websocket_reconnect', reason, error);
         clearTimeout(stale);
         current.onclose = null;
         current.onerror = null;
@@ -100,21 +108,34 @@ function Connection() {
           retry = setTimeout(connect, 2000);
         }
       }
-      stale = setTimeout(reconnect, 7000);
+      stale = setTimeout(() => reconnect('stale_timeout'), 7000);
       socket.onmessage = (event) => {
         try {
           const data = JSON.parse(String(event.data)) as ServerEvent;
-          if (data.status.protocolVersion !== '1' || !['snapshot', 'heartbeat'].includes(data.type))
+          if (
+            data.status.protocolVersion !== '1' ||
+            ![
+              'snapshot',
+              'heartbeat',
+              'map_changed',
+              'player_upsert',
+              'player_remove',
+              'annotation_upsert',
+              'annotation_remove',
+            ].includes(data.type)
+          )
             throw new Error('invalid event');
+          handler.current(data);
           setConnected(true);
           clearTimeout(stale);
-          stale = setTimeout(reconnect, 7000);
-        } catch {
-          reconnect();
+          stale = setTimeout(() => reconnect('stale_timeout'), 7000);
+        } catch (error) {
+          reconnect('invalid_event', error instanceof Error ? error.message : String(error));
         }
       };
-      socket.onerror = reconnect;
-      socket.onclose = reconnect;
+      socket.onerror = () => reconnect('socket_error');
+      socket.onclose = (event) =>
+        reconnect(`socket_close_${event.code}`, event.reason, event.code !== 1000);
     }
     connect();
     return () => {
@@ -145,6 +166,7 @@ export function MapPage() {
   const [panel, setPanel] = useState<'layers' | 'tasks' | null>(null);
   const [taskQuery, setTaskQuery] = useState('');
   const [cursor, setCursor] = useState<Point | null>(null);
+  const [players, setPlayers] = useState<Map<string, PlayerState>>(() => new Map());
   const [fullscreenError, setFullscreenError] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [options, setOptions] = useState<ToolOptions>({
@@ -259,6 +281,50 @@ export function MapPage() {
   const session = w.sessions.get(w.activeId);
   const preference = session ? w.preferenceFor(w.activeId) : undefined;
   const id = w.activeId;
+  const handleServerEvent = (event: ServerEvent) => {
+    if (event.type === 'snapshot') {
+      if (!Array.isArray(event.players)) {
+        reportClientLog('websocket_payload_invalid', 'snapshot missing players');
+      }
+      setPlayers(new Map((event.players || []).map((player) => [player.playerId, player])));
+      return;
+    }
+    if (event.type === 'player_upsert') {
+      if (!event.player) {
+        reportClientLog('websocket_payload_invalid', 'player_upsert missing player');
+        return;
+      }
+      const player = event.player;
+      setPlayers((previous) => new Map(previous).set(player.playerId, player));
+      return;
+    }
+    if (event.type === 'player_remove') {
+      if (!event.playerId) {
+        reportClientLog('websocket_payload_invalid', 'player_remove missing playerId');
+        return;
+      }
+      const playerId = event.playerId;
+      setPlayers((previous) => {
+        const next = new Map(previous);
+        next.delete(playerId);
+        return next;
+      });
+      return;
+    }
+    if (event.type === 'map_changed') {
+      const nextMap = event.mapId;
+      if (!nextMap || !w.catalog.some((map) => map.id === nextMap)) {
+        reportClientLog(
+          'map_event_rejected',
+          'rejected unknown map event',
+          nextMap || 'missing mapId',
+        );
+        return;
+      }
+      setPlayers(new Map());
+      void w.select(nextMap);
+    }
+  };
 
   useEffect(() => {
     if (!initialized.current) {
@@ -443,6 +509,9 @@ export function MapPage() {
                   preference={preference}
                   stickers={stickerIndex}
                   items={session.items}
+                  players={players}
+                  playerFollow
+                  playerAutoZoom={{ enabled: false, zoomLevel: preference.zoom }}
                   tool={tool}
                   options={options}
                   onCommit={(items) => w.commit(id, items)}
@@ -728,7 +797,7 @@ export function MapPage() {
         </>
       )}
       <footer className="statusbar">
-        <Connection />
+        <Connection onEvent={handleServerEvent} />
         <div className="save-status" role="status">
           {session?.error ? (
             <span className="danger">{t('map.status.unsaved')}</span>

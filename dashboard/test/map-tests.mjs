@@ -214,11 +214,13 @@ test('serial saves coalesce edits, retain failed edits, retry, and preserve map 
   w.sessions.set(map.id, session);
   const pending = [],
     writes = [];
-  globalThis.fetch = (_url, init) =>
-    new Promise((resolve) => {
+  globalThis.fetch = (url, init) => {
+    if (url === '/api/logs') return Promise.resolve(new Response(null, { status: 204 }));
+    return new Promise((resolve) => {
       writes.push(JSON.parse(init.body));
       pending.push(resolve);
     });
+  };
   const item = (id) => ({
     id,
     floorId: map.defaultFloor,
@@ -276,6 +278,7 @@ test('a slow previous map response cannot replace the active map', async () => {
     second = await load('maps/interchange.json');
   const pending = [];
   globalThis.fetch = (url, init) => {
+    if (url === '/api/logs') return Promise.resolve(new Response(null, { status: 204 }));
     if (init?.method === 'PUT') return Promise.resolve(new Response('{}'));
     return new Promise((resolve) => pending.push({ url, resolve }));
   };

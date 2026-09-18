@@ -23,6 +23,20 @@ const locale = 'zh-CN';
 
 const defaultGroups = ['extracts', 'landmarks'];
 
+export function reportClientLog(event: string, message: string, error = '') {
+  void fetch('/api/logs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      level: 'error',
+      component: 'dashboard',
+      event,
+      message,
+      error,
+    }),
+  }).catch(() => {});
+}
+
 async function failure(response: Response): Promise<string> {
   try {
     const body = (await response.json()) as { code?: string };
@@ -37,10 +51,21 @@ export async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
     response = await fetch(url, init);
-  } catch {
+  } catch (error) {
+    if (!(error instanceof DOMException && error.name === 'AbortError')) {
+      reportClientLog(
+        'http_request_failed',
+        `request failed: ${url}`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
     throw new Error('errors.request_failed');
   }
-  if (!response.ok) throw new Error(await failure(response));
+  if (!response.ok) {
+    const message = await failure(response);
+    reportClientLog('http_request_failed', `${response.status} ${url}`, message);
+    throw new Error(message);
+  }
   return response.json() as Promise<T>;
 }
 

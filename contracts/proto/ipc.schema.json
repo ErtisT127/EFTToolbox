@@ -37,7 +37,15 @@
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["snapshot", "heartbeat"]
+          "enum": [
+            "snapshot",
+            "heartbeat",
+            "map_changed",
+            "player_upsert",
+            "player_remove",
+            "annotation_upsert",
+            "annotation_remove"
+          ]
         },
         "sentAt": {
           "type": "string",
@@ -45,7 +53,62 @@
         },
         "status": {
           "$ref": "#/$defs/Status"
-        }
+        },
+        "mapId": { "type": "string" },
+        "player": { "$ref": "#/$defs/PlayerState" },
+        "playerId": { "type": "string" },
+        "players": { "type": "array", "items": { "$ref": "#/$defs/PlayerState" } },
+        "annotation": { "$ref": "#/$defs/SharedAnnotation" },
+        "annotationId": { "type": "string" },
+        "annotations": { "type": "array", "items": { "$ref": "#/$defs/SharedAnnotation" } }
+      }
+    },
+    "PlayerState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["playerId", "displayName", "isSelf", "mapId", "floorId", "position", "heading"],
+      "properties": {
+        "playerId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "isSelf": { "type": "boolean" },
+        "mapId": { "type": "string" },
+        "floorId": { "type": "string" },
+        "position": { "$ref": "#/$defs/Point" },
+        "heading": { "type": "number" }
+      }
+    },
+    "SharedAnnotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "itemId",
+        "ownerId",
+        "revision",
+        "mapId",
+        "floorId",
+        "kind",
+        "points",
+        "color",
+        "width",
+        "emoji",
+        "imageId",
+        "text",
+        "textSize"
+      ],
+      "properties": {
+        "itemId": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "revision": { "type": "integer" },
+        "mapId": { "type": "string" },
+        "floorId": { "type": "string" },
+        "kind": { "type": "string", "enum": ["marker", "stroke"] },
+        "points": { "type": "array", "items": { "$ref": "#/$defs/Point" } },
+        "color": { "type": "string" },
+        "width": { "type": "number" },
+        "emoji": { "type": "string" },
+        "imageId": { "type": "string" },
+        "text": { "type": "string" },
+        "textSize": { "type": "number" }
       }
     },
     "Point": {

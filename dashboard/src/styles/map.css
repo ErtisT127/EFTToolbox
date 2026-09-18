@@ -1389,6 +1389,20 @@ output {
   border: 0;
   pointer-events: none;
 }
+.player-anchor {
+  background: transparent;
+  border: 0;
+  pointer-events: none;
+}
+.player-marker {
+  width: 0;
+  height: 0;
+  border-left: 10px solid transparent;
+  border-right: 10px solid transparent;
+  border-bottom: 24px solid var(--accent);
+  filter: drop-shadow(0 0 2px var(--bg));
+  transform-origin: 50% 50%;
+}
 /* Pinned to the bottom of the 32px anchor box so the emoji still sits on the map point, but free
    to grow upward: that way a label joins the same box instead of hanging outside it, and the two
    can be framed as one annotation rather than as two separate pieces. */

@@ -11,9 +11,42 @@ export interface ErrorBody {
 }
 
 export interface ServerEvent {
-  type: "snapshot" | "heartbeat";
+  type: "snapshot" | "heartbeat" | "map_changed" | "player_upsert" | "player_remove" | "annotation_upsert" | "annotation_remove";
   sentAt: string;
   status: Status;
+  mapId?: string;
+  player?: PlayerState;
+  playerId?: string;
+  players?: Array<PlayerState>;
+  annotation?: SharedAnnotation;
+  annotationId?: string;
+  annotations?: Array<SharedAnnotation>;
+}
+
+export interface PlayerState {
+  playerId: string;
+  displayName: string;
+  isSelf: boolean;
+  mapId: string;
+  floorId: string;
+  position: Point;
+  heading: number;
+}
+
+export interface SharedAnnotation {
+  itemId: string;
+  ownerId: string;
+  revision: number;
+  mapId: string;
+  floorId: string;
+  kind: "marker" | "stroke";
+  points: Array<Point>;
+  color: string;
+  width: number;
+  emoji: string;
+  imageId: string;
+  text: string;
+  textSize: number;
 }
 
 export interface Point {

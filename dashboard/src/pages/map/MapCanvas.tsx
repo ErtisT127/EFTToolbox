@@ -4,6 +4,7 @@ import type {
   Annotation,
   MapData,
   MapPreference,
+  PlayerState,
   Point,
   Sticker,
 } from '../../../../contracts/ts/ipc.gen';
@@ -46,6 +47,9 @@ type Props = {
   onCursor: (point: Point | null) => void;
   onZoomChange: (state: { zoom: number; min: number; max: number }) => void;
   onReady: (map: L.Map | null) => void;
+  players: Map<string, PlayerState>;
+  playerFollow?: boolean;
+  playerAutoZoom?: { enabled: boolean; zoomLevel: number };
 };
 const point = (value: L.LatLng): Point => ({ x: value.lng, y: -value.lat });
 
@@ -60,8 +64,10 @@ export function MapCanvas(props: Props) {
   const baseRef = useRef<SVGElement | null>(null);
   const tileLayers = useRef<L.LayerGroup | null>(null);
   const userLayer = useRef<L.LayerGroup | null>(null);
+  const playerLayer = useRef<L.LayerGroup | null>(null);
   const builtins = useRef<BuiltinMarkers | null>(null);
   const renderUsers = useRef<(items: Annotation[]) => void>(() => {});
+  const renderPlayers = useRef<(players: Map<string, PlayerState>) => void>(() => {});
   const [ready, setReady] = useState(0);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
@@ -127,8 +133,12 @@ export function MapCanvas(props: Props) {
     const landmarkPane = map.createPane('landmarks');
     landmarkPane.style.zIndex = '450';
     landmarkPane.style.pointerEvents = 'none';
+    const playerPane = map.createPane('player');
+    playerPane.style.zIndex = '600';
+    playerPane.style.pointerEvents = 'none';
     tileLayers.current = L.layerGroup().addTo(map);
     userLayer.current = L.layerGroup().addTo(map);
+    playerLayer.current = L.layerGroup().addTo(map);
     builtins.current = new BuiltinMarkers(
       p.data,
       () => userLayer.current?.getLayers() || [],
@@ -177,6 +187,42 @@ export function MapCanvas(props: Props) {
     }
     renderUsers.current = paint;
     paint(p.items);
+    function paintPlayers(players: Map<string, PlayerState>) {
+      const layer = playerLayer.current;
+      if (!layer) return;
+      layer.clearLayers();
+      const self = [...players.values()].find(
+        (player) => player.isSelf && player.mapId === p.data.id,
+      );
+      if (self && p.playerFollow !== false) {
+        const zoom = p.playerAutoZoom?.enabled ? p.playerAutoZoom.zoomLevel : map.getZoom();
+        map.setView(latLng(self.position), zoom, { animate: false });
+      }
+      for (const player of players.values()) {
+        if (player.mapId !== p.data.id) continue;
+        const element = document.createElement('div');
+        element.className = 'player-marker';
+        // Match the reference tool's yaw convention: zero yaw points down on the map.
+        element.style.transform = `rotate(${player.heading + 180}deg)`;
+        element.style.opacity = player.floorId === p.preference.floorId ? '1' : '0.35';
+        element.title = player.displayName;
+        layer.addLayer(
+          L.marker(latLng(player.position), {
+            pane: 'player',
+            icon: L.divIcon({
+              html: element,
+              className: 'player-anchor',
+              iconSize: [28, 28],
+              iconAnchor: [14, 14],
+            }),
+            interactive: false,
+            keyboard: false,
+          }),
+        );
+      }
+    }
+    renderPlayers.current = paintPlayers;
+    paintPlayers(p.players);
     let space = false;
     type Gesture = {
       kind: Tool | 'pan' | 'box';
@@ -558,6 +604,8 @@ export function MapCanvas(props: Props) {
       current.current.onReady(null);
       builtins.current?.remove();
       builtins.current = null;
+      playerLayer.current?.clearLayers();
+      playerLayer.current = null;
       map.remove();
       mapRef.current = null;
       baseRef.current = null;
@@ -645,6 +693,9 @@ export function MapCanvas(props: Props) {
   useEffect(() => {
     renderUsers.current(items);
   }, [items, preference.floorId, preference.showAnnotations, ready]);
+  useEffect(() => {
+    renderPlayers.current(props.players);
+  }, [props.players, preference.floorId, props.playerFollow, props.playerAutoZoom, ready]);
   useEffect(() => {
     if (props.tool === 'select' || props.tool === 'edit') mapRef.current?.doubleClickZoom.enable();
     else mapRef.current?.doubleClickZoom.disable();

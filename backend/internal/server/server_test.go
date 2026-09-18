@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -71,5 +73,28 @@ func TestRejectForeignWebSocketOrigin(t *testing.T) {
 	}
 	if err == nil || response == nil || response.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected origin rejection, got %v, %v", response, err)
+	}
+}
+
+func TestClientLogsArePersisted(t *testing.T) {
+	root := t.TempDir()
+	dataRoot := filepath.Join(root, "data")
+	srv := httptest.NewServer(New(context.Background(), "test", http.FS(fstest.MapFS{}), dataRoot))
+	defer srv.Close()
+	response, err := http.Post(srv.URL+"/api/logs", "application/json", strings.NewReader(`{"level":"error","event":"test","message":"client failed"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("unexpected log status: %d", response.StatusCode)
+	}
+	files, err := filepath.Glob(filepath.Join(root, "logs", "efttoolbox-*.jsonl"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("expected one log file, got %v, %v", files, err)
+	}
+	data, err := os.ReadFile(files[0])
+	if err != nil || !strings.Contains(string(data), `"message":"client failed"`) {
+		t.Fatalf("log entry missing: %s, %v", data, err)
 	}
 }

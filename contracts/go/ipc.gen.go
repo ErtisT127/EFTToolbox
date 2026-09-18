@@ -12,9 +12,42 @@ type ErrorBody struct {
 }
 
 type ServerEvent struct {
-	Type   string `json:"type"`
-	SentAt string `json:"sentAt"`
-	Status Status `json:"status"`
+	Type         string              `json:"type"`
+	SentAt       string              `json:"sentAt"`
+	Status       Status              `json:"status"`
+	MapId        *string             `json:"mapId,omitempty"`
+	Player       *PlayerState        `json:"player,omitempty"`
+	PlayerId     *string             `json:"playerId,omitempty"`
+	Players      *[]PlayerState      `json:"players,omitempty"`
+	Annotation   *SharedAnnotation   `json:"annotation,omitempty"`
+	AnnotationId *string             `json:"annotationId,omitempty"`
+	Annotations  *[]SharedAnnotation `json:"annotations,omitempty"`
+}
+
+type PlayerState struct {
+	PlayerId    string  `json:"playerId"`
+	DisplayName string  `json:"displayName"`
+	IsSelf      bool    `json:"isSelf"`
+	MapId       string  `json:"mapId"`
+	FloorId     string  `json:"floorId"`
+	Position    Point   `json:"position"`
+	Heading     float64 `json:"heading"`
+}
+
+type SharedAnnotation struct {
+	ItemId   string  `json:"itemId"`
+	OwnerId  string  `json:"ownerId"`
+	Revision int     `json:"revision"`
+	MapId    string  `json:"mapId"`
+	FloorId  string  `json:"floorId"`
+	Kind     string  `json:"kind"`
+	Points   []Point `json:"points"`
+	Color    string  `json:"color"`
+	Width    float64 `json:"width"`
+	Emoji    string  `json:"emoji"`
+	ImageId  string  `json:"imageId"`
+	Text     string  `json:"text"`
+	TextSize float64 `json:"textSize"`
 }
 
 type Point struct {

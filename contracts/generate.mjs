@@ -30,10 +30,10 @@ for (const [name, definition] of Object.entries(schema.$defs)) {
   go += `\ntype ${name} struct {\n`;
   ts += `\nexport interface ${name} {\n`;
   for (const [key, field] of Object.entries(definition.properties)) {
-    if (!definition.required.includes(key)) throw new Error('Optional fields are not supported');
+    const optional = !definition.required.includes(key);
     const [goType, tsType] = fieldTypes(field);
-    go += `  ${key[0].toUpperCase() + key.slice(1)} ${goType} \`json:"${key}"\`\n`;
-    ts += `  ${key}: ${tsType};\n`;
+    go += `  ${key[0].toUpperCase() + key.slice(1)} ${optional ? `*${goType}` : goType} \`json:"${key}${optional ? ',omitempty' : ''}"\`\n`;
+    ts += `  ${key}${optional ? '?' : ''}: ${tsType};\n`;
   }
   go += '}\n';
   ts += '}\n';
