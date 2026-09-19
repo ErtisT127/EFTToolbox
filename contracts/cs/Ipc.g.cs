@@ -210,6 +210,15 @@ public sealed record TileLayer {
 public sealed record OverlayHotkeys {
   [JsonPropertyName("toggleEdit")] public string ToggleEdit { get; init; } = "";
   [JsonPropertyName("toggleVisible")] public string ToggleVisible { get; init; } = "";
+  [JsonPropertyName("zoomIn")] public string ZoomIn { get; init; } = "";
+  [JsonPropertyName("zoomOut")] public string ZoomOut { get; init; } = "";
+  [JsonPropertyName("floorUp")] public string FloorUp { get; init; } = "";
+  [JsonPropertyName("floorDown")] public string FloorDown { get; init; } = "";
+  [JsonPropertyName("toggleBasemap")] public string ToggleBasemap { get; init; } = "";
+  [JsonPropertyName("panUp")] public string PanUp { get; init; } = "";
+  [JsonPropertyName("panDown")] public string PanDown { get; init; } = "";
+  [JsonPropertyName("panLeft")] public string PanLeft { get; init; } = "";
+  [JsonPropertyName("panRight")] public string PanRight { get; init; } = "";
 }
 
 public sealed record MapZoomOverride {
@@ -226,7 +235,10 @@ public sealed record OverlaySettings {
   [JsonPropertyName("left")] public int Left { get; init; } = default;
   [JsonPropertyName("top")] public int Top { get; init; } = default;
   [JsonPropertyName("lockAspect")] public bool LockAspect { get; init; } = default;
+  [JsonPropertyName("opacity")] public int? Opacity { get; init; } = null;
+  [JsonPropertyName("backdrop")] public bool Backdrop { get; init; } = default;
   [JsonPropertyName("svgResolution")] public int SvgResolution { get; init; } = default;
+  [JsonPropertyName("svgQualityMode")] public string? SvgQualityMode { get; init; } = null;
   [JsonPropertyName("followCenter")] public bool FollowCenter { get; init; } = default;
   [JsonPropertyName("followFloor")] public bool FollowFloor { get; init; } = default;
   [JsonPropertyName("followZoom")] public bool FollowZoom { get; init; } = default;
@@ -264,6 +276,7 @@ public sealed record OverlayView {
   [JsonPropertyName("svgRasterCount")] public int SvgRasterCount { get; init; } = default;
   [JsonPropertyName("textureBytes")] public int TextureBytes { get; init; } = default;
   [JsonPropertyName("hotkeyCount")] public int HotkeyCount { get; init; } = default;
+  [JsonPropertyName("hotkeyFailed")] public string[] HotkeyFailed { get; init; } = [];
 }
 
 public sealed record OverlayCommand {
@@ -314,4 +327,28 @@ public sealed record OverlayLog {
   [JsonPropertyName("generation")] public int? Generation { get; init; } = null;
   [JsonPropertyName("resolution")] public int? Resolution { get; init; } = null;
   [JsonPropertyName("timing")] public OperationTiming? Timing { get; init; } = null;
+}
+
+public readonly record struct NumericLimit(double Min, double Max, double Step, int Precision);
+
+public static class PointLimits {
+  public static readonly NumericLimit X = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);
+  public static readonly NumericLimit Y = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);
+}
+
+public static class MapZoomOverrideLimits {
+  public static readonly NumericLimit Zoom = new(-10, 12, 0.1, 1);
+}
+
+public static class OverlaySettingsLimits {
+  public static readonly NumericLimit Width = new(160, 2048, 16, 0);
+  public static readonly NumericLimit Height = new(160, 2048, 16, 0);
+  public static readonly NumericLimit Left = new(-100000, 100000, 1, 0);
+  public static readonly NumericLimit Top = new(-100000, 100000, 1, 0);
+  public static readonly NumericLimit Opacity = new(0, 100, 1, 0);
+  public static readonly NumericLimit TargetZoom = new(-10, 12, 0.1, 1);
+}
+
+public static class OverlayViewLimits {
+  public static readonly NumericLimit Zoom = new(-10, 12, 0.1, 1);
 }

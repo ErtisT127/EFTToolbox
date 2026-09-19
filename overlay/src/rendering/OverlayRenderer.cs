@@ -18,6 +18,7 @@ internal sealed class OverlayRenderer : IDisposable
     private IDCompositionDevice composition = null!;
     private IDCompositionTarget target = null!;
     private IDCompositionVisual visual = null!;
+    private IDCompositionEffectGroup opacityEffect = null!;
     private ID3D11RenderTargetView? renderTarget;
     private ID3D11VertexShader vertexShader = null!;
     private ID3D11PixelShader pixelShader = null!;
@@ -34,6 +35,10 @@ internal sealed class OverlayRenderer : IDisposable
     private ID3D11Buffer parameters = null!;
     private ID3D11ShaderResourceView font = null!;
     private TextureCache fontTextures = null!;
+    private string? assetDirectory;
+    private bool fontsBuilt;
+    private int lastOpacity = -1;
+    internal TextureCache Texts { get; private set; } = null!;
     internal TextureCache Tiles { get; private set; } = null!;
     internal TextureCache Images { get; private set; } = null!;
     internal TextureCache Svg { get; private set; } = null!;
@@ -61,6 +66,8 @@ internal sealed class OverlayRenderer : IDisposable
         composition = DComp.DCompositionCreateDevice<IDCompositionDevice>(dxgiDevice);
         composition.CreateTargetForHwnd(hwnd, true, out target).CheckError();
         composition.CreateVisual(out visual).CheckError();
+        composition.CreateEffectGroup(out opacityEffect).CheckError();
+        visual.SetEffect(opacityEffect).CheckError();
         visual.SetContent(swapChain).CheckError();
         target.SetRoot(visual).CheckError();
         composition.Commit().CheckError();
@@ -102,7 +109,7 @@ internal sealed class OverlayRenderer : IDisposable
         indices = device.CreateBuffer(Capacity * sizeof(ushort), BindFlags.IndexBuffer,
             ResourceUsage.Dynamic, CpuAccessFlags.Write);
         fontTextures = new TextureCache(device, 1);
-        Tiles = new TextureCache(device); Images = new TextureCache(device, 512); Svg = new TextureCache(device, 1);
+        Tiles = new TextureCache(device, 256, 64L << 20); Images = new TextureCache(device, 512, 32L << 20); Texts = new TextureCache(device, 1024, 32L << 20); Svg = new TextureCache(device, 1, 512L << 20);
         sampler = device.CreateSamplerState(SamplerDescription.LinearClamp);
         parameters = device.CreateBuffer(16, BindFlags.ConstantBuffer, ResourceUsage.Default);
         imgui = ImGui.CreateContext();
@@ -110,8 +117,21 @@ internal sealed class OverlayRenderer : IDisposable
         io.NativePtr->IniFilename = null;
         io.NativePtr->LogFilename = null;
         io.ConfigFlags |= ImGuiConfigFlags.NoMouse | ImGuiConfigFlags.NoKeyboard;
-        var fontPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts), "msyh.ttc");
-        if (File.Exists(fontPath)) io.Fonts.AddFontFromFileTTF(fontPath, 16, null, io.Fonts.GetGlyphRangesChineseSimplifiedCommon());
+        // The atlas is built on the first frame, once the asset directory is known; see EnsureFonts.
+    }
+
+    /// <summary>Where the converted fonts live; the overlay receives it with the bootstrap.</summary>
+    internal void SetAssetDirectory(string directory) => assetDirectory = directory;
+
+    // ImGui only supplies solid geometry and its white atlas pixel. Map text uses bundled Skia fonts.
+    private unsafe void EnsureFonts()
+    {
+        // The bootstrap carrying the asset directory arrives after the first frames; building the
+        // atlas before that would load the fallback face and the flag below would keep it forever.
+        if (fontsBuilt || assetDirectory is null) return;
+        fontsBuilt = true;
+        var io = ImGui.GetIO();
+        io.Fonts.AddFontDefault();
         io.Fonts.GetTexDataAsRGBA32(out nint pixels, out int fw, out int fh);
         var fontBytes = new byte[fw * fh * 4]; System.Runtime.InteropServices.Marshal.Copy(pixels, fontBytes, 0, fontBytes.Length);
         for (int i = 0; i < fontBytes.Length; i += 4) fontBytes[i] = fontBytes[i + 1] = fontBytes[i + 2] = fontBytes[i + 3];
@@ -133,8 +153,10 @@ internal sealed class OverlayRenderer : IDisposable
 
     internal double LastDrawMs { get; private set; }
     internal double LastPresentMs { get; private set; }
-    internal unsafe void Render(MapScene scene, MarkerLayer markers, TileLayerRenderer tiles, bool circle, bool editing, Operation? operation = null)
+    internal unsafe void Render(MapScene scene, MarkerLayer markers, TileLayerRenderer tiles, bool circle, bool backdrop, int opacity, bool editing, Operation? operation = null)
     {
+        EnsureFonts();
+        if (lastOpacity != opacity) { opacityEffect.SetOpacity(opacity / 100f).CheckError(); composition.Commit().CheckError(); lastOpacity = opacity; }
         var renderTimer = System.Diagnostics.Stopwatch.StartNew();
         var io = ImGui.GetIO();
         io.DisplaySize = new Vector2(width, height); io.DeltaTime = 1f / 60;
@@ -142,14 +164,20 @@ internal sealed class OverlayRenderer : IDisposable
         var draw = ImGui.GetBackgroundDrawList();
         if (scene.Map is not null)
         {
+            // The dashboard draws the map on an opaque surface, and that is what makes the floor
+            // below the active one read as depth rather than as transparency. Over a game those
+            // same dim pixels just vanish, so the overlay can lay the same surface down first; the
+            // circle shape clips it in the shader like everything else. Optional, because it also
+            // hides the game behind the panel.
+            if (backdrop) draw.AddRectFilled(Vector2.Zero, new Vector2(width, height), Backdrop);
             foreach (var tile in tiles.Visible)
                 if (Tiles.Get(tile.Key) is { } texture) draw.AddImage(texture.NativePointer, scene.Screen(tile.A), scene.Screen(tile.B), Vector2.Zero, Vector2.One, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, tile.Opacity)));
             if (Svg.Get("map") is { } svg)
             {
-                var b = scene.Map.Projection.ViewBox;
+                var b = scene.SvgRegion is { } region ? new double[] { region.X, region.Y, region.Width, region.Height } : scene.Map.Projection.ViewBox;
                 draw.AddImage(svg.NativePointer, scene.Screen(new Vector2((float)b[0], (float)b[1])), scene.Screen(new Vector2((float)(b[0] + b[2]), (float)(b[1] + b[3]))));
             }
-            markers.Draw(draw, scene, Images, operation);
+            markers.Draw(draw, scene, Images, Texts, operation);
         }
         if (editing) DrawBorder(draw, circle);
         ImGui.Render();
@@ -166,7 +194,8 @@ internal sealed class OverlayRenderer : IDisposable
         context.IASetIndexBuffer(indices, Format.R16_UInt, 0);
         context.VSSetShader(vertexShader);
         context.PSSetShader(pixelShader);
-        var values = new Vector4(width, height, circle ? 1 : 0, 0); context.UpdateSubresource(values, parameters);
+        // z clips the circle, w scales the whole panel's alpha.
+        var values = new Vector4(width, height, circle ? 1 : 0, opacity / 100f); context.UpdateSubresource(values, parameters);
         context.PSSetConstantBuffer(0, parameters); context.PSSetSampler(0, sampler);
         var data = ImGui.GetDrawData();
         for (int i = 0; i < data.CmdListsCount; i++)
@@ -195,7 +224,7 @@ internal sealed class OverlayRenderer : IDisposable
                 var command = list.CmdBuffer[c];
                 var clip = command.ClipRect;
                 context.RSSetScissorRect((int)clip.X, (int)clip.Y, (int)clip.Z, (int)clip.W);
-                var texture = command.TextureId == font.NativePointer ? font : Svg.Find(command.TextureId) ?? Tiles.Find(command.TextureId) ?? Images.Find(command.TextureId);
+                var texture = command.TextureId == font.NativePointer ? font : Svg.Find(command.TextureId) ?? Tiles.Find(command.TextureId) ?? Images.Find(command.TextureId) ?? Texts.Find(command.TextureId);
                 if (texture is null) continue;
                 context.PSSetShaderResource(0, texture);
                 context.DrawIndexed(command.ElemCount, command.IdxOffset, (int)command.VtxOffset);
@@ -206,35 +235,53 @@ internal sealed class OverlayRenderer : IDisposable
         LastPresentMs = renderTimer.Elapsed.TotalMilliseconds;
     }
 
+    private const float DashPeriod = 16, DashThickness = 4, DashOutline = 7;
+    // Opaque dashboard background; the composition effect controls the panel's transparency.
+    private static readonly uint Backdrop = BackgroundColor();
+    private static uint BackgroundColor() {
+        var rgb = Convert.ToUInt32(EFTToolbox.Contracts.MapDisplay.Background[1..], 16);
+        return 0xff000000 | ((rgb & 255) << 16) | (rgb & 0xff00) | (rgb >> 16);
+    }
+
     private void DrawBorder(ImDrawListPtr draw, bool circle)
     {
-        var center = new Vector2(width, height) / 2; var radius = Math.Min(width, height) / 2f - 5;
-        Vector2 At(float t)
+        // A white dash over a black outline, so the border reads on any basemap. Both are opaque:
+        // the overlay blends, and a half-transparent dash would tint with whatever is underneath.
+        var center = new Vector2(width, height) / 2;
+        var radius = OverlayGeometry.Radius(width, height);
+        var x0 = OverlayGeometry.Inset; var y0 = OverlayGeometry.Inset;
+        var x1 = width - OverlayGeometry.Inset; var y1 = height - OverlayGeometry.Inset;
+        var top = x1 - x0; var side = y1 - y0;
+        var length = circle ? MathF.Tau * radius : 2 * (top + side);
+        Vector2 At(float distance)
         {
-            if (circle) return center + new Vector2(MathF.Cos(t * MathF.Tau), MathF.Sin(t * MathF.Tau)) * radius;
-            var perimeter = 2 * (width + height - 20); var d = t * perimeter;
-            if (d < width - 10) return new(5 + d, 5); d -= width - 10;
-            if (d < height - 10) return new(width - 5, 5 + d); d -= height - 10;
-            if (d < width - 10) return new(width - 5 - d, height - 5); d -= width - 10; return new(5, height - 5 - d);
+            if (circle) { var angle = distance / radius; return center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * radius; }
+            if (distance < top) return new(x0 + distance, y0); distance -= top;
+            if (distance < side) return new(x1, y0 + distance); distance -= side;
+            if (distance < top) return new(x1 - distance, y1); distance -= top;
+            return new(x0, y1 - distance);
         }
-        var steps = (int)((circle ? MathF.Tau * radius : 2 * (width + height)) / 4);
+        var steps = (int)(length / DashPeriod);
         for (int i = 0; i < steps; i++)
         {
-            var a = At((float)i / steps); var b = At((float)(i + 1) / steps);
-            draw.AddLine(a, b, 0xff000000, 6); draw.AddLine(a, b, 0xffffffff, 4);
-            if (i % 5 < 3) draw.AddLine(a, b, 0xff4aa2c8, 2);
+            var a = At(length * i / steps); var b = At(length * (i + 1) / steps);
+            if (i % 2 == 0) { draw.AddLine(a, b, 0xff000000, DashOutline); draw.AddLine(a, b, 0xffffffff, DashThickness); }
         }
-        var handle = At(circle ? 0 : 0.5f);
-        draw.AddRectFilled(handle - new Vector2(5), handle + new Vector2(5), 0xff000000);
-        draw.AddRect(handle - new Vector2(4), handle + new Vector2(4), 0xff4aa2c8, 0, ImDrawFlags.None, 2);
+        foreach (var handle in circle ? OverlayGeometry.CircleHandles : OverlayGeometry.SquareHandles)
+        {
+            var point = circle ? OverlayGeometry.CircleHandle(handle, width, height) : OverlayGeometry.Handle(handle, width, height);
+            draw.AddRectFilled(point - new Vector2(7), point + new Vector2(7), 0xff000000, 3);
+            draw.AddRect(point - new Vector2(5), point + new Vector2(5), 0xffffffff, 3, ImDrawFlags.None, 3);
+        }
     }
+
 
     public void Dispose()
     {
         context?.ClearState();
         context?.Flush();
         if (imgui != 0) ImGui.DestroyContext(imgui);
-        Svg?.Dispose(); Tiles?.Dispose(); Images?.Dispose(); fontTextures?.Dispose(); sampler?.Dispose(); parameters?.Dispose();
+        Svg?.Dispose(); Tiles?.Dispose(); Images?.Dispose(); Texts?.Dispose(); fontTextures?.Dispose(); sampler?.Dispose(); parameters?.Dispose();
         indices?.Dispose();
         vertices?.Dispose();
         depth?.Dispose();
@@ -244,7 +291,7 @@ internal sealed class OverlayRenderer : IDisposable
         pixelShader?.Dispose();
         vertexShader?.Dispose();
         renderTarget?.Dispose();
-        visual?.Dispose();
+        visual?.Dispose(); opacityEffect?.Dispose();
         target?.Dispose();
         composition?.Dispose();
         swapChain?.Dispose();

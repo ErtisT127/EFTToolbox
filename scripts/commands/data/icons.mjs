@@ -63,8 +63,6 @@ for (const name of new Set(Object.values(mapping))) {
   await download(`public/maps/interactive/${name}.png`, `${name}.png`);
   await copyFile(path.join(target, `${name}.png`), path.join(assets, `${name}.png`));
 }
-await download('public/fonts/bender-bold.woff2', 'bender-bold.woff2');
-await copyFile(path.join(target, 'bender-bold.woff2'), path.join(assets, 'bender-bold.woff2'));
 await download('LICENSE', 'LICENSE');
 await writeFile(
   path.join(target, 'versions.json'),

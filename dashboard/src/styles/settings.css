@@ -16,6 +16,7 @@
   justify-content: flex-start;
 }
 .settings-content {
+  container-type: inline-size;
   overflow: auto;
   padding: var(--space-6);
 }
@@ -23,8 +24,12 @@
   margin-top: 0;
 }
 .settings-content fieldset {
-  max-width: 780px;
-  margin: 0 0 var(--space-5);
+  container-type: inline-size;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  max-width: 640px;
+  margin: 0 0 24px;
   padding: var(--space-4);
   border: 1px solid var(--border);
 }
@@ -37,22 +42,92 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  margin: var(--space-3) 0;
+  margin: 0;
+}
+/* A control row keeps its label beside the control without wrapping it: a wrapping <label>
+   forwards its hover to the control, which lit a 240px select up from anywhere in the row. */
+.settings-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 34px;
+  margin: 0;
+}
+.settings-field > label {
+  display: block;
+  margin: 0;
 }
 .settings-content input:not([type='checkbox']),
 .settings-content select {
+  height: 34px;
+  min-width: 0;
+  box-sizing: border-box;
   width: 240px;
   padding: var(--space-2);
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+  transition: border-color var(--duration-fast) ease-out;
+}
+.settings-content input:not([type='checkbox']):hover:not(:disabled),
+.settings-content select:hover:not(:disabled) {
+  border-color: var(--border-hover);
+}
+/* Native disabled styling is only a dimmed arrow; match the muted, faded look buttons already get. */
+.settings-content fieldset:disabled select,
+.settings-content fieldset:disabled .number-stepper-control input {
+  color: var(--muted);
+  opacity: 0.55;
+  cursor: default;
 }
 .settings-content .settings-check {
+  min-height: 34px;
   justify-content: flex-start;
+  cursor: pointer;
+  transition: color var(--duration-fast) ease-out;
+}
+.settings-content .settings-check:hover {
+  color: var(--accent);
 }
 .settings-content .settings-check input {
   margin: 0;
+}
+.settings-content .number-stepper-control input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+}
+@media (max-width: 720px) {
+  .app-shell:has(.settings-page) .brand {
+    margin-right: 8px;
+  }
+  .app-shell:has(.settings-page) .brand-secondary {
+    display: none;
+  }
+  .app-shell:has(.settings-page) .topbar nav {
+    gap: 0;
+    flex: 1;
+    min-width: 0;
+  }
+  .app-shell:has(.settings-page) .topbar nav button {
+    min-width: 0;
+    padding-inline: 8px;
+  }
+  .settings-page {
+    grid-template-columns: 120px minmax(0, 1fr);
+  }
+  .settings-content {
+    padding: var(--space-3);
+  }
+  .settings-field {
+    flex-wrap: wrap;
+  }
+  .settings-field > select {
+    max-width: 100%;
+  }
 }
 .settings-content p {
   color: var(--muted);
@@ -60,7 +135,362 @@
 .settings-content button {
   border-color: var(--border);
 }
-.settings-content :focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.number-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin: var(--space-3) 0;
+}
+.settings-content .number-stepper {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 24px;
+  margin: 0;
+  min-height: 34px;
+}
+.settings-content .number-stepper-control {
+  height: 34px;
+  min-height: 34px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.settings-content .number-stepper-control input {
+  height: 32px;
+}
+.settings-content .size-fields {
+  display: grid;
+  gap: 12px;
+}
+.settings-content .readonly-values,
+.settings-content .hotkey-row {
+  margin: 0;
+  min-height: 34px;
+}
+.settings-content fieldset > button {
+  justify-self: start;
+  min-height: 34px;
+}
+@container (max-width: 480px) {
+  .settings-content .settings-field,
+  .settings-content .number-stepper {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .settings-content select,
+  .settings-content .number-stepper-control,
+  .settings-content .settings-field > .settings-slider {
+    width: 100%;
+    max-width: none;
+  }
+  .settings-content .aspect-row {
+    width: auto;
+    left: auto;
+    right: 14px;
+    top: 0;
+    transform: none;
+    height: 20px;
+  }
+  .settings-content .aspect-track {
+    border: 0;
+  }
+  .settings-content .aspect-track::before,
+  .settings-content .aspect-track::after {
+    display: none;
+  }
+}
+.number-stepper-label {
+  color: var(--text);
+}
+.number-stepper-control {
+  display: flex;
+  align-items: center;
+  /* Grows to the cap in the settings page, shrinks to fit inside a popover. */
+  flex: 1;
+  min-width: 0;
+  max-width: 240px;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  transition: border-color var(--duration-fast) ease-out;
+}
+.number-stepper-control:focus-within {
+  border-color: var(--accent);
+}
+.number-stepper-control button {
+  width: 34px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.number-stepper-control input {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: center;
+  font: inherit;
+  /* The stepper ships its own −/+ buttons, so the browser's spinners are redundant clutter. */
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.number-stepper-control input::-webkit-outer-spin-button,
+.number-stepper-control input::-webkit-inner-spin-button {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+}
+.number-stepper-control input:focus {
+  outline: 0;
+}
+.number-unit {
+  color: var(--muted);
+  padding-right: var(--space-2);
+}
+/* Read-only pairs sit next to each other rather than pinned to opposite edges. */
+.readonly-values {
+  display: flex;
+  gap: var(--space-4);
+  margin: var(--space-3) 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+.readonly-values b {
+  color: var(--text);
+  font-weight: 500;
+}
+/* The width/height pair and the row that links them. The row's negative margins cancel the fields'
+   own margins, so it occupies exactly the seam the two fields would have left anyway. */
+.size-fields {
+  position: relative;
+}
+/* Taken out of flow: the bracket reaches from the middle of one row to the middle of the next,
+   but the two fields keep the spacing they would have had without it. */
+.aspect-row {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  height: 46px;
+  pointer-events: none;
+}
+/* Holds the label column open so the bracket starts at the right edge of the label text. */
+.aspect-spacer {
+  visibility: hidden;
+}
+/* A bracket joining the two labels: a stub out of each one, turned down and up into a vertical
+   run that the chain icon sits on. The run is two segments rather than one line through the
+   icon, so nothing is drawn behind it. */
+.aspect-track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 26px;
+  /* Breathing room between the label text and the start of the bracket. */
+  margin-left: 6px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  pointer-events: auto;
+}
+.aspect-track::before,
+.aspect-track::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  width: 1px;
+  height: calc(50% - 10px);
+  background: var(--border);
+}
+.aspect-track::before {
+  top: 0;
+}
+.aspect-track::after {
+  bottom: 0;
+}
+.setting-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.hint-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  cursor: help;
+}
+/* Hover brightens the glyph only — no disc behind it. */
+.hint-mark:hover:not(:disabled),
+.hint-mark:focus-visible {
+  color: var(--text);
+  background: transparent;
+  border-color: transparent;
+}
+.hint-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: 280px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  white-space: pre-line;
+  visibility: hidden;
+  opacity: 0;
+  /* Delaying the visibility flip lets the fade-out actually run; without it the element is cut
+     the moment the pointer leaves and the opacity transition never renders. */
+  transition:
+    opacity var(--duration-fast) ease-out,
+    visibility 0s linear var(--duration-fast);
+  pointer-events: none;
+}
+.setting-help:hover .hint-tip,
+.setting-help:focus-within .hint-tip {
+  visibility: visible;
+  opacity: 1;
+  transition-delay: 0s;
+}
+/* Hotkey recorder: a focusable keycap display that records the next combination, plus a clear
+   button. A refused combination is marked beside the field, never as a message under it. */
+.hotkey-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-3) 0;
+}
+.hotkey-label {
+  color: var(--text);
+}
+.hotkey-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.hotkey-keys {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-width: 190px;
+  min-height: 34px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+}
+.hotkey-keys.recording,
+.hotkey-keys.recording:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--selected);
+}
+.hotkey-value {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.hotkey-keys kbd {
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.hotkey-hint {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+.hotkey-clear {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  min-height: 34px;
+  padding: 0;
+  border-color: var(--border);
+  color: var(--muted);
+}
+.hotkey-clear:hover:not(:disabled) {
+  color: var(--text);
+}
+.hotkey-warning {
+  display: grid;
+  place-items: center;
+  color: var(--danger);
+}
+/* The page styles every text input at a fixed width; a slider is not one of those. */
+.settings-field > .settings-slider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 240px;
+}
+.settings-content .settings-slider input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.settings-slider output {
+  width: 42px;
+  text-align: right;
+}
+/* Aspect-ratio link: a bare vertical chain on the connector between the two fields. On/off is the
+   icon's own colour — the button never paints a background. */
+.aspect-link {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translate(50%, -50%);
+  display: grid;
+  place-items: center;
+  width: 20px;
+  min-height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+}
+.aspect-link svg {
+  /* The chain icon is drawn horizontally; the connector it sits on is vertical. */
+  transform: rotate(90deg);
+}
+.aspect-link:hover:not(:disabled),
+.aspect-link.active:hover:not(:disabled) {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text);
+}
+.aspect-link.active,
+.aspect-link.active:hover:not(:disabled) {
+  background: transparent;
+  color: var(--accent);
+}
+.app-shell:has(.settings-page) {
+  min-width: 0;
 }

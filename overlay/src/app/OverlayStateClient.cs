@@ -34,21 +34,21 @@ internal sealed class OverlayStateClient : IDisposable
     {
         lock (watcherLock)
         {
-        if (stop.IsCancellationRequested) return;
-        foreach (var w in watchers) w.Dispose(); watchers.Clear();
-        foreach (var path in new[] { b.MapDirectory, b.AssetDirectory, b.AnnotationsDirectory, b.TileDirectory }.Distinct())
-        {
-            if (!Directory.Exists(path)) continue;
-            var w = new FileSystemWatcher(path) { IncludeSubdirectories = true, NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName };
-            void Changed(object? sender, FileSystemEventArgs e)
+            if (stop.IsCancellationRequested) return;
+            foreach (var w in watchers) w.Dispose(); watchers.Clear();
+            foreach (var path in new[] { b.MapDirectory, b.AssetDirectory, b.AnnotationsDirectory, b.TileDirectory }.Distinct())
             {
-                if (path != b.AnnotationsDirectory) Interlocked.Exchange(ref resourcesChanged, 1);
-                Interlocked.Exchange(ref fileChanged, 1); wake();
+                if (!Directory.Exists(path)) continue;
+                var w = new FileSystemWatcher(path) { IncludeSubdirectories = true, NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName };
+                void Changed(object? sender, FileSystemEventArgs e)
+                {
+                    if (path != b.AnnotationsDirectory) Interlocked.Exchange(ref resourcesChanged, 1);
+                    Interlocked.Exchange(ref fileChanged, 1); wake();
+                }
+                w.Changed += Changed; w.Created += Changed; w.Deleted += Changed; w.Renamed += (s, e) => Changed(s, e);
+                w.Error += (_, _) => { Interlocked.Exchange(ref fileChanged, 1); wake(); };
+                w.EnableRaisingEvents = true; watchers.Add(w);
             }
-            w.Changed += Changed; w.Created += Changed; w.Deleted += Changed; w.Renamed += (s, e) => Changed(s, e);
-            w.Error += (_, _) => { Interlocked.Exchange(ref fileChanged, 1); wake(); };
-            w.EnableRaisingEvents = true; watchers.Add(w);
-        }
         }
     }
     private async Task RunAsync()
@@ -68,21 +68,33 @@ internal sealed class OverlayStateClient : IDisposable
                 OverlayDiagnostics.Log("info", "state_connected", "Backend WebSocket connected");
                 Connected = true; delay = 250; wake();
                 var buffer = new byte[65536];
-                while (!stop.IsCancellationRequested)
+                try
                 {
-                    using var message = new MemoryStream();
-                    using var heartbeat = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
-                    heartbeat.CancelAfter(TimeSpan.FromSeconds(7));
-                    WebSocketReceiveResult part;
-                    do
+                    while (!stop.IsCancellationRequested)
                     {
-                        part = await socket.ReceiveAsync(buffer, heartbeat.Token);
-                        if (part.MessageType == WebSocketMessageType.Close) throw new IOException("WebSocket closed");
-                        if (message.Length + part.Count > 16 * 1024 * 1024) throw new InvalidDataException("WebSocket message too large");
-                        message.Write(buffer, 0, part.Count);
-                    } while (!part.EndOfMessage);
-                    var e = JsonSerializer.Deserialize<ServerEvent>(message.GetBuffer().AsSpan(0, (int)message.Length), OverlaySettingsStore.Json);
-                    if (e is not null && e.Type != "heartbeat") { events.Enqueue(e); wake(); }
+                        using var message = new MemoryStream();
+                        using var heartbeat = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
+                        heartbeat.CancelAfter(TimeSpan.FromSeconds(7));
+                        WebSocketReceiveResult part;
+                        do
+                        {
+                            part = await socket.ReceiveAsync(buffer, heartbeat.Token);
+                            if (part.MessageType == WebSocketMessageType.Close) break;
+                            if (message.Length + part.Count > 16 * 1024 * 1024) throw new InvalidDataException("WebSocket message too large");
+                            message.Write(buffer, 0, part.Count);
+                        } while (!part.EndOfMessage);
+                        if (part.MessageType == WebSocketMessageType.Close) break;
+                        var e = JsonSerializer.Deserialize<ServerEvent>(message.GetBuffer().AsSpan(0, (int)message.Length), OverlaySettingsStore.Json);
+                        if (e is not null && e.Type != "heartbeat") { events.Enqueue(e); wake(); }
+                    }
+                }
+                finally
+                {
+                    if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+                    {
+                        using var close = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+                        try { await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "client shutting down", close.Token); } catch (Exception) { }
+                    }
                 }
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
@@ -93,6 +105,19 @@ internal sealed class OverlayStateClient : IDisposable
         }
     }
     internal async Task<OverlaySettings> GetSettingsAsync() => await http.GetFromJsonAsync<OverlaySettings>("api/overlay-settings", stop.Token) ?? throw new InvalidDataException("Empty settings");
+    // Tiles travel through the backend rather than off the disk: the pipeline only pre-downloads the
+    // lowest zoom of each floor, and the server fetches the rest on demand — the same path the
+    // dashboard's map uses, so both ends show the same imagery.
+    internal async Task<byte[]> TileAsync(string url, CancellationToken token)
+    {
+        // Tiles are addressed relative to the backend. An absolute URL would be fetched from
+        // whatever host the map data names, so only a path is allowed through.
+        if (!url.StartsWith('/') || url.StartsWith("//")) throw new InvalidDataException("Tile url is not a backend path");
+        using var response = await http.GetAsync(url, token);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) throw new InvalidDataException("Tile is outside the layer bounds");
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsByteArrayAsync(token);
+    }
     internal async Task ReportAsync(OverlayView view)
     {
         try { using var response = await http.PutAsJsonAsync("api/overlay/state", view, stop.Token); response.EnsureSuccessStatusCode(); }
@@ -101,7 +126,8 @@ internal sealed class OverlayStateClient : IDisposable
     internal async Task SaveAsync(OverlaySettings settings)
     {
         var entered = false;
-        try {
+        try
+        {
             await saves.WaitAsync(stop.Token); entered = true;
             using var response = await http.PutAsJsonAsync("api/overlay-settings", settings, stop.Token); response.EnsureSuccessStatusCode();
         }

@@ -1,7 +1,9 @@
+import { mapDisplay } from '../../../../../contracts/ts/map-display.gen';
 import L from 'leaflet';
 import KDBush from 'kdbush';
 import type { MapData, MapPreference } from '../../../../../contracts/ts/ipc.gen';
 import { latLng } from './annotations';
+import { artwork } from './artwork';
 
 type Entry = {
   id: number;
@@ -16,7 +18,6 @@ type Entry = {
 type Sprite = {
   image: HTMLImageElement;
   art: boolean;
-  bounds?: [number, number, number, number];
   canvas?: HTMLCanvasElement;
 };
 
@@ -83,7 +84,7 @@ export class BuiltinMarkers extends L.Layer {
   onAdd(map: L.Map) {
     this.attached = true;
     const pane = map.getPane('builtin-icons') || map.createPane('builtin-icons');
-    pane.style.zIndex = '590';
+    pane.style.zIndex = String(mapDisplay.iconPane);
     pane.style.pointerEvents = 'none';
     pane.append(this.canvas);
     this.iconSize =
@@ -320,79 +321,7 @@ export class BuiltinMarkers extends L.Layer {
       image.src = url;
     }
     if (!sprite.image.complete || !sprite.image.naturalWidth) return;
-    if (!sprite.canvas) {
-      if (!sprite.bounds) {
-        const { naturalWidth: width, naturalHeight: height } = sprite.image;
-        sprite.bounds = [0, 0, width, height];
-        if (art) {
-          // Item images include inventory-cell padding. Measure visible content once per image.
-          const source = document.createElement('canvas');
-          source.width = width;
-          source.height = height;
-          const sourceContext = source.getContext('2d')!;
-          sourceContext.drawImage(sprite.image, 0, 0);
-          const pixels = sourceContext.getImageData(0, 0, width, height).data;
-          let left = width,
-            top = height,
-            right = -1,
-            bottom = -1;
-          for (let y = 0; y < height; y++)
-            for (let x = 0; x < width; x++) {
-              if (!pixels[(y * width + x) * 4 + 3]) continue;
-              left = Math.min(left, x);
-              top = Math.min(top, y);
-              right = Math.max(right, x);
-              bottom = Math.max(bottom, y);
-            }
-          if (right >= left) sprite.bounds = [left, top, right - left + 1, bottom - top + 1];
-        }
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = canvas.height = Math.round((this.iconSize + 8) * this.dpr);
-      const size = canvas.width / this.dpr;
-      const ctx = canvas.getContext('2d')!;
-      ctx.scale(this.dpr, this.dpr);
-      const [x, y, sourceWidth, sourceHeight] = sprite.bounds;
-      const scale = this.iconSize / Math.max(sourceWidth, sourceHeight);
-      const width = sourceWidth * scale,
-        height = sourceHeight * scale;
-      ctx.drawImage(
-        sprite.image,
-        x,
-        y,
-        sourceWidth,
-        sourceHeight,
-        (size - width) / 2,
-        (size - height) / 2,
-        width,
-        height,
-      );
-      if (art) {
-        // Canvas drop-shadow loses the fractional outline in Firefox. Bake the same four
-        // white silhouettes with basic compositing instead, once per cached sprite.
-        const shadow = document.createElement('canvas');
-        shadow.width = shadow.height = canvas.width;
-        const shadowContext = shadow.getContext('2d')!;
-        ctx.resetTransform();
-        for (const [dx, dy] of [
-          [1, 1],
-          [-1, -1],
-          [-1, 1],
-          [1, -1],
-        ]) {
-          shadowContext.clearRect(0, 0, shadow.width, shadow.height);
-          shadowContext.drawImage(canvas, dx * 0.12 * this.dpr, dy * 0.12 * this.dpr);
-          shadowContext.globalCompositeOperation = 'source-in';
-          shadowContext.fillStyle = '#fff';
-          shadowContext.fillRect(0, 0, shadow.width, shadow.height);
-          shadowContext.globalCompositeOperation = 'source-over';
-          shadowContext.drawImage(canvas, 0, 0);
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          ctx.drawImage(shadow, 0, 0);
-        }
-      }
-      sprite.canvas = canvas;
-    }
+    if (!sprite.canvas) sprite.canvas = artwork(sprite.image, this.iconSize, this.dpr, art);
     return sprite.canvas;
   }
 

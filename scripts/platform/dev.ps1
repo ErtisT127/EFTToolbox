@@ -7,6 +7,8 @@ try {
     & pnpm.cmd install --frozen-lockfile
     if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
     if (-not (Test-Path 'data/upstream/catalog.json')) { throw 'Map cache missing; run pnpm toolbox data refresh first.' }
+    & pnpm.cmd toolbox data fonts --check
+    if ($LASTEXITCODE -ne 0) { throw 'Display resources missing or changed; run pnpm toolbox data fonts.' }
     & pnpm.cmd build
     if ($LASTEXITCODE -ne 0) { throw 'Dashboard build failed' }
     New-Item -ItemType Directory -Force build | Out-Null
@@ -28,7 +30,7 @@ try {
         if (-not $serverProcess.HasExited) {
             $serverProcess.StandardInput.Close()
             if (-not $serverProcess.WaitForExit(6000)) {
-                $serverProcess.Kill()
+                $serverProcess.Kill($true)
                 $serverProcess.WaitForExit()
             }
         }

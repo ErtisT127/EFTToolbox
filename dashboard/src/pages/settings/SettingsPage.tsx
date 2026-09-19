@@ -1,42 +1,33 @@
 import { useEffect, useState } from 'react';
 import type { MapData, MapSummary, OverlaySettings } from '../../../../contracts/ts/ipc.gen';
+import { OverlaySettingsLimits, OverlayViewLimits } from '../../../../contracts/ts/ipc.gen';
 import { useOverlay } from '../../stores/overlayStore';
+import { notices } from '../../stores/noticeStore';
 import { request } from '../../stores/workspaceStore';
 import { useLocale } from '../../hooks/useLocale';
+import { NumberStepper } from '../../components/NumberStepper';
+import { HotkeyRecorder } from '../../components/HotkeyRecorder';
+import { formatCoordinate, resizeOverlay } from '../../lib/overlayScale';
+import { Link2, Unlink2 } from 'lucide-react';
 import '../../styles/settings.css';
 
-function NumberSetting({
-  label,
-  value,
-  min,
-  max,
-  change,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  change: (n: number) => void;
-}) {
-  return (
-    <label>
-      {label}
-      <input
-        key={value}
-        type="number"
-        defaultValue={value}
-        min={min}
-        max={max}
-        step="any"
-        onBlur={(e) => {
-          const n = e.currentTarget.valueAsNumber;
-          if (Number.isFinite(n) && n >= min && n <= max && n !== value) change(n);
-          else if (!e.currentTarget.validity.valid) e.currentTarget.reportValidity();
-        }}
-      />
-    </label>
-  );
-}
+// Declaration order matches the contract: the overlay reports a refused shortcut by the field name
+// and the backend validates duplicates across the whole set.
+const hotkeyKeys = [
+  'toggleEdit',
+  'toggleVisible',
+  'zoomIn',
+  'zoomOut',
+  'floorUp',
+  'floorDown',
+  'toggleBasemap',
+  'panUp',
+  'panDown',
+  'panLeft',
+  'panRight',
+] as const;
+type HotkeyKey = (typeof hotkeyKeys)[number];
+
 export function SettingsPage() {
   const { t } = useLocale();
   const store = useOverlay();
@@ -62,16 +53,23 @@ export function SettingsPage() {
       });
     return () => controller.abort();
   }, [view?.mapId]);
+  // Failures with no field of their own go to the window-level notice; store.error is already
+  // reported there by the shell.
+  useEffect(() => {
+    if (loadError) notices.push(t(loadError));
+  }, [loadError, t]);
+  useEffect(() => {
+    if (view?.error) notices.push(t('settings.nativeError', { error: t(view.error) }));
+  }, [view?.error, t]);
   const update = (v: Partial<OverlaySettings>) => store.update(v);
-  const check = (
-    key:
-      | 'lockAspect'
-      | 'followCenter'
-      | 'followFloor'
-      | 'followZoom'
-      | 'perMapZoom'
-      | 'devPlayerEnabled',
-  ) => (
+  // A dragged slider reports on every pixel; the write follows the last of them.
+  const updateSoon = (v: Partial<OverlaySettings>) => store.updateSoon(v);
+  // Window visibility and edit mode belong to the overlay: ask it, and let its report update the UI.
+  const setVisible = (visible: boolean) => {
+    if (view?.connected) void store.command({ kind: 'visible', enabled: visible });
+    else update({ visible });
+  };
+  const check = (key: 'followCenter' | 'followFloor' | 'followZoom' | 'devPlayerEnabled') => (
     <label className="settings-check">
       <input
         type="checkbox"
@@ -81,41 +79,33 @@ export function SettingsPage() {
       {t(`settings.${key}`)}
     </label>
   );
-  const number = (
-    key: 'width' | 'height' | 'left' | 'top' | 'targetZoom',
-    min: number,
-    max: number,
-  ) => (
-    <NumberSetting
-      label={t(`settings.${key}`)}
-      value={value![key]}
-      min={min}
-      max={max}
-      change={(n) => {
-        const v: Partial<OverlaySettings> = { [key]: n };
-        if (
-          value &&
-          (key === 'width' || key === 'height') &&
-          (value.lockAspect || value.shape === 'circle')
-        ) {
-          if (value.shape === 'circle') {
-            v.width = v.height = n;
-          } else {
-            const scale = Math.max(
-              160 / value.width,
-              160 / value.height,
-              Math.min(n / value[key], 2048 / value.width, 2048 / value.height),
-            );
-            v.width = Math.round(value.width * scale);
-            v.height = Math.round(value.height * scale);
-          }
-        }
-        update(v);
-      }}
-    />
-  );
   const selectedMap = mapId || view?.mapId || catalog[0]?.id || '';
   const override = value?.mapZooms.find((z) => z.mapId === selectedMap);
+  const viewZoomMin = map?.tiles.length ? Math.min(...map.tiles.map((tile) => tile.minZoom)) : -10;
+  const viewZoomMax = map?.tiles.length
+    ? Math.min(12, Math.max(...map.tiles.map((tile) => tile.maxZoom)) + 1)
+    : 4;
+  // The current view reports the map's own bounds, not the settings' -10..12.
+  const viewZoomLimit = { ...OverlayViewLimits.zoom, min: viewZoomMin, max: viewZoomMax };
+  const zoomValue = (zoom: number) =>
+    Number(zoom.toFixed(OverlaySettingsLimits.targetZoom.precision));
+  // A duplicate is a property of the values, not of the moment it was typed: both fields that hold
+  // the same combination are flagged, and either one clearing it clears both.
+  const hotkeyConflict = (key: HotkeyKey) => {
+    const combo = value?.hotkeys[key];
+    return !!combo && hotkeyKeys.some((other) => other !== key && value?.hotkeys[other] === combo);
+  };
+  // Registration failures come back from the overlay per field; a duplicate never reaches Windows,
+  // so its own message would be the misleading "another program holds it".
+  const hotkeyError = (key: HotkeyKey) =>
+    !hotkeyConflict(key) && (view?.hotkeyFailed ?? []).includes(key)
+      ? t('errors.overlay_hotkey_unavailable')
+      : undefined;
+  // Windows swallows a registered hot key before the browser sees it, so the overlay has to let go
+  // of them while a shortcut is being recorded — otherwise its own combinations cannot be typed.
+  const recordHotkeys = (recording: boolean) => {
+    if (view?.connected) void store.command({ kind: 'hotkeys', enabled: !recording });
+  };
   return (
     <section className="settings-page">
       <aside className="settings-tabs" role="tablist" aria-label={t('nav.settings')}>
@@ -148,48 +138,23 @@ export function SettingsPage() {
         aria-labelledby={`settings-tab-${tab}`}
       >
         <h1>{t(`settings.${tab}`)}</h1>
-        {(store.error || loadError) && (
-          <div role="alert" className="danger">
-            {t(store.error || loadError)}{' '}
-            <button onClick={() => void (value ? store.save() : store.load())}>
-              {t('common.retry')}
-            </button>
-          </div>
-        )}
-        {view?.error && (
-          <p role="alert" className="danger">
-            {t('settings.nativeError', { error: t(view.error) })}
-          </p>
-        )}
-        <p role="status">
-          {t(
-            !view?.connected
-              ? 'settings.unavailable'
-              : store.saving
-                ? 'settings.saving'
-                : 'settings.ready',
-          )}
-        </p>
         {!value ? (
           <p>{t('common.loading')}</p>
         ) : tab === 'hotkeys' ? (
           <fieldset>
-            <legend>{t('settings.hotkeys')}</legend>
-            <p>{t('settings.hotkeyHint')}</p>
-            {(['toggleEdit', 'toggleVisible'] as const).map((key) => (
-              <label key={key}>
-                {t(`settings.${key}`)}
-                <input
-                  key={value.hotkeys[key]}
-                  defaultValue={value.hotkeys[key]}
-                  placeholder={t('settings.disabled')}
-                  onBlur={(e) => {
-                    if (e.target.value !== value.hotkeys[key])
-                      update({ hotkeys: { ...value.hotkeys, [key]: e.target.value.trim() } });
-                  }}
-                />
-              </label>
+            <legend>{t('settings.hotkeyGroup')}</legend>
+            {hotkeyKeys.map((key) => (
+              <HotkeyRecorder
+                key={key}
+                label={t(`settings.hotkeyAction.${key}`)}
+                value={value.hotkeys[key]}
+                error={hotkeyError(key)}
+                conflict={hotkeyConflict(key)}
+                onRecording={recordHotkeys}
+                onChange={(hotkey) => update({ hotkeys: { ...value.hotkeys, [key]: hotkey } })}
+              />
             ))}
+            {!view?.connected && <p>{t('settings.unavailable')}</p>}
           </fieldset>
         ) : (
           <>
@@ -198,43 +163,193 @@ export function SettingsPage() {
               <label className="settings-check">
                 <input
                   type="checkbox"
-                  checked={value.visible}
-                  onChange={(e) => update({ visible: e.target.checked })}
+                  checked={view?.connected ? view.visible : value.visible}
+                  onChange={(e) => setVisible(e.target.checked)}
                 />
                 {t('settings.visible')}
               </label>
-              <label>
-                {t('settings.shape')}
+              <div className="settings-field">
+                <label htmlFor="settings-opacity">{t('settings.opacity')}</label>
+                <span className="settings-slider">
+                  <input
+                    id="settings-opacity"
+                    type="range"
+                    min={OverlaySettingsLimits.opacity.min}
+                    max={OverlaySettingsLimits.opacity.max}
+                    step={OverlaySettingsLimits.opacity.step}
+                    value={value.opacity ?? OverlaySettingsLimits.opacity.max}
+                    onChange={(e) => updateSoon({ opacity: Number(e.target.value) })}
+                  />
+                  <output htmlFor="settings-opacity">
+                    {value.opacity ?? OverlaySettingsLimits.opacity.max}%
+                  </output>
+                </span>
+              </div>
+              <label className="settings-check">
+                <input
+                  type="checkbox"
+                  checked={value.backdrop}
+                  onChange={(e) => update({ backdrop: e.target.checked })}
+                />
+                {t('settings.backdrop')}
+              </label>
+              <div className="settings-field">
+                <label htmlFor="settings-shape">{t('settings.shape')}</label>
                 <select
+                  id="settings-shape"
                   value={value.shape}
                   onChange={(e) => update({ shape: e.target.value as OverlaySettings['shape'] })}
                 >
                   <option value="square">{t('settings.square')}</option>
                   <option value="circle">{t('settings.circle')}</option>
                 </select>
-              </label>
-              {number('width', 160, 2048)}
-              {number('height', 160, 2048)}
-              {check('lockAspect')}
-              <label>
-                {t('settings.svgResolution')}
+              </div>
+              <div className="size-fields">
+                <NumberStepper
+                  label={t('settings.width')}
+                  value={value.width}
+                  limit={OverlaySettingsLimits.width}
+                  onChange={(width) => update(resizeOverlay(value, 'width', width))}
+                />
+                {value.shape === 'square' && (
+                  <div className="aspect-row">
+                    <span className="aspect-spacer" aria-hidden="true">
+                      {t('settings.width')}
+                    </span>
+                    <span className="aspect-track">
+                      <button
+                        className={`aspect-link ${value.lockAspect ? 'active' : ''}`}
+                        aria-label={t('settings.lockAspect')}
+                        title={t('settings.lockAspect')}
+                        aria-pressed={value.lockAspect}
+                        onClick={() => update({ lockAspect: !value.lockAspect })}
+                      >
+                        {value.lockAspect ? <Link2 size={14} /> : <Unlink2 size={14} />}
+                      </button>
+                    </span>
+                  </div>
+                )}
+                <NumberStepper
+                  label={t('settings.height')}
+                  value={value.height}
+                  limit={OverlaySettingsLimits.height}
+                  onChange={(height) => update(resizeOverlay(value, 'height', height))}
+                />
+              </div>
+              <div className="settings-field">
+                <label htmlFor="settings-resolution">
+                  <span className="setting-help">
+                    {t('settings.svgQualityMode')}
+                    <button
+                      type="button"
+                      className="hint-mark"
+                      aria-label={t('settings.svgResolutionHint')}
+                    >
+                      ?
+                    </button>
+                    <span className="hint-tip" role="tooltip" aria-hidden="true">
+                      {t('settings.svgResolutionHint')}
+                    </span>
+                  </span>
+                </label>
                 <select
-                  value={value.svgResolution}
-                  onChange={(e) => update({ svgResolution: Number(e.target.value) })}
+                  id="settings-resolution"
+                  value={value.svgQualityMode === 'auto' ? 'auto' : String(value.svgResolution)}
+                  onChange={(e) =>
+                    update(
+                      e.target.value === 'auto'
+                        ? { svgQualityMode: 'auto' }
+                        : { svgQualityMode: 'fixed', svgResolution: Number(e.target.value) },
+                    )
+                  }
                 >
-                  {[1024, 2048, 4096].map((n) => (
+                  <option value="auto">{t('settings.svgQualityAuto')}</option>
+                  {[1024, 2048, 4096, 8192].map((n) => (
                     <option key={n} value={n}>
                       {n}
                     </option>
                   ))}
                 </select>
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>{t('settings.follow')}</legend>
+              {check('followCenter')}
+              {check('followFloor')}
+              {check('followZoom')}
+              <label className="settings-check">
+                <input
+                  type="checkbox"
+                  checked={!value.perMapZoom}
+                  onChange={(e) => update({ perMapZoom: !e.target.checked })}
+                />
+                {t('settings.perMapZoom')}
               </label>
+              {value.perMapZoom && (
+                <div className="settings-field">
+                  <label htmlFor="settings-map">{t('settings.map')}</label>
+                  <select
+                    id="settings-map"
+                    value={selectedMap}
+                    onChange={(e) => setMapId(e.target.value)}
+                  >
+                    {catalog.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {/* One control, two bindings: unified writes the global target zoom, per-map writes
+                  the entry for the map picked above. */}
+              <NumberStepper
+                label={t('settings.targetZoom')}
+                value={value.perMapZoom ? (override?.zoom ?? value.targetZoom) : value.targetZoom}
+                limit={OverlaySettingsLimits.targetZoom}
+                onChange={(zoom) =>
+                  update(
+                    value.perMapZoom
+                      ? {
+                          mapZooms: [
+                            ...value.mapZooms.filter((z) => z.mapId !== selectedMap),
+                            { mapId: selectedMap, zoom },
+                          ],
+                        }
+                      : { targetZoom: zoom },
+                  )
+                }
+              />
+              {/* Copies the overlay's live zoom into whatever the stepper above is bound to, so the
+                  per-map case lands on the map picked in the selector rather than on whichever map
+                  the overlay happens to be showing. */}
+              <button
+                disabled={!view?.connected}
+                onClick={() => {
+                  if (!view) return;
+                  if (value.perMapZoom)
+                    update({
+                      mapZooms: [
+                        ...value.mapZooms.filter((z) => z.mapId !== selectedMap),
+                        { mapId: selectedMap, zoom: zoomValue(view.zoom) },
+                      ],
+                    });
+                  else update({ targetZoom: zoomValue(view.zoom) });
+                }}
+              >
+                {t('settings.useCurrent')}
+              </button>
             </fieldset>
             <fieldset>
               <legend>{t('settings.window')}</legend>
-              {number('left', -100000, 100000)}
-              {number('top', -100000, 100000)}
-              <p>{t('settings.boundaryHint')}</p>
+              <div className="readonly-values">
+                <span>
+                  {t('settings.left')} <b>{value.left}</b>
+                </span>
+                <span>
+                  {t('settings.top')} <b>{value.top}</b>
+                </span>
+              </div>
               <button
                 disabled={!view?.connected}
                 aria-pressed={!!view?.editing}
@@ -245,35 +360,24 @@ export function SettingsPage() {
             </fieldset>
             <fieldset disabled={!view?.connected}>
               <legend>{t('settings.viewport')}</legend>
-              <p>{t('settings.transientHint')}</p>
-              <NumberSetting
-                label={t('settings.centerX')}
-                value={view?.center.x || 0}
-                min={-1e7}
-                max={1e7}
-                change={(x) =>
-                  void store.command({ kind: 'view', center: { x, y: view?.center.y || 0 } })
-                }
-              />
-              <NumberSetting
-                label={t('settings.centerY')}
-                value={view?.center.y || 0}
-                min={-1e7}
-                max={1e7}
-                change={(y) =>
-                  void store.command({ kind: 'view', center: { x: view?.center.x || 0, y } })
-                }
-              />
-              <NumberSetting
+              <div className="readonly-values">
+                <span>
+                  {t('settings.centerX')} <b>{formatCoordinate(view?.center.x || 0)}</b>
+                </span>
+                <span>
+                  {t('settings.centerY')} <b>{formatCoordinate(view?.center.y || 0)}</b>
+                </span>
+              </div>
+              <NumberStepper
                 label={t('settings.zoom')}
                 value={view?.zoom || 0}
-                min={-10}
-                max={12}
-                change={(zoom) => void store.command({ kind: 'view', zoom })}
+                limit={viewZoomLimit}
+                onChange={(zoom) => void store.command({ kind: 'view', zoom })}
               />
-              <label>
-                {t('settings.floor')}
+              <div className="settings-field">
+                <label htmlFor="settings-floor">{t('settings.floor')}</label>
                 <select
+                  id="settings-floor"
                   value={view?.floorId || ''}
                   onChange={(e) => void store.command({ kind: 'view', floorId: e.target.value })}
                 >
@@ -283,67 +387,7 @@ export function SettingsPage() {
                     </option>
                   ))}
                 </select>
-              </label>
-            </fieldset>
-            <fieldset>
-              <legend>{t('settings.follow')}</legend>
-              {check('followCenter')}
-              {check('followFloor')}
-              {check('followZoom')}
-              {number('targetZoom', -10, 12)}
-              {check('perMapZoom')}
-              {value.perMapZoom && (
-                <>
-                  <label>
-                    {t('settings.map')}
-                    <select value={selectedMap} onChange={(e) => setMapId(e.target.value)}>
-                      {catalog.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <NumberSetting
-                    label={t('settings.mapZoom')}
-                    value={override?.zoom ?? value.targetZoom}
-                    min={-10}
-                    max={12}
-                    change={(zoom) =>
-                      update({
-                        mapZooms: [
-                          ...value.mapZooms.filter((z) => z.mapId !== selectedMap),
-                          { mapId: selectedMap, zoom },
-                        ],
-                      })
-                    }
-                  />
-                  <button
-                    disabled={!override}
-                    onClick={() =>
-                      update({ mapZooms: value.mapZooms.filter((z) => z.mapId !== selectedMap) })
-                    }
-                  >
-                    {t('settings.useGlobal')}
-                  </button>
-                </>
-              )}
-              <button
-                disabled={!view?.connected}
-                onClick={() => {
-                  if (!view) return;
-                  if (value.perMapZoom)
-                    update({
-                      mapZooms: [
-                        ...value.mapZooms.filter((z) => z.mapId !== view.mapId),
-                        { mapId: view.mapId, zoom: view.zoom },
-                      ],
-                    });
-                  else update({ targetZoom: view.zoom });
-                }}
-              >
-                {t('settings.useCurrent')}
-              </button>
+              </div>
             </fieldset>
             <fieldset>
               <legend>{t('settings.development')}</legend>

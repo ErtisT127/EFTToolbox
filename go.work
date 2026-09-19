@@ -1,6 +1,6 @@
-go 1.25.0
+go 1.26.0
 
 use (
-    ./backend
-    ./contracts/go
+	./backend
+	./contracts/go
 )

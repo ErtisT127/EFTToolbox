@@ -8,9 +8,9 @@ internal static class SvgRuntimeBenchmark
 {
     internal static void Run(string root, int resolution = 2048)
     {
-        if (resolution is not (1024 or 2048 or 4096)) throw new ArgumentOutOfRangeException(nameof(resolution));
+        if (resolution is not (1024 or 2048 or 4096 or 8192)) throw new ArgumentOutOfRangeException(nameof(resolution));
         D3D11.D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport, [FeatureLevel.Level_11_0], out ID3D11Device device, out ID3D11DeviceContext context).CheckError();
-        using (device) using (context) using (var textures = new TextureCache(device, 1)) using (var rasterizer = new SvgRasterizer())
+        using (device) using (context) using (var textures = new TextureCache(device, 1, 512L << 20)) using (var rasterizer = new SvgRasterizer())
         {
             var assets = Path.Combine(root, "data", "upstream", "assets");
             foreach (var file in Directory.EnumerateFiles(assets, "*.svg").Where(p => new FileInfo(p).Length > 10000).Order())

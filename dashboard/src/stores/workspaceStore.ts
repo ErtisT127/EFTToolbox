@@ -95,6 +95,7 @@ export class Workspace {
   loading = true;
   error = '';
   preferenceError = '';
+  savingPreferences = false;
   private version = 0;
   private listeners = new Set<() => void>();
   private sequence = 0;
@@ -102,7 +103,6 @@ export class Workspace {
   private preferenceTimer?: ReturnType<typeof setTimeout>;
   private preferenceRevision = 0;
   private preferenceSaved = 0;
-  private savingPreferences = false;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
@@ -289,7 +289,9 @@ export class Workspace {
         await request('/api/map-preferences', put(this.preferences));
         this.preferenceSaved = revision;
       }
-      this.preferenceError = '';
+      // Only a send that actually happened may clear the failure (see overlayStore.save).
+      if (this.preferenceSaved >= this.preferenceRevision && this.preferenceSaved > 0)
+        this.preferenceError = '';
     } catch {
       this.preferenceError = 'errors.preferences_save_failed';
     } finally {

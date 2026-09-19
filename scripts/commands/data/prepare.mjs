@@ -148,6 +148,22 @@ if (unknownFields.size || missingFields.size)
     }`,
   );
 const summaries = [];
+const mapOrder = [
+  'groundzero',
+  'factory',
+  'customs',
+  'woods',
+  'shoreline',
+  'interchange',
+  'reserve',
+  'lighthouse',
+  'streetsoftarkov',
+  'lab',
+  'the-labyrinth',
+  'icebreaker',
+  'terminal',
+];
+const mapRanks = new Map(mapOrder.map((id, index) => [id, index]));
 // Category ids are shared across maps, so the sticker picker offers each one once no matter how
 // many maps carry it.
 const catalogCategories = new Map();
@@ -786,6 +802,9 @@ for (const file of await readdir(path.join(upstream, 'maps'))) {
   )
     await unlink(path.join(upstream, 'maps', file));
 }
+summaries.sort(
+  (a, b) => (mapRanks.get(a.id) ?? mapOrder.length) - (mapRanks.get(b.id) ?? mapOrder.length),
+);
 await writeFile(path.join(upstream, 'catalog.json'), JSON.stringify(summaries));
 // The sticker picker's built-in images. An entry is only listed when the item-images step cached
 // its file, so an image upstream stops shipping drops out of the picker instead of rendering as a

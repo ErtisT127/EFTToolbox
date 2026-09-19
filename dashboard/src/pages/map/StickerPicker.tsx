@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import type { Sticker, StickerUsage } from '../../../../contracts/ts/ipc.gen';
 import { useLocale } from '../../hooks/useLocale';
 import { SearchInput } from '../../components/SearchInput';
+import { mapDisplay } from '../../../../contracts/ts/map-display.gen';
 
 // The built-in glyphs. They replace the old four emoji groups, so the picker has one curated set
 // rather than two overlapping ones.
@@ -226,7 +227,13 @@ export function StickerPicker({ stickers, recent, onPick, onClose }: Props) {
                       aria-label={item.name}
                       onClick={() => onPick({ emoji: item.emoji, imageId: '' })}
                     >
-                      <span className="sticker-emoji">{item.emoji}</span>
+                      <img
+                        className="sticker-emoji"
+                        width="26"
+                        height="26"
+                        alt=""
+                        src={`/api/map-assets/emoji-${mapDisplay.emoji[item.emoji as keyof typeof mapDisplay.emoji]}.png`}
+                      />
                     </button>
                   ) : (
                     <button

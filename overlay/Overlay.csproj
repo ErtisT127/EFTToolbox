@@ -11,6 +11,7 @@
     </PropertyGroup>
     <ItemGroup>
         <Compile Include="../contracts/cs/Ipc.g.cs" Link="Contracts/Ipc.g.cs" />
+        <Compile Include="../contracts/cs/MapDisplay.g.cs" Link="Contracts/MapDisplay.g.cs" />
         <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
         <PackageReference Include="Svg.Skia" Version="3.5.0" />
         <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />

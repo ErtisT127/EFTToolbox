@@ -7,7 +7,9 @@ internal static class Native
 {
     internal const uint WmClose = 0x0010, WmDestroy = 0x0002, WmSize = 0x0005;
     internal const uint WmDisplayChange = 0x007E, WmDpiChanged = 0x02E0;
-    internal const uint WmNcHitTest = 0x0084, WmMouseActivate = 0x0021;
+    internal const uint WmNcHitTest = 0x0084, WmMouseActivate = 0x0021, WmContextMenu = 0x007B, WmCaptureChanged = 0x0215;
+    internal const uint WmLButtonDown = 0x0201, WmLButtonUp = 0x0202, WmMouseMove = 0x0200, WmMouseWheel = 0x020A;
+    internal const uint WmRButtonDown = 0x0204, WmRButtonUp = 0x0205;
     internal const uint ExStyle = 0x00080000 | 0x00000020 | 0x08000000 | 0x00000080 | 0x00000008 | 0x00200000;
     internal delegate nint WindowProc(nint hwnd, uint message, nuint wParam, nint lParam);
 
@@ -89,14 +91,20 @@ internal static class Native
     [DllImport("user32")]
     internal static extern uint MsgWaitForMultipleObjectsEx(uint count, nint handles, uint milliseconds, uint wakeMask, uint flags);
 
-    [DllImport("user32")] internal static extern bool PostMessage(nint hwnd,uint message,nuint wParam,nint lParam);
-    [DllImport("user32",SetLastError=true)] internal static extern nint SetWindowLongPtr(nint hwnd,int index,nint value);
-    [DllImport("user32")] internal static extern bool GetWindowRect(nint hwnd,out Rect rect);
-    [DllImport("user32")] internal static extern nint MonitorFromRect(ref Rect rect,uint flags);
-    [DllImport("user32",SetLastError=true)] internal static extern bool RegisterHotKey(nint hwnd,int id,uint modifiers,uint key);
-    [DllImport("user32")] internal static extern bool UnregisterHotKey(nint hwnd,int id);
+    [DllImport("user32")] internal static extern bool PostMessage(nint hwnd, uint message, nuint wParam, nint lParam);
+    [DllImport("user32", SetLastError = true)] internal static extern nint SetWindowLongPtr(nint hwnd, int index, nint value);
+    [DllImport("user32")] internal static extern bool GetWindowRect(nint hwnd, out Rect rect);
+    [DllImport("user32")] internal static extern nint MonitorFromRect(ref Rect rect, uint flags);
+    [DllImport("user32", SetLastError = true)] internal static extern bool RegisterHotKey(nint hwnd, int id, uint modifiers, uint key);
+    [DllImport("user32")] internal static extern bool UnregisterHotKey(nint hwnd, int id);
     [DllImport("user32")] internal static extern nint SetCapture(nint hwnd);
     [DllImport("user32")] internal static extern bool ReleaseCapture();
     [DllImport("user32")] internal static extern bool GetCursorPos(out CursorPoint point);
-    [StructLayout(LayoutKind.Sequential)] internal struct CursorPoint {internal int X,Y;}
+    // High bit set = the key is currently down. Used to track a held hotkey between frames.
+    [DllImport("user32")] internal static extern short GetAsyncKeyState(int key);
+    internal const int VkShift = 0x10, VkControl = 0x11, VkMenu = 0x12, VkLWin = 0x5B, VkRWin = 0x5C;
+    [DllImport("user32", CharSet = CharSet.Unicode)] internal static extern nint LoadCursor(nint instance, nint name);
+    [DllImport("user32")] internal static extern nint SetCursor(nint cursor);
+    internal static readonly nint SizeNWSE = 32642, SizeNESW = 32643, SizeWE = 32644, SizeNS = 32645, SizeAll = 32646, Arrow = 32512;
+    [StructLayout(LayoutKind.Sequential)] internal struct CursorPoint { internal int X, Y; }
 }

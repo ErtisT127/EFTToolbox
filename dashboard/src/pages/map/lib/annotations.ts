@@ -1,3 +1,4 @@
+import { mapDisplay } from '../../../../../contracts/ts/map-display.gen';
 import L from 'leaflet';
 import type {
   Annotation,
@@ -6,6 +7,7 @@ import type {
   Sticker,
 } from '../../../../../contracts/ts/ipc.gen';
 import { segmentDistance } from './geometry';
+import { rimmedArtwork } from './artwork';
 
 export const latLng = (point: Point): L.LatLngTuple => [-point.y, point.x];
 
@@ -27,6 +29,9 @@ function placeholderSticker() {
   missing.textContent = '?';
   return missing;
 }
+
+// The sticker slot, matching .annotation-sticker's width in map.css.
+const StickerSize = mapDisplay.stickerSize;
 
 export const isAnnotationVisible = (a: Annotation, preference: MapPreference) =>
   a.floorId === preference.floorId && preference.showAnnotations;
@@ -67,33 +72,53 @@ export function paintAnnotations(
       element.append(label);
       if (glyph === 'sticker') {
         const icon = stickers.get(a.imageId);
-        // Extract and container icons are badges carrying a rim of their own. Every other
-        // sticker is bare art, like the loose-loot markers, and needs the same white outline
-        // to separate it from the map underneath.
-        if (icon && icon.group !== 'extract' && icon.group !== 'container')
-          element.classList.add('marker-art');
-        const sticker = document.createElement(icon ? 'img' : 'span');
-        sticker.className = 'annotation-sticker';
-        if (icon && sticker instanceof HTMLImageElement) {
-          sticker.src = icon.iconUrl;
-          sticker.alt = '';
-          sticker.draggable = false;
-          sticker.decoding = 'async';
-          // The catalogue is built from whatever was cached, so a stored id can still miss
-          // after a refresh drops the image. Swap in the placeholder rather than leaving a
-          // broken-image box the user cannot recognise.
-          sticker.addEventListener('error', () => {
-            sticker.replaceWith(placeholderSticker());
-          });
+        // Badges retain their padding; portraits are cropped but do not get an extra white rim.
+        const bare = !!icon && icon.group !== 'extract' && icon.group !== 'container';
+        const fallback = document.createElement(icon ? 'img' : 'span');
+        fallback.className = 'annotation-sticker';
+        const baked =
+          icon && bare
+            ? rimmedArtwork(
+                icon.iconUrl,
+                StickerSize,
+                window.devicePixelRatio || 1,
+                (canvas) => fallback.replaceWith(canvas),
+                !['boss', 'trader'].includes(icon.group),
+              )
+            : null;
+        if (baked) {
+          element.append(baked);
         } else {
-          sticker.append(placeholderSticker());
+          if (icon && fallback instanceof HTMLImageElement) {
+            fallback.src = icon.iconUrl;
+            fallback.alt = '';
+            fallback.draggable = false;
+            fallback.decoding = 'async';
+            // The catalogue is built from whatever was cached, so a stored id can still miss
+            // after a refresh drops the image. Swap in the placeholder rather than leaving a
+            // broken-image box the user cannot recognise.
+            fallback.addEventListener('error', () => {
+              fallback.replaceWith(placeholderSticker());
+            });
+          } else {
+            fallback.append(placeholderSticker());
+          }
+          element.append(fallback);
         }
-        element.append(sticker);
       } else {
-        const emoji = document.createElement('span');
-        emoji.className = 'annotation-emoji';
-        emoji.textContent = a.emoji;
-        element.append(emoji);
+        const code = mapDisplay.emoji[a.emoji as keyof typeof mapDisplay.emoji];
+        if (code) {
+          const emoji = document.createElement('img');
+          emoji.className = 'annotation-emoji';
+          emoji.src = `/api/map-assets/emoji-${code}.png`;
+          emoji.alt = a.emoji;
+          element.append(emoji);
+        } else if (a.emoji) {
+          const fallback = document.createElement('span');
+          fallback.className = 'annotation-sticker-missing';
+          fallback.textContent = '?';
+          element.append(fallback);
+        }
       }
       L.marker(latLng(a.points[0]), {
         icon: L.divIcon({

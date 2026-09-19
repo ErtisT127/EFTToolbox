@@ -1,7 +1,7 @@
 package main
 
 import (
-	"context"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -9,7 +9,13 @@ import (
 	"time"
 )
 
-func startOverlay(ctx context.Context, executable, address string) {
+type overlayProcess struct {
+	cmd   *exec.Cmd
+	input io.Closer
+	done  chan struct{}
+}
+
+func startOverlay(executable, address string) *overlayProcess {
 	cmd := exec.Command(executable, "--backend", address, "--dev-stdin")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	cmd.Stdout = os.Stdout
@@ -17,31 +23,35 @@ func startOverlay(ctx context.Context, executable, address string) {
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		log.Printf("overlay startup: %v", err)
-		return
+		return nil
 	}
 	if err = cmd.Start(); err != nil {
 		_ = input.Close()
 		log.Printf("overlay startup: %v", err)
-		return
+		return nil
 	}
 	log.Printf("overlay started pid=%d", cmd.Process.Pid)
-	done := make(chan struct{})
+	process := &overlayProcess{cmd: cmd, input: input, done: make(chan struct{})}
 	go func() {
-		defer close(done)
+		defer close(process.done)
 		if err := cmd.Wait(); err != nil {
 			log.Printf("overlay stopped: %v", err)
 		}
 	}()
-	go func() {
-		select {
-		case <-ctx.Done():
-		case <-done:
-		}
-		_ = input.Close()
-		select {
-		case <-done:
-		case <-time.After(3 * time.Second):
-			_ = cmd.Process.Kill()
-		}
-	}()
+	return process
+}
+
+func (p *overlayProcess) Stop(timeout time.Duration) {
+	if p == nil {
+		return
+	}
+	_ = p.input.Close()
+	select {
+	case <-p.done:
+		return
+	case <-time.After(timeout):
+		log.Printf("overlay did not stop within %s; terminating pid=%d", timeout, p.cmd.Process.Pid)
+		_ = p.cmd.Process.Kill()
+		<-p.done
+	}
 }

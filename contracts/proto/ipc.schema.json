@@ -197,15 +197,18 @@
       }
     },
     "Point": {
+      "description": "Coordinates are displayed rounded to x-precision digits; user-supplied coordinates are additionally bounded by the server to ±1e7.",
       "type": "object",
       "additionalProperties": false,
       "required": ["x", "y"],
       "properties": {
         "x": {
-          "type": "number"
+          "type": "number",
+          "x-precision": 2
         },
         "y": {
-          "type": "number"
+          "type": "number",
+          "x-precision": 2
         }
       }
     },
@@ -754,12 +757,51 @@
     "OverlayHotkeys": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["toggleEdit", "toggleVisible"],
+      "required": [
+        "toggleEdit",
+        "toggleVisible",
+        "zoomIn",
+        "zoomOut",
+        "floorUp",
+        "floorDown",
+        "toggleBasemap",
+        "panUp",
+        "panDown",
+        "panLeft",
+        "panRight"
+      ],
       "properties": {
         "toggleEdit": {
           "type": "string"
         },
         "toggleVisible": {
+          "type": "string"
+        },
+        "zoomIn": {
+          "type": "string"
+        },
+        "zoomOut": {
+          "type": "string"
+        },
+        "floorUp": {
+          "type": "string"
+        },
+        "floorDown": {
+          "type": "string"
+        },
+        "toggleBasemap": {
+          "type": "string"
+        },
+        "panUp": {
+          "type": "string"
+        },
+        "panDown": {
+          "type": "string"
+        },
+        "panLeft": {
+          "type": "string"
+        },
+        "panRight": {
           "type": "string"
         }
       }
@@ -773,7 +815,11 @@
           "type": "string"
         },
         "zoom": {
-          "type": "number"
+          "type": "number",
+          "minimum": -10,
+          "maximum": 12,
+          "x-step": 0.1,
+          "x-precision": 1
         }
       }
     },
@@ -789,6 +835,7 @@
         "left",
         "top",
         "lockAspect",
+        "backdrop",
         "svgResolution",
         "followCenter",
         "followFloor",
@@ -812,22 +859,52 @@
           "enum": ["square", "circle"]
         },
         "width": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 160,
+          "maximum": 2048,
+          "x-step": 16,
+          "x-precision": 0
         },
         "height": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 160,
+          "maximum": 2048,
+          "x-step": 16,
+          "x-precision": 0
         },
         "left": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": -100000,
+          "maximum": 100000,
+          "x-step": 1,
+          "x-precision": 0
         },
         "top": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": -100000,
+          "maximum": 100000,
+          "x-step": 1,
+          "x-precision": 0
         },
         "lockAspect": {
           "type": "boolean"
         },
+        "opacity": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "x-step": 1,
+          "x-precision": 0
+        },
+        "backdrop": {
+          "type": "boolean"
+        },
         "svgResolution": {
           "type": "integer"
+        },
+        "svgQualityMode": {
+          "type": "string",
+          "enum": ["auto", "fixed"]
         },
         "followCenter": {
           "type": "boolean"
@@ -839,7 +916,11 @@
           "type": "boolean"
         },
         "targetZoom": {
-          "type": "number"
+          "type": "number",
+          "minimum": -10,
+          "maximum": 12,
+          "x-step": 0.1,
+          "x-precision": 1
         },
         "perMapZoom": {
           "type": "boolean"
@@ -922,7 +1003,8 @@
         "svgParseCount",
         "svgRasterCount",
         "textureBytes",
-        "hotkeyCount"
+        "hotkeyCount",
+        "hotkeyFailed"
       ],
       "properties": {
         "mapId": {
@@ -935,7 +1017,11 @@
           "$ref": "#/$defs/Point"
         },
         "zoom": {
-          "type": "number"
+          "type": "number",
+          "minimum": -10,
+          "maximum": 12,
+          "x-step": 0.1,
+          "x-precision": 1
         },
         "editing": {
           "type": "boolean"
@@ -963,6 +1049,13 @@
         },
         "hotkeyCount": {
           "type": "integer"
+        },
+        "hotkeyFailed": {
+          "description": "Names of the OverlayHotkeys fields whose RegisterHotKey call was rejected, in OverlayHotkeys declaration order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -973,7 +1066,7 @@
       "properties": {
         "kind": {
           "type": "string",
-          "enum": ["view", "edit", "visible"]
+          "enum": ["view", "edit", "visible", "hotkeys"]
         },
         "center": {
           "$ref": "#/$defs/Point"

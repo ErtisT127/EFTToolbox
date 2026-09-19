@@ -18,6 +18,7 @@ class OverlayStore {
   private version = 0;
   private revision = 0;
   private saved = 0;
+  private soonTimer?: ReturnType<typeof setTimeout>;
   private listeners = new Set<() => void>();
   subscribe = (f: () => void) => {
     this.listeners.add(f);
@@ -39,12 +40,32 @@ class OverlayStore {
     }
     this.changed();
   }
+  /** Visibility belongs to the overlay, not to this copy: writing a stored `visible` back would
+   *  hide a panel the user turned on with the shortcut. */
+  private merged(changes: Partial<OverlaySettings>) {
+    if (!this.settings) return undefined;
+    const visible = this.view?.connected ? { visible: this.view.visible } : {};
+    return { ...this.settings, ...visible, ...changes };
+  }
   update(changes: Partial<OverlaySettings>) {
-    if (!this.settings) return;
-    this.settings = { ...this.settings, ...changes };
+    const next = this.merged(changes);
+    if (!next) return;
+    clearTimeout(this.soonTimer);
+    this.settings = next;
     this.revision++;
     this.changed();
     void this.save();
+  }
+  /** For a control that reports continuously, like a dragged slider: the value lands at once and
+   *  the write follows the last movement rather than every pixel of it. */
+  updateSoon(changes: Partial<OverlaySettings>) {
+    const next = this.merged(changes);
+    if (!next) return;
+    this.settings = next;
+    this.revision++;
+    this.changed();
+    clearTimeout(this.soonTimer);
+    this.soonTimer = setTimeout(() => void this.save(), 350);
   }
   async save() {
     if (this.saving || !this.settings) return;
@@ -61,13 +82,20 @@ class OverlayStore {
         this.saved = revision;
         if (revision === this.revision) this.settings = value;
       }
-      this.error = '';
+      // Nothing pending means nothing was sent: clearing the error here would make a retry look
+      // like it recovered when it never asked the server anything.
+      if (this.saved >= this.revision && this.saved > 0) this.error = '';
     } catch (e) {
       this.error = e instanceof Error ? e.message : 'errors.request_failed';
     } finally {
       this.saving = false;
       this.changed();
     }
+  }
+  /** Replays whatever failed: a pending save when there is one, otherwise a fresh read. */
+  async retry() {
+    if (this.saved < this.revision) return this.save();
+    return this.load();
   }
   async command(command: OverlayCommand) {
     try {

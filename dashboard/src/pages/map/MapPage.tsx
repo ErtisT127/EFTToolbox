@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Brush,
-  Check,
   Eraser,
   Hand,
   Sun,
@@ -15,7 +14,6 @@ import {
   Minus,
   MousePointer2,
   Plus,
-  Radio,
   MapPinned,
   Redo2,
   RefreshCw,
@@ -30,6 +28,7 @@ import { MapCanvas, type Tool, type ToolOptions } from './MapCanvas';
 import { StickerPicker } from './StickerPicker';
 import { LayerPanel } from './LayerPanel';
 import { TaskPanel } from './TaskPanel';
+import { MinimapSettingsPanel } from './MinimapSettingsPanel';
 import { ToolOptionsPanel } from './ToolOptionsPanel';
 import { workspace, useWorkspace } from '../../stores/workspaceStore';
 import { mapTimes, timePhase } from './lib/time';
@@ -37,6 +36,7 @@ import { ZOOM_BOUND_EPSILON } from './lib/zoom';
 import type { MapClock } from '../../../../contracts/ts/ipc.gen';
 import { useLocale } from '../../hooks/useLocale';
 import { useOverlay } from '../../stores/overlayStore';
+import { notices } from '../../stores/noticeStore';
 
 function RaidTimes({ clock }: { clock: MapClock }) {
   const { t } = useLocale();
@@ -75,20 +75,19 @@ const tools: { id: Tool; icon: typeof Hand }[] = [
   { id: 'eraser', icon: Eraser },
 ];
 
-export function MapPage() {
+export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { t } = useLocale();
   const w = useWorkspace(workspace);
   const overlay = useOverlay();
   const [selectedTool, setTool] = useState<Tool>('select');
   const [temporaryHand, setTemporaryHand] = useState(false);
   const tool = temporaryHand ? 'edit' : selectedTool;
-  const [panel, setPanel] = useState<'layers' | 'tasks' | null>(null);
+  const [panel, setPanel] = useState<'layers' | 'tasks' | 'minimap' | null>(null);
   const [taskQuery, setTaskQuery] = useState('');
   const [cursor, setCursor] = useState<Point | null>(null);
   const players = overlay.players;
-  const [fullscreenError, setFullscreenError] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [options, setOptions] = useState<ToolOptions>({
+  const initialOptions: ToolOptions = {
     color: '#5FD3C4',
     width: 3,
     emoji: '📍',
@@ -96,7 +95,17 @@ export function MapPage() {
     text: '',
     textSize: 15,
     eraserSize: 20,
-  });
+  };
+  const [toolOptions, setToolOptions] = useState<Record<Tool, ToolOptions>>(
+    () =>
+      Object.fromEntries(
+        ['select', 'edit', 'brush', 'marker', 'text', 'eraser'].map((key) => [
+          key,
+          { ...initialOptions },
+        ]),
+      ) as Record<Tool, ToolOptions>,
+  );
+  const options = toolOptions[tool];
   const [browseStickers, setBrowseStickers] = useState(false);
   const [toolSettingsOpen, setToolSettingsOpen] = useState(false);
   const closeToolSettings = () => {
@@ -125,6 +134,10 @@ export function MapPage() {
   );
   const atMin = zoomState !== null && zoomState.zoom <= zoomState.min + ZOOM_BOUND_EPSILON;
   const atMax = zoomState !== null && zoomState.zoom >= zoomState.max - ZOOM_BOUND_EPSILON;
+  // The overlay owns this flag; the stored settings are only a stand-in until it reports.
+  const minimapVisible = overlay.view?.connected
+    ? overlay.view.visible
+    : !!overlay.settings?.visible;
   const map = useRef<L.Map | null>(null);
   const workArea = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -135,59 +148,68 @@ export function MapPage() {
   }, []);
   const layerButton = useRef<HTMLButtonElement>(null);
   const taskButton = useRef<HTMLButtonElement>(null);
+  const minimapButton = useRef<HTMLButtonElement>(null);
   const stickerButton = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restoringFocus = useRef(false);
   const panelPinned = useRef(false);
+  // Once a panel has been used, a pointer that strays off it must not take it away: only Escape,
+  // an outside click, the close button or the trigger itself closes it after that.
+  const panelUsed = useRef(false);
   const cancelClose = () => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
     closeTimer.current = null;
   };
-  const openPanel = (next: 'layers' | 'tasks') => {
+  const openPanel = (next: 'layers' | 'tasks' | 'minimap') => {
     closeToolSettings();
     cancelClose();
     if (!restoringFocus.current) {
-      if (panel !== next) panelPinned.current = false;
+      if (panel !== next) {
+        panelPinned.current = false;
+        panelUsed.current = false;
+      }
       setPanel(next);
     }
   };
   const leavePanel = () => {
     cancelClose();
-    if (panelPinned.current) return;
+    if (panelPinned.current || panelUsed.current) return;
     closeTimer.current = setTimeout(() => setPanel(null), 450);
   };
-  const closePanel = (next: 'layers' | 'tasks') => {
+  const closePanel = (next: 'layers' | 'tasks' | 'minimap') => {
     cancelClose();
     panelPinned.current = false;
+    panelUsed.current = false;
     setPanel(null);
     restoringFocus.current = true;
-    (next === 'layers' ? layerButton : taskButton).current?.focus();
+    (next === 'layers'
+      ? layerButton
+      : next === 'tasks'
+        ? taskButton
+        : minimapButton
+    ).current?.focus();
     restoringFocus.current = false;
   };
   // Hovering opens a panel unpinned, so a click on a panel that is merely hovered pins it in
   // place; a click on one already pinned closes it, the way the button's own toggle should read.
-  const togglePanel = (next: 'layers' | 'tasks') => {
+  const togglePanel = (next: 'layers' | 'tasks' | 'minimap') => {
     if (panel === next && panelPinned.current) closePanel(next);
     else {
       openPanel(next);
       panelPinned.current = true;
     }
   };
+  const markPanelUsed = () => {
+    cancelClose();
+    panelUsed.current = true;
+  };
+  const outsidePanel = (target: Node) =>
+    ![popup, layerButton, taskButton, minimapButton].some((ref) => ref.current?.contains(target));
   const blurPanel = (target: EventTarget | null) => {
-    if (
-      target instanceof Node &&
-      (popup.current?.contains(target) ||
-        layerButton.current?.contains(target) ||
-        taskButton.current?.contains(target))
-    )
+    if (!(target instanceof Node) || !outsidePanel(target) || popup.current?.matches(':hover'))
       return;
-    if (
-      popup.current?.matches(':hover') ||
-      layerButton.current?.matches(':hover') ||
-      taskButton.current?.matches(':hover')
-    )
-      return;
+    if (layerButton.current?.matches(':hover') || taskButton.current?.matches(':hover')) return;
     leavePanel();
   };
   useEffect(
@@ -204,21 +226,24 @@ export function MapPage() {
     function key(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         if (closeTimer.current) clearTimeout(closeTimer.current);
+        panelUsed.current = false;
         setPanel(null);
         restoringFocus.current = true;
-        (panel === 'layers' ? layerButton : taskButton).current?.focus();
+        (panel === 'layers'
+          ? layerButton
+          : panel === 'tasks'
+            ? taskButton
+            : minimapButton
+        ).current?.focus();
         restoringFocus.current = false;
       }
     }
     document.addEventListener('keydown', key);
     function outside(event: PointerEvent) {
-      const target = event.target as Node;
-      if (
-        !popup.current?.contains(target) &&
-        !layerButton.current?.contains(target) &&
-        !taskButton.current?.contains(target)
-      )
+      if (outsidePanel(event.target as Node)) {
+        panelUsed.current = false;
         setPanel(null);
+      }
     }
     document.addEventListener('pointerdown', outside, true);
     return () => {
@@ -226,17 +251,16 @@ export function MapPage() {
       document.removeEventListener('pointerdown', outside, true);
     };
   }, [panel]);
-  const setOption = (value: Partial<ToolOptions>) =>
-    setOptions((previous) => ({ ...previous, ...value }));
+  const setOption = (value: Partial<ToolOptions>, target: Tool = tool) =>
+    setToolOptions((previous) => ({ ...previous, [target]: { ...previous[target], ...value } }));
   // Resolve stored stickers without walking the catalogue on each pointer update.
   const stickerIndex = useMemo(() => new Map(w.stickers.map((s) => [s.id, s])), [w.stickers]);
   const toggleFullscreen = async () => {
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
       else await workArea.current?.requestFullscreen();
-      setFullscreenError('');
     } catch {
-      setFullscreenError('errors.fullscreen_unsupported');
+      notices.push(t('errors.fullscreen_unsupported'));
     }
   };
 
@@ -336,17 +360,6 @@ export function MapPage() {
               }}
             />
             <div className="view-controls">
-              <button
-                aria-label={t('map.view.overlay')}
-                title={t('map.view.overlay')}
-                aria-pressed={!!overlay.view?.visible}
-                disabled={!overlay.view?.connected}
-                onClick={() =>
-                  void overlay.command({ kind: 'visible', enabled: !overlay.view?.visible })
-                }
-              >
-                <MapPinned size={18} />
-              </button>
               <div className="zoom-buttons">
                 <button
                   aria-label={t('map.view.zoomInAria')}
@@ -515,7 +528,7 @@ export function MapPage() {
                     stickerButton.current?.focus();
                   }}
                   onPick={({ emoji, imageId }) => {
-                    setOption({ emoji, imageId });
+                    setOption({ emoji, imageId }, 'marker');
                     w.recordSticker(imageId || emoji);
                     setBrowseStickers(false);
                     stickerButton.current?.focus();
@@ -549,44 +562,93 @@ export function MapPage() {
                 </dl>
               </aside>
               <div className="task-control">
-                <button
-                  className="task-trigger"
-                  aria-label={t('map.tasks.trigger')}
-                  title={t('map.tasks.trigger')}
-                  ref={taskButton}
-                  aria-expanded={panel === 'tasks'}
-                  onPointerEnter={() => openPanel('tasks')}
-                  onPointerLeave={leavePanel}
-                  onFocus={() => openPanel('tasks')}
-                  onBlur={(e) => blurPanel(e.relatedTarget)}
-                  onClick={() => togglePanel('tasks')}
-                >
-                  <Search size={24} />
-                </button>
-                {panel === 'tasks' && (
-                  <div
-                    className="task-panel floating"
-                    ref={popup}
-                    aria-label={t('map.tasks.trigger')}
-                    onPointerDown={() => {
-                      cancelClose();
-                      panelPinned.current = true;
-                    }}
-                    onPointerEnter={cancelClose}
+                {/* One trigger per row, its panel right after it in the DOM so Tab reaches the
+                    panel controls; the panel itself opens to the left of its own button. */}
+                <div className="task-item">
+                  <button
+                    className="task-trigger minimap-trigger"
+                    aria-label={t('map.minimap.trigger')}
+                    title={t('map.minimap.trigger')}
+                    ref={minimapButton}
+                    aria-pressed={minimapVisible}
+                    aria-expanded={panel === 'minimap'}
+                    disabled={!overlay.view?.connected}
+                    onClick={() =>
+                      void overlay.command({ kind: 'visible', enabled: !minimapVisible })
+                    }
+                    onPointerEnter={() => openPanel('minimap')}
                     onPointerLeave={leavePanel}
-                    onFocus={cancelClose}
+                    onFocus={() => openPanel('minimap')}
                     onBlur={(e) => blurPanel(e.relatedTarget)}
                   >
-                    <TaskPanel
-                      tasks={session.data.tasks}
-                      preference={preference}
-                      taskQuery={taskQuery}
-                      setTaskQuery={setTaskQuery}
-                      onPreference={(changes) => w.updatePreference(id, changes)}
-                      onClose={() => closePanel('tasks')}
-                    />
-                  </div>
-                )}
+                    <MapPinned size={24} />
+                  </button>
+                  {panel === 'minimap' && (
+                    <div
+                      className="task-panel minimap-panel floating"
+                      ref={popup}
+                      aria-label={t('map.minimap.title')}
+                      onPointerDown={() => {
+                        markPanelUsed();
+                        panelPinned.current = true;
+                      }}
+                      onPointerEnter={cancelClose}
+                      onPointerLeave={leavePanel}
+                      onFocus={cancelClose}
+                      onBlur={(e) => blurPanel(e.relatedTarget)}
+                    >
+                      <MinimapSettingsPanel
+                        settings={overlay.settings}
+                        view={overlay.view}
+                        update={(changes) => overlay.update(changes)}
+                        updateSoon={(changes) => overlay.updateSoon(changes)}
+                        command={(command) => void overlay.command(command)}
+                        onOpenSettings={onOpenSettings}
+                        onClose={() => closePanel('minimap')}
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="task-item">
+                  <button
+                    className="task-trigger"
+                    aria-label={t('map.tasks.trigger')}
+                    title={t('map.tasks.trigger')}
+                    ref={taskButton}
+                    aria-expanded={panel === 'tasks'}
+                    onPointerEnter={() => openPanel('tasks')}
+                    onPointerLeave={leavePanel}
+                    onFocus={() => openPanel('tasks')}
+                    onBlur={(e) => blurPanel(e.relatedTarget)}
+                    onClick={() => togglePanel('tasks')}
+                  >
+                    <Search size={24} />
+                  </button>
+                  {panel === 'tasks' && (
+                    <div
+                      className="task-panel floating"
+                      ref={popup}
+                      aria-label={t('map.tasks.trigger')}
+                      onPointerDown={() => {
+                        markPanelUsed();
+                        panelPinned.current = true;
+                      }}
+                      onPointerEnter={cancelClose}
+                      onPointerLeave={leavePanel}
+                      onFocus={cancelClose}
+                      onBlur={(e) => blurPanel(e.relatedTarget)}
+                    >
+                      <TaskPanel
+                        tasks={session.data.tasks}
+                        preference={preference}
+                        taskQuery={taskQuery}
+                        setTaskQuery={setTaskQuery}
+                        onPreference={(changes) => w.updatePreference(id, changes)}
+                        onClose={() => closePanel('tasks')}
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
             {cursor && (
@@ -594,44 +656,9 @@ export function MapPage() {
                 {`x: ${cursor.x.toFixed(2)} z: ${cursor.y.toFixed(2)}`}
               </div>
             )}
-            {(session.error || w.preferenceError || fullscreenError) && (
-              <div className="save-error floating" role="alert">
-                <span>{t(session.error || w.preferenceError || fullscreenError)}</span>
-                <button
-                  onClick={() => {
-                    void w.save(id);
-                    void w.savePreferences();
-                    setFullscreenError('');
-                  }}
-                >
-                  {t('common.retry')}
-                </button>
-              </div>
-            )}
           </>
         )}
       </div>
-      <footer className="statusbar">
-        <span className={`connection ${overlay.connected ? 'connected' : ''}`}>
-          <Radio size={12} />
-          {t(overlay.connected ? 'status.connected' : 'status.reconnecting')}
-        </span>
-        <div className="save-status" role="status">
-          {session?.error ? (
-            <span className="danger">{t('map.status.unsaved')}</span>
-          ) : session?.saving ? (
-            <>
-              <span className="small-spinner" />
-              {t('map.status.saving')}
-            </>
-          ) : (
-            <>
-              <Check size={12} />
-              {t('map.status.saved')}
-            </>
-          )}
-        </div>
-      </footer>
     </>
   );
 }

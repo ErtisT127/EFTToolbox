@@ -10,6 +10,7 @@ type Props = {
 
 export function ColorPicker({ color, onChange }: Props) {
   const { t } = useLocale();
+  const normalized = color.toUpperCase();
   return (
     <div className="color-picker">
       <div className="swatches">
@@ -18,20 +19,20 @@ export function ColorPicker({ color, onChange }: Props) {
             key={swatch}
             title={swatch}
             aria-label={t('map.toolSettings.swatch', { color: swatch })}
-            aria-pressed={color === swatch}
-            style={{ background: swatch }}
+            aria-pressed={normalized === swatch}
+            style={{ backgroundColor: swatch }}
             onClick={() => onChange(swatch)}
           >
-            {color === swatch && <Check size={12} />}
+            {normalized === swatch && <Check size={12} />}
           </button>
         ))}
       </div>
-      <label className="custom-color">
+      <label className={`custom-color ${palette.includes(normalized) ? '' : 'selected'}`}>
         {t('map.toolSettings.custom')}
         <input
           aria-label={t('map.toolSettings.customColor')}
           type="color"
-          value={color}
+          value={normalized}
           onChange={(e) => onChange(e.target.value)}
         />
       </label>

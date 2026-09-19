@@ -20,6 +20,7 @@ import (
 	"time"
 
 	contracts "efttoolbox/contracts"
+
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )
@@ -35,10 +36,25 @@ type overlayHub struct {
 }
 
 func defaultOverlaySettings() contracts.OverlaySettings {
-	return contracts.OverlaySettings{SchemaVersion: 1, Visible: true, Shape: "square", Width: 384, Height: 384, Left: 24, Top: 24, SvgResolution: 2048, FollowCenter: true, FollowFloor: true, FollowZoom: true, TargetZoom: 2, MapZooms: []contracts.MapZoomOverride{}}
+	return contracts.OverlaySettings{
+		SchemaVersion: 1, Visible: true, Shape: "square", Width: 384, Height: 384, Left: 24, Top: 24, LockAspect: true, SvgResolution: 2048,
+		Opacity: ptr(defaultOpacity), Backdrop: false, SvgQualityMode: stringPtr("auto"),
+		FollowCenter: true, FollowFloor: true, FollowZoom: true, TargetZoom: 2, MapZooms: []contracts.MapZoomOverride{},
+		Hotkeys: contracts.OverlayHotkeys{ZoomIn: "Alt+Up", ZoomOut: "Alt+Down", FloorUp: "Alt+PageUp", FloorDown: "Alt+PageDown"},
+	}
 }
 
-var hotkeyPattern = regexp.MustCompile(`^(?:(?:Ctrl|Alt|Shift|Win)\+)*(?:[A-Z0-9]|F(?:[1-9]|1[0-9]|2[0-4])|Space|Insert|Delete|Home|End|PageUp|PageDown)$`)
+// The overlay's opacity is optional in the contract so that a settings file written before it
+// existed can be told apart from a deliberate 0% — a required field would decode as 0 there.
+const defaultOpacity = 100
+
+func ptr(value int) *int             { return &value }
+func stringPtr(value string) *string { return &value }
+
+// Key names are physical positions, not characters: the same shortcut has to mean the same key on
+// any keyboard layout, so a symbol key is spelled after its position (Minus, BracketLeft) rather
+// than after what it happens to type.
+var hotkeyPattern = regexp.MustCompile(`^(?:(?:Ctrl|Alt|Shift|Win)\+)*(?:[A-Z0-9]|F(?:[1-9]|1[0-9]|2[0-4])|Space|Insert|Delete|Home|End|PageUp|PageDown|Up|Down|Left|Right|Backquote|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash)$`)
 
 func validHotkey(value string) bool {
 	if value == "" {
@@ -58,29 +74,103 @@ func validHotkey(value string) bool {
 	return true
 }
 
+type hotkeyField struct {
+	name  string
+	value func(*contracts.OverlayHotkeys) *string
+}
+
+// hotkeyFields is the single source of truth for which shortcuts exist and in what order. The
+// overlay reports registration failures by name, so this order is part of the contract.
+var hotkeyFields = []hotkeyField{
+	{"toggleEdit", func(h *contracts.OverlayHotkeys) *string { return &h.ToggleEdit }},
+	{"toggleVisible", func(h *contracts.OverlayHotkeys) *string { return &h.ToggleVisible }},
+	{"zoomIn", func(h *contracts.OverlayHotkeys) *string { return &h.ZoomIn }},
+	{"zoomOut", func(h *contracts.OverlayHotkeys) *string { return &h.ZoomOut }},
+	{"floorUp", func(h *contracts.OverlayHotkeys) *string { return &h.FloorUp }},
+	{"floorDown", func(h *contracts.OverlayHotkeys) *string { return &h.FloorDown }},
+	{"toggleBasemap", func(h *contracts.OverlayHotkeys) *string { return &h.ToggleBasemap }},
+	{"panUp", func(h *contracts.OverlayHotkeys) *string { return &h.PanUp }},
+	{"panDown", func(h *contracts.OverlayHotkeys) *string { return &h.PanDown }},
+	{"panLeft", func(h *contracts.OverlayHotkeys) *string { return &h.PanLeft }},
+	{"panRight", func(h *contracts.OverlayHotkeys) *string { return &h.PanRight }},
+}
+
+func validHotkeyFailures(values []string) bool {
+	if len(values) > len(hotkeyFields) {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, value := range values {
+		if seen[value] || !slices.ContainsFunc(hotkeyFields, func(f hotkeyField) bool { return f.name == value }) {
+			return false
+		}
+		seen[value] = true
+	}
+	return true
+}
+
+// normalizeHotkeys validates and canonicalizes every shortcut in one pass; empty means "not
+// registered". Two shortcuts may share a combination: the second one simply fails to register with
+// Windows, which the overlay reports and the dashboard shows as a conflict on both fields. Refusing
+// the save here would leave the two ends disagreeing about what was stored.
+func normalizeHotkeys(h *contracts.OverlayHotkeys) bool {
+	for _, field := range hotkeyFields {
+		value := field.value(h)
+		if !validHotkey(*value) {
+			return false
+		}
+		*value = canonicalHotkey(*value)
+	}
+	return true
+}
+
+// roundTo keeps the digits the contract declares for a field, so a clamped value is also the value
+// that gets persisted and echoed back.
+func roundTo(value float64, precision int) float64 {
+	scale := math.Pow(10, float64(precision))
+	return math.Round(value*scale) / scale
+}
+
+func clampLimit(value float64, limit contracts.NumericLimit) float64 {
+	return roundTo(math.Max(limit.Min, math.Min(limit.Max, value)), limit.Precision)
+}
+
+// Modifier order is fixed by the contract so a recorded shortcut reads the same before and after a
+// save round trip (see docs/contracts.md).
+var modifierOrder = []string{"Ctrl", "Alt", "Shift", "Win"}
+
+func canonicalHotkey(value string) string {
+	parts := strings.Split(value, "+")
+	modifiers := parts[:len(parts)-1]
+	slices.SortFunc(modifiers, func(a, b string) int {
+		return slices.Index(modifierOrder, a) - slices.Index(modifierOrder, b)
+	})
+	return strings.Join(parts, "+")
+}
+
 func (h *overlayHub) normalize(v *contracts.OverlaySettings) bool {
-	if v.SchemaVersion != 1 || !slices.Contains([]string{"square", "circle"}, v.Shape) || !slices.Contains([]int{1024, 2048, 4096}, v.SvgResolution) || !finite(v.TargetZoom) || len(v.MapZooms) > 1000 || !validHotkey(v.Hotkeys.ToggleEdit) || !validHotkey(v.Hotkeys.ToggleVisible) || v.Hotkeys.ToggleEdit != "" && v.Hotkeys.ToggleEdit == v.Hotkeys.ToggleVisible {
+	if v.SchemaVersion != 1 || !slices.Contains([]string{"square", "circle"}, v.Shape) || !slices.Contains([]int{1024, 2048, 4096, 8192}, v.SvgResolution) || !finite(v.TargetZoom) || len(v.MapZooms) > 1000 || !normalizeHotkeys(&v.Hotkeys) {
 		return false
 	}
-	canonicalHotkey := func(value string) string {
-		parts := strings.Split(value, "+")
-		modifiers := parts[:len(parts)-1]
-		slices.Sort(modifiers)
-		return strings.Join(parts, "+")
+	if v.SvgQualityMode == nil {
+		v.SvgQualityMode = stringPtr("fixed")
 	}
-	v.Hotkeys.ToggleEdit = canonicalHotkey(v.Hotkeys.ToggleEdit)
-	v.Hotkeys.ToggleVisible = canonicalHotkey(v.Hotkeys.ToggleVisible)
-	if v.Hotkeys.ToggleEdit != "" && v.Hotkeys.ToggleEdit == v.Hotkeys.ToggleVisible {
+	if *v.SvgQualityMode != "auto" && *v.SvgQualityMode != "fixed" {
 		return false
 	}
-	v.Width = max(160, min(2048, v.Width))
-	v.Height = max(160, min(2048, v.Height))
+	v.Width = int(clampLimit(float64(v.Width), contracts.OverlaySettingsLimits.Width))
+	v.Height = int(clampLimit(float64(v.Height), contracts.OverlaySettingsLimits.Height))
 	if v.Shape == "circle" {
 		v.Height = v.Width
 	}
-	v.Left = max(-100000, min(100000, v.Left))
-	v.Top = max(-100000, min(100000, v.Top))
-	v.TargetZoom = math.Max(-10, math.Min(12, v.TargetZoom))
+	v.Left = int(clampLimit(float64(v.Left), contracts.OverlaySettingsLimits.Left))
+	v.Top = int(clampLimit(float64(v.Top), contracts.OverlaySettingsLimits.Top))
+	v.TargetZoom = clampLimit(v.TargetZoom, contracts.OverlaySettingsLimits.TargetZoom)
+	opacity := defaultOpacity
+	if v.Opacity != nil {
+		opacity = int(clampLimit(float64(*v.Opacity), contracts.OverlaySettingsLimits.Opacity))
+	}
+	v.Opacity = &opacity
 	if v.MapZooms == nil {
 		v.MapZooms = []contracts.MapZoomOverride{}
 	}
@@ -94,7 +184,7 @@ func (h *overlayHub) normalize(v *contracts.OverlaySettings) bool {
 			return false
 		}
 		seen[z.MapId] = true
-		z.Zoom = math.Max(-10, math.Min(12, z.Zoom))
+		z.Zoom = clampLimit(z.Zoom, contracts.MapZoomOverrideLimits.Zoom)
 	}
 	return true
 }
@@ -195,8 +285,8 @@ func (h *overlayHub) websocket(ctx context.Context, w http.ResponseWriter, r *ht
 	if err != nil {
 		return
 	}
-	defer func() { _ = conn.CloseNow() }()
-	readCtx := conn.CloseRead(ctx)
+	defer closeWebSocket(conn)
+	readCtx := conn.CloseRead(context.Background())
 	h.mu.Lock()
 	players := make([]contracts.PlayerState, 0, len(h.players))
 	for _, p := range h.players {
@@ -225,7 +315,7 @@ func (h *overlayHub) websocket(ctx context.Context, w http.ResponseWriter, r *ht
 		h.mu.Unlock()
 	}()
 	send := func(e contracts.ServerEvent) error {
-		writeCtx, cancel := context.WithTimeout(readCtx, 5*time.Second)
+		writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		return wsjson.Write(writeCtx, conn, e)
 	}
@@ -236,6 +326,8 @@ func (h *overlayHub) websocket(ctx context.Context, w http.ResponseWriter, r *ht
 	defer ticker.Stop()
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case <-readCtx.Done():
 			return
 		case e, ok := <-ch:
@@ -247,6 +339,19 @@ func (h *overlayHub) websocket(ctx context.Context, w http.ResponseWriter, r *ht
 				return
 			}
 		}
+	}
+}
+
+func closeWebSocket(conn *websocket.Conn) {
+	done := make(chan struct{})
+	go func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "server shutting down")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		_ = conn.CloseNow()
 	}
 }
 
@@ -310,7 +415,8 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 		if !decodeUpdate(w, r, &v) {
 			return
 		}
-		if !validPoint(v.Center) || !finite(v.Zoom) || v.Zoom < -10 || v.Zoom > 12 || len(v.Error) > 1024 {
+		zoom := contracts.OverlayViewLimits.Zoom
+		if !validPoint(v.Center) || !finite(v.Zoom) || v.Zoom < zoom.Min || v.Zoom > zoom.Max || len(v.Error) > 1024 || !validHotkeyFailures(v.HotkeyFailed) {
 			apiError(w, 400, "overlay_settings_invalid")
 			return
 		}
@@ -329,7 +435,7 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 		if !decodeUpdate(w, r, &v) {
 			return
 		}
-		if !slices.Contains([]string{"edit", "visible", "view"}, v.Kind) || v.Center != nil && !validPoint(*v.Center) || v.Zoom != nil && (!finite(*v.Zoom) || *v.Zoom < -10 || *v.Zoom > 12) || (v.Kind != "view" && v.Enabled == nil) {
+		if !slices.Contains([]string{"edit", "visible", "view", "hotkeys"}, v.Kind) || v.Center != nil && !validPoint(*v.Center) || v.Zoom != nil && (!finite(*v.Zoom) || *v.Zoom < contracts.OverlayViewLimits.Zoom.Min || *v.Zoom > contracts.OverlayViewLimits.Zoom.Max) || (v.Kind != "view" && v.Enabled == nil) {
 			apiError(w, 400, "overlay_settings_invalid")
 			return
 		}

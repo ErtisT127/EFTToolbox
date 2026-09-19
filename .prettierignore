@@ -2,6 +2,7 @@ node_modules/
 build/
 _reference/
 docs/
+.agents/
 .playwright-mcp/
 contracts/go/
 contracts/ts/

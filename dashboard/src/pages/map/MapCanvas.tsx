@@ -1,3 +1,4 @@
+import { mapDisplay } from '../../../../contracts/ts/map-display.gen';
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import type {
@@ -19,6 +20,7 @@ import {
 import { BuiltinMarkers } from './lib/BuiltinMarkers';
 import { zoomRange } from './lib/zoom';
 import { useLocale } from '../../hooks/useLocale';
+import { notices } from '../../stores/noticeStore';
 
 export type Tool = 'select' | 'edit' | 'brush' | 'marker' | 'text' | 'eraser';
 export type ToolOptions = {
@@ -71,6 +73,10 @@ export function MapCanvas(props: Props) {
   const [ready, setReady] = useState(0);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  // A basemap that failed to load is reported at the window level, with the reload it offers.
+  useEffect(() => {
+    if (error) notices.push(t(error), () => setRetry((value) => value + 1));
+  }, [error, t]);
   useEffect(() => {
     const host = container.current!;
     const p = current.current;
@@ -131,12 +137,14 @@ export function MapCanvas(props: Props) {
     tilePane.style.zIndex = '190';
     tilePane.style.pointerEvents = 'none';
     const landmarkPane = map.createPane('landmarks');
-    landmarkPane.style.zIndex = '450';
+    landmarkPane.style.zIndex = String(mapDisplay.landmarkPane);
     landmarkPane.style.pointerEvents = 'none';
     const playerPane = map.createPane('player');
-    playerPane.style.zIndex = '600';
+    playerPane.style.zIndex = String(mapDisplay.playerPane);
     playerPane.style.pointerEvents = 'none';
     tileLayers.current = L.layerGroup().addTo(map);
+    map.getPane('overlayPane')!.style.zIndex = String(mapDisplay.strokePane);
+    map.getPane('markerPane')!.style.zIndex = String(mapDisplay.markerPane);
     userLayer.current = L.layerGroup().addTo(map);
     playerLayer.current = L.layerGroup().addTo(map);
     builtins.current = new BuiltinMarkers(
@@ -187,6 +195,14 @@ export function MapCanvas(props: Props) {
     }
     renderUsers.current = paint;
     paint(p.items);
+    let pixelRatio = window.devicePixelRatio;
+    const refreshPixelRatio = () => {
+      if (pixelRatio === window.devicePixelRatio) return;
+      pixelRatio = window.devicePixelRatio;
+      paint(current.current.items);
+      map.fire('resize');
+    };
+    window.addEventListener('resize', refreshPixelRatio);
     let followedPosition = '';
     function paintPlayers(players: Map<string, PlayerState>) {
       const p = current.current;
@@ -240,8 +256,16 @@ export function MapCanvas(props: Props) {
       moved: boolean;
       pointerId: number;
       last: L.Point;
+      accepted: L.Point;
     };
     let gesture: Gesture | null = null;
+    let brushFrame = 0;
+    let brushPreview: L.Polyline | null = null;
+    function clearBrush() {
+      cancelAnimationFrame(brushFrame);
+      brushFrame = 0;
+      brushPreview = null;
+    }
     let builtinClick = false;
     const eventPixel = (event: PointerEvent) => map.mouseEventToContainerPoint(event);
     const toPoint = (pixel: L.Point) => point(map.containerPointToLatLng(pixel));
@@ -304,6 +328,7 @@ export function MapCanvas(props: Props) {
         moved: false,
         pointerId: event.pointerId,
         last: pixel,
+        accepted: pixel,
       };
       if (
         gesture.builtin === null ||
@@ -330,14 +355,26 @@ export function MapCanvas(props: Props) {
       if (g.moved && (g.kind === 'pan' || (g.kind === 'edit' && g.dragIds.size)))
         host.classList.add('panning');
       if (g.kind === 'pan') map.panBy(g.last.subtract(pixel), { animate: false });
-      if (g.kind === 'brush' && g.last.distanceTo(pixel) >= 2) {
-        g.points.push(p);
-        preview.clearLayers();
-        L.polyline(g.points.map(latLng), {
-          color: current.current.options.color,
-          weight: current.current.options.width,
-          interactive: false,
-        }).addTo(preview);
+      if (g.kind === 'brush') {
+        const samples = event.getCoalescedEvents?.();
+        for (const sample of samples?.length ? samples : [event]) {
+          const position = eventPixel(sample);
+          if (g.accepted.distanceTo(position) >= 2) {
+            g.points.push(toPoint(position));
+            g.accepted = position;
+          }
+        }
+        if (!brushFrame)
+          brushFrame = requestAnimationFrame(() => {
+            brushFrame = 0;
+            if (gesture !== g) return;
+            brushPreview ??= L.polyline([], {
+              color: current.current.options.color,
+              weight: current.current.options.width,
+              interactive: false,
+            }).addTo(preview);
+            brushPreview.setLatLngs(g.points.map(latLng));
+          });
       }
       if (g.kind === 'eraser') erase(g, pixel);
       if ((g.kind === 'edit' || g.kind === 'box') && g.moved) {
@@ -367,6 +404,11 @@ export function MapCanvas(props: Props) {
     function finish(event: PointerEvent, cancel = false) {
       const g = gesture;
       if (!g) return;
+      if (!cancel && g.kind === 'brush') {
+        const endpoint = eventPixel(event);
+        if (g.accepted.distanceTo(endpoint) > 0) g.points.push(toPoint(endpoint));
+      }
+      clearBrush();
       gesture = null;
       host.classList.remove('panning');
       preview.clearLayers();
@@ -464,6 +506,7 @@ export function MapCanvas(props: Props) {
       (event.target.closest('input,textarea,select,button,a,[role="button"]') !== null ||
         event.target.isContentEditable);
     function cancelGesture() {
+      clearBrush();
       if (!gesture) return;
       if (host.hasPointerCapture(gesture.pointerId)) host.releasePointerCapture(gesture.pointerId);
       paint(gesture.original);
@@ -587,8 +630,10 @@ export function MapCanvas(props: Props) {
     setReady((value) => value + 1);
     return () => {
       controller.abort();
+      window.removeEventListener('resize', refreshPixelRatio);
       current.current.onTemporaryHand(false);
       clearTimeout(zoomTimer);
+      clearBrush();
       host.removeEventListener('wheel', wheelMarkers);
       host.removeEventListener('dragstart', preventDrag);
       host.removeEventListener('click', consumeBuiltinClick, true);
@@ -712,12 +757,6 @@ export function MapCanvas(props: Props) {
         tabIndex={0}
         aria-label={t('map.canvas.aria', { name: props.data.name })}
       />
-      {error && (
-        <div className="canvas-error" role="alert">
-          {t(error)}
-          <button onClick={() => setRetry((v) => v + 1)}>{t('map.canvas.reload')}</button>
-        </div>
-      )}
     </>
   );
 }

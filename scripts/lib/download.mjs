@@ -38,18 +38,21 @@ function assertAllowed(target) {
   return parsed;
 }
 
-// raw.githubusercontent.com is unreachable from some networks, so every GitHub request goes through
-// jsDelivr by default. Our refs are commit SHAs, which jsDelivr treats as immutable, so the bytes —
-// and therefore the recorded provenance — are the same either way. Set GITHUB_MIRROR=direct to hit
-// GitHub itself.
+// Use GitHub Raw by default. Set GITHUB_MIRROR=jsdelivr to route pinned GitHub requests through the
+// jsDelivr mirror when the direct endpoint is unavailable on a particular network.
 function mirror(url) {
-  if (process.env.GITHUB_MIRROR === 'direct') return url;
+  if (process.env.GITHUB_MIRROR !== 'jsdelivr') return url;
   const parsed = new URL(url);
   if (parsed.hostname !== 'raw.githubusercontent.com') return url;
   const [owner, repo, ref, ...rest] = parsed.pathname.replace(/^\//, '').split('/');
   if (!owner || !repo || !ref || !rest.length)
     throw permanent(`Cannot mirror ${url}: expected /{owner}/{repo}/{ref}/{path}`);
   return `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${ref}/${rest.join('/')}`;
+}
+
+function describeFailure(error) {
+  const cause = error?.cause;
+  return cause?.code ? `${error.message} (${cause.code})` : error.message;
 }
 
 // fetch follows redirects itself, which would issue the next request before the allowlist ever
@@ -75,8 +78,9 @@ async function send(url, headers) {
 // throws the last failure otherwise.
 async function request(url, { headers, tolerate }) {
   // Resolved once, so the retry line names the URL actually being requested rather than the caller's.
-  const target = mirror(url);
+  const mirrored = mirror(url);
   for (let attempt = 0; ; attempt++) {
+    const target = attempt >= retryDelays.length - 1 ? url : mirrored;
     let response;
     let failure;
     try {
@@ -94,7 +98,7 @@ async function request(url, { headers, tolerate }) {
     )
       throw failure;
     const delay = retryDelays[attempt] + Math.floor(Math.random() * 500);
-    announce(`Retrying ${target} in ${delay}ms (${failure.message})`);
+    announce(`Retrying ${target} in ${delay}ms (${describeFailure(failure)})`);
     await new Promise((resolve) => setTimeout(resolve, delay));
   }
 }

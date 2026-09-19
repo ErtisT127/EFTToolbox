@@ -47,15 +47,21 @@ func main() {
 	}
 	srv := &http.Server{Handler: server.New(ctx, version, http.Dir(*assets), *dataRoot), ReadHeaderTimeout: 5 * time.Second}
 	done := make(chan struct{})
+	log.Printf("EFTToolbox %s listening at http://%s", version, listener.Addr())
+	overlay := startOverlay(*overlayExe, fmt.Sprintf("http://%s/", listener.Addr()))
 	go func() {
 		<-ctx.Done()
+		if overlay != nil {
+			overlay.Stop(3 * time.Second)
+		}
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(shutdown)
+		if err := srv.Shutdown(shutdown); err != nil {
+			log.Printf("HTTP shutdown: %v", err)
+			_ = srv.Close()
+		}
 		close(done)
 	}()
-	log.Printf("EFTToolbox %s listening at http://%s", version, listener.Addr())
-	startOverlay(ctx, *overlayExe, fmt.Sprintf("http://%s/", listener.Addr()))
 	if err := srv.Serve(listener); err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

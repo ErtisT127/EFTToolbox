@@ -1,3 +1,4 @@
+import { mapDisplay } from '../../../../contracts/ts/map-display.gen';
 import type { Ref } from 'react';
 import { Search, Trash2, X } from 'lucide-react';
 import type { Annotation, Sticker, StickerUsage } from '../../../../contracts/ts/ipc.gen';
@@ -89,7 +90,10 @@ export function ToolOptionsPanel({
                   <span className="current-icon-missing" aria-hidden="true" />
                 )
               ) : (
-                options.emoji
+                <img
+                  alt=""
+                  src={`/api/map-assets/emoji-${mapDisplay.emoji[options.emoji as keyof typeof mapDisplay.emoji]}.png`}
+                />
               )}
             </span>
             <button ref={stickerButton} aria-expanded={browseStickers} onClick={onBrowse}>
@@ -129,7 +133,11 @@ export function ToolOptionsPanel({
                       {pick.kind === 'image' ? (
                         <img src={pick.sticker.iconUrl} alt="" loading="lazy" decoding="async" />
                       ) : (
-                        <span className="recent-sticker-emoji">{pick.emoji}</span>
+                        <img
+                          className="recent-sticker-emoji"
+                          alt=""
+                          src={`/api/map-assets/emoji-${mapDisplay.emoji[pick.emoji as keyof typeof mapDisplay.emoji]}.png`}
+                        />
                       )}
                     </button>
                   );

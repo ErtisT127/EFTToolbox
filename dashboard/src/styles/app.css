@@ -73,10 +73,3 @@
   background: var(--accent);
   border-radius: 50%;
 }
-.mode-caption {
-  font-family: var(--font-ui);
-  color: var(--muted);
-  border-left: 1px solid var(--border);
-  padding-left: var(--space-3);
-  margin-left: var(--space-1);
-}

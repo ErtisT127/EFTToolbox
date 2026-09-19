@@ -6,6 +6,8 @@ const commands = {
   'data:icons': ['commands/data/icons.mjs', args],
   'data:svgs': ['commands/data/svgs.mjs', []],
   'data:item-images': ['commands/data/item-images.mjs', []],
+  'data:fonts': ['commands/data/fonts.mjs', args],
+  package: ['commands/package.mjs', []],
   'data:prepare': ['commands/data/prepare.mjs', []],
   'data:tiles': ['commands/data/tiles.mjs', args],
   lint: ['commands/lint.mjs', []],
@@ -21,6 +23,8 @@ Commands:
   data icons         Download upstream map icons
   data svgs          Download current map SVGs
   data item-images   Download referenced item images
+  data fonts         Prepare licensed static fonts and emoji (uv); --check verifies hashes
+  package            Build a portable package with verified display assets
   data prepare       Generate runtime map data
   data tiles         Prefetch map tiles (--all, --count)
   lint               Run repository lint checks

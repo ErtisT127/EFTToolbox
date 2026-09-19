@@ -1,6 +1,6 @@
 :root {
-  --font-ui: 'Barlow Condensed', 'Microsoft YaHei', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-ui: 'Barlow Condensed', 'Map CJK', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Map CJK', monospace;
   --bg: #0a0c0b;
   --panel: rgba(20, 24, 23, 0.88);
   --panel-2: #1a1e1d;

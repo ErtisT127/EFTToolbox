@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -41,22 +41,23 @@ for (const file of sources(path.join(root, 'dashboard', 'src'))) {
 }
 
 console.log('Go');
-const localLint = path.join(
-  root,
-  'build',
-  'tools',
-  process.platform === 'win32' ? 'golangci-lint.exe' : 'golangci-lint',
-);
-const golangci = existsSync(localLint) ? localLint : 'golangci-lint';
 for (const module of ['backend', 'contracts/go']) {
   run(
-    golangci,
-    ['run', '--config', path.join(root, '.golangci.yml'), './...'],
+    'go',
+    ['tool', 'golangci-lint', 'run', '--config', path.join(root, '.golangci.yml'), './...'],
     path.join(root, module),
   );
   run(
-    golangci,
-    ['fmt', '--diff', '--config', path.join(root, '.golangci.yml'), './...'],
+    'go',
+    [
+      'tool',
+      'golangci-lint',
+      'fmt',
+      '--diff',
+      '--config',
+      path.join(root, '.golangci.yml'),
+      './...',
+    ],
     path.join(root, module),
   );
 }

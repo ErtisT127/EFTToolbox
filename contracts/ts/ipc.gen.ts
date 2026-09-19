@@ -207,6 +207,15 @@ export interface TileLayer {
 export interface OverlayHotkeys {
   toggleEdit: string;
   toggleVisible: string;
+  zoomIn: string;
+  zoomOut: string;
+  floorUp: string;
+  floorDown: string;
+  toggleBasemap: string;
+  panUp: string;
+  panDown: string;
+  panLeft: string;
+  panRight: string;
 }
 
 export interface MapZoomOverride {
@@ -223,7 +232,10 @@ export interface OverlaySettings {
   left: number;
   top: number;
   lockAspect: boolean;
+  opacity?: number;
+  backdrop: boolean;
   svgResolution: number;
+  svgQualityMode?: "auto" | "fixed";
   followCenter: boolean;
   followFloor: boolean;
   followZoom: boolean;
@@ -261,10 +273,11 @@ export interface OverlayView {
   svgRasterCount: number;
   textureBytes: number;
   hotkeyCount: number;
+  hotkeyFailed: Array<string>;
 }
 
 export interface OverlayCommand {
-  kind: "view" | "edit" | "visible";
+  kind: "view" | "edit" | "visible" | "hotkeys";
   center?: Point;
   zoom?: number;
   floorId?: string;
@@ -312,3 +325,32 @@ export interface OverlayLog {
   resolution?: number;
   timing?: OperationTiming;
 }
+
+export interface NumericLimit {
+  readonly min: number;
+  readonly max: number;
+  readonly step: number;
+  readonly precision: number;
+}
+
+export const PointLimits = {
+  x: { min: -Infinity, max: Infinity, step: 0, precision: 2 },
+  y: { min: -Infinity, max: Infinity, step: 0, precision: 2 },
+} as const;
+
+export const MapZoomOverrideLimits = {
+  zoom: { min: -10, max: 12, step: 0.1, precision: 1 },
+} as const;
+
+export const OverlaySettingsLimits = {
+  width: { min: 160, max: 2048, step: 16, precision: 0 },
+  height: { min: 160, max: 2048, step: 16, precision: 0 },
+  left: { min: -100000, max: 100000, step: 1, precision: 0 },
+  top: { min: -100000, max: 100000, step: 1, precision: 0 },
+  opacity: { min: 0, max: 100, step: 1, precision: 0 },
+  targetZoom: { min: -10, max: 12, step: 0.1, precision: 1 },
+} as const;
+
+export const OverlayViewLimits = {
+  zoom: { min: -10, max: 12, step: 0.1, precision: 1 },
+} as const;

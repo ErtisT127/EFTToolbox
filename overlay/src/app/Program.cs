@@ -19,7 +19,13 @@ internal static class Program
         if (args.Contains("--tile-self-check")) { TileRuntimeSelfCheck.Run().GetAwaiter().GetResult(); return 0; }
         if (args.Contains("--tile-preview")) { BruTilePreview.Run(Directory.GetCurrentDirectory()).GetAwaiter().GetResult(); return 0; }
         if (args.Contains("--svg-benchmark")) { var i = Array.IndexOf(args, "--resolution"); SvgRuntimeBenchmark.Run(Directory.GetCurrentDirectory(), i >= 0 ? int.Parse(args[i + 1]) : 2048); return 0; }
-        var backend = "http://127.0.0.1:47831/"; var index = Array.IndexOf(args, "--backend"); if (index >= 0) backend = args[index + 1];
+        var index = Array.IndexOf(args, "--backend");
+        if (index < 0 || index + 1 >= args.Length || !Uri.TryCreate(args[index + 1], UriKind.Absolute, out var backendUri) || backendUri.Scheme is not ("http" or "https"))
+        {
+            Console.Error.WriteLine("Missing or invalid --backend URL.");
+            return 1;
+        }
+        var backend = backendUri.ToString();
         nint hwnd = 0; ushort registered = 0; var instance = Native.GetModuleHandle(null);
         using var stop = new CancellationTokenSource();
         ConsoleCancelEventHandler cancel = (_, e) => { e.Cancel = true; stop.Cancel(); }; Console.CancelKeyPress += cancel;

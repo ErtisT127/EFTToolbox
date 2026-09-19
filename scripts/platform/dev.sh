@@ -17,6 +17,7 @@ if [ ! -f data/upstream/catalog.json ]; then
   exit 1
 fi
 echo '[2/4] Checking dashboard build'
+pnpm toolbox data fonts --check
 if [ "$rebuild" != '--rebuild' ] && node scripts/cli.mjs cache check dashboard; then
   echo 'Dashboard unchanged; using cached build.'
 else
@@ -37,4 +38,4 @@ dotnet publish overlay/Overlay.csproj -c Release -o build/overlay --no-self-cont
 
 # Keep the server in the foreground; do not leave a background process.
 echo "[4/4] Starting http://127.0.0.1:$port (Ctrl+C to stop)"
-exec ./build/EFTToolbox.exe -port "$port" -assets "$project_root/build/dashboard" -data "$project_root/data"
+exec ./build/EFTToolbox.exe -port "$port" -assets "$project_root/build/dashboard" -data "$project_root/data" -dev-stdin
