@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"io"
 	"log"
@@ -12,8 +13,6 @@ import (
 	"time"
 
 	contracts "efttoolbox/contracts"
-	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 )
 
 const ProtocolVersion = "1"
@@ -27,7 +26,14 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 	}
 	status := contracts.Status{ProtocolVersion: ProtocolVersion, AppVersion: version, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	mux := http.NewServeMux()
-	(&mapStore{root: dataRoot}).register(mux)
+	store := &mapStore{root: dataRoot}
+	hub := &overlayHub{store: store, status: status, players: map[string]contracts.PlayerState{}, clients: map[chan contracts.ServerEvent]bool{}}
+	store.changed = hub.changed
+	if writer, ok := logWriter.(*dailyLogWriter); ok {
+		hub.pipe = startOverlayLogPipe(ctx, writer)
+	}
+	store.register(mux)
+	hub.register(mux)
 	if writer, ok := logWriter.(*dailyLogWriter); ok {
 		mux.HandleFunc("POST /api/logs", func(w http.ResponseWriter, r *http.Request) {
 			defer func() { _ = r.Body.Close() }()
@@ -55,48 +61,12 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(status)
 	})
-	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			log.Printf("websocket accept remote=%s: %v", r.RemoteAddr, err)
-			return
-		}
-		defer func() { _ = conn.CloseNow() }()
-		readCtx := conn.CloseRead(ctx)
-		send := func(kind string) error {
-			writeCtx, cancel := context.WithTimeout(readCtx, 5*time.Second)
-			defer cancel()
-			event := contracts.ServerEvent{Type: kind, SentAt: time.Now().UTC().Format(time.RFC3339Nano), Status: status}
-			if kind == "snapshot" {
-				players := []contracts.PlayerState{}
-				annotations := []contracts.SharedAnnotation{}
-				event.Players = &players
-				event.Annotations = &annotations
-			}
-			return wsjson.Write(writeCtx, conn, event)
-		}
-		if err := send("snapshot"); err != nil {
-			if readCtx.Err() == nil {
-				log.Printf("websocket snapshot write remote=%s: %v", r.RemoteAddr, err)
-			}
-			return
-		}
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-readCtx.Done():
-				return
-			case <-ticker.C:
-				if err := send("heartbeat"); err != nil {
-					if readCtx.Err() == nil {
-						log.Printf("websocket heartbeat write remote=%s: %v", r.RemoteAddr, err)
-					}
-					return
-				}
-			}
-		}
-	})
+	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) { hub.websocket(ctx, w, r) })
 	mux.Handle("/", http.FileServer(assets))
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := rand.Text()
+		r.Header.Set("X-Operation-ID", id)
+		w.Header().Set("X-Operation-ID", id)
+		mux.ServeHTTP(w, r)
+	})
 }

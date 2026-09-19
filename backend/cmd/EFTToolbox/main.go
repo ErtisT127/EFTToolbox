@@ -28,6 +28,7 @@ func main() {
 	dataRoot := flag.String("data", filepath.Join(filepath.Dir(exe), "data"), "portable data directory")
 	port := flag.Int("port", 47831, "loopback listen port")
 	devStdin := flag.Bool("dev-stdin", false, "stop when the development launcher's stdin pipe closes")
+	overlayExe := flag.String("overlay", filepath.Join(filepath.Dir(exe), "overlay", "overlay.exe"), "native overlay executable")
 	flag.Parse()
 	if _, err := os.Stat(filepath.Join(*assets, "index.html")); err != nil {
 		log.Fatalf("dashboard unavailable; run scripts/platform/dev.ps1: %v", err)
@@ -54,6 +55,7 @@ func main() {
 		close(done)
 	}()
 	log.Printf("EFTToolbox %s listening at http://%s", version, listener.Addr())
+	startOverlay(ctx, *overlayExe, fmt.Sprintf("http://%s/", listener.Addr()))
 	if err := srv.Serve(listener); err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

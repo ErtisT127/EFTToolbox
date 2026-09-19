@@ -11,7 +11,7 @@ export interface ErrorBody {
 }
 
 export interface ServerEvent {
-  type: "snapshot" | "heartbeat" | "map_changed" | "player_upsert" | "player_remove" | "annotation_upsert" | "annotation_remove";
+  type: "snapshot" | "heartbeat" | "map_changed" | "player_upsert" | "player_remove" | "annotation_upsert" | "annotation_remove" | "preferences_changed" | "annotations_changed" | "overlay_settings" | "overlay_command" | "overlay_status" | "resources_changed";
   sentAt: string;
   status: Status;
   mapId?: string;
@@ -21,6 +21,11 @@ export interface ServerEvent {
   annotation?: SharedAnnotation;
   annotationId?: string;
   annotations?: Array<SharedAnnotation>;
+  operationId?: string;
+  preferences?: Preferences;
+  overlaySettings?: OverlaySettings;
+  overlayView?: OverlayView;
+  overlayCommand?: OverlayCommand;
 }
 
 export interface PlayerState {
@@ -197,4 +202,113 @@ export interface TileLayer {
   maxZoom: number;
   transform: Array<number>;
   bounds: Array<Point>;
+}
+
+export interface OverlayHotkeys {
+  toggleEdit: string;
+  toggleVisible: string;
+}
+
+export interface MapZoomOverride {
+  mapId: string;
+  zoom: number;
+}
+
+export interface OverlaySettings {
+  schemaVersion: number;
+  visible: boolean;
+  shape: "square" | "circle";
+  width: number;
+  height: number;
+  left: number;
+  top: number;
+  lockAspect: boolean;
+  svgResolution: number;
+  followCenter: boolean;
+  followFloor: boolean;
+  followZoom: boolean;
+  targetZoom: number;
+  perMapZoom: boolean;
+  mapZooms: Array<MapZoomOverride>;
+  devPlayerEnabled: boolean;
+  hotkeys: OverlayHotkeys;
+}
+
+export interface OverlayBootstrap {
+  schemaVersion: number;
+  mapDirectory: string;
+  assetDirectory: string;
+  tileDirectory: string;
+  tileManifestFile: string;
+  preferencesFile: string;
+  annotationsDirectory: string;
+  overlaySettingsFile: string;
+  websocketPath: string;
+  logPipeName: string;
+}
+
+export interface OverlayView {
+  mapId: string;
+  floorId: string;
+  center: Point;
+  zoom: number;
+  editing: boolean;
+  visible: boolean;
+  connected: boolean;
+  error: string;
+  renderCount: number;
+  svgParseCount: number;
+  svgRasterCount: number;
+  textureBytes: number;
+  hotkeyCount: number;
+}
+
+export interface OverlayCommand {
+  kind: "view" | "edit" | "visible";
+  center?: Point;
+  zoom?: number;
+  floorId?: string;
+  enabled?: boolean;
+}
+
+export interface DevPlayer {
+  playerId: string;
+  displayName: string;
+  isSelf: boolean;
+  mapId: string;
+  floorId: string;
+  x: number;
+  z: number;
+  heading: number;
+}
+
+export interface OperationTiming {
+  totalMs: number;
+  queueMs: number;
+  readMs: number;
+  parseMs: number;
+  rasterMs: number;
+  uploadMs: number;
+  drawMs: number;
+  presentMs: number;
+  resource: string;
+  count: number;
+}
+
+export interface OverlayLog {
+  time: string;
+  level: string;
+  component: string;
+  event: string;
+  message: string;
+  error?: string;
+  operationId?: string;
+  source?: string;
+  mapId?: string;
+  floorId?: string;
+  basemap?: string;
+  resource?: string;
+  generation?: number;
+  resolution?: number;
+  timing?: OperationTiming;
 }

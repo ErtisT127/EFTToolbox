@@ -187,14 +187,18 @@ export function MapCanvas(props: Props) {
     }
     renderUsers.current = paint;
     paint(p.items);
+    let followedPosition = '';
     function paintPlayers(players: Map<string, PlayerState>) {
+      const p = current.current;
       const layer = playerLayer.current;
       if (!layer) return;
       layer.clearLayers();
       const self = [...players.values()].find(
         (player) => player.isSelf && player.mapId === p.data.id,
       );
-      if (self && p.playerFollow !== false) {
+      const positionKey = self ? `${self.playerId}:${self.position.x}:${self.position.y}` : '';
+      if (self && p.playerFollow !== false && positionKey !== followedPosition) {
+        followedPosition = positionKey;
         const zoom = p.playerAutoZoom?.enabled ? p.playerAutoZoom.zoomLevel : map.getZoom();
         map.setView(latLng(self.position), zoom, { animate: false });
       }

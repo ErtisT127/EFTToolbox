@@ -59,7 +59,7 @@ export async function request<T>(url: string, init?: RequestInit): Promise<T> {
         error instanceof Error ? error.message : String(error),
       );
     }
-    throw new Error('errors.request_failed');
+    throw new Error('errors.request_failed', { cause: error });
   }
   if (!response.ok) {
     const message = await failure(response);
@@ -354,6 +354,8 @@ export class Workspace {
     );
   }
 }
+
+export const workspace = new Workspace();
 
 export function useWorkspace(workspace: Workspace) {
   useSyncExternalStore(workspace.subscribe, workspace.snapshot);

@@ -33,6 +33,8 @@ else
   node scripts/cli.mjs cache save backend
 fi
 
+dotnet publish overlay/Overlay.csproj -c Release -o build/overlay --no-self-contained
+
 # Keep the server in the foreground; do not leave a background process.
 echo "[4/4] Starting http://127.0.0.1:$port (Ctrl+C to stop)"
 exec ./build/EFTToolbox.exe -port "$port" -assets "$project_root/build/dashboard" -data "$project_root/data"

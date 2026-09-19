@@ -1,0 +1,82 @@
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-width: 640px;
+  overflow: hidden;
+}
+.topbar {
+  display: flex;
+  align-items: stretch;
+  height: var(--topbar-height);
+  min-height: var(--topbar-height);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  padding: 0 var(--space-4);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-right: var(--space-6);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--accent);
+  white-space: nowrap;
+  /* The one thing in the bar that should never give way: the nav and the map tabs either hold
+     their own width or scroll, and the wordmark has to stay whole. */
+  flex-shrink: 0;
+}
+.brand-secondary {
+  color: var(--text);
+  font-weight: 400;
+}
+.topbar nav {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+.topbar nav button {
+  padding: 0 var(--space-4);
+  border-radius: 0;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  /* Holds the width its own label needs, so a narrow window scrolls the map tabs rather than
+     squeezing these into unreadable stubs. */
+  min-width: 84px;
+}
+.topbar nav button.active {
+  color: var(--text);
+  background: var(--panel-2);
+  border-bottom-color: var(--border);
+  font-weight: var(--weight-bold);
+}
+.topbar nav button.active:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--control-hover);
+  border-bottom-color: var(--border-hover);
+}
+.mode {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding-left: var(--space-4);
+}
+.mode-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+.mode-caption {
+  font-family: var(--font-ui);
+  color: var(--muted);
+  border-left: 1px solid var(--border);
+  padding-left: var(--space-3);
+  margin-left: var(--space-1);
+}

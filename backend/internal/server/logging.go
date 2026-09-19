@@ -80,11 +80,15 @@ func (w *dailyLogWriter) Write(p []byte) (int, error) {
 }
 
 func (w *dailyLogWriter) write(entry clientLog) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
 	if entry.Time == "" {
 		entry.Time = time.Now().UTC().Format(time.RFC3339Nano)
 	}
+	return w.writeValue(entry)
+}
+
+func (w *dailyLogWriter) writeValue(entry any) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if err := w.rotate(time.Now().UTC()); err != nil {
 		return err
 	}

@@ -88,4 +88,15 @@ internal static class Native
     internal static extern nint DispatchMessage(ref Message message);
     [DllImport("user32")]
     internal static extern uint MsgWaitForMultipleObjectsEx(uint count, nint handles, uint milliseconds, uint wakeMask, uint flags);
+
+    [DllImport("user32")] internal static extern bool PostMessage(nint hwnd,uint message,nuint wParam,nint lParam);
+    [DllImport("user32",SetLastError=true)] internal static extern nint SetWindowLongPtr(nint hwnd,int index,nint value);
+    [DllImport("user32")] internal static extern bool GetWindowRect(nint hwnd,out Rect rect);
+    [DllImport("user32")] internal static extern nint MonitorFromRect(ref Rect rect,uint flags);
+    [DllImport("user32",SetLastError=true)] internal static extern bool RegisterHotKey(nint hwnd,int id,uint modifiers,uint key);
+    [DllImport("user32")] internal static extern bool UnregisterHotKey(nint hwnd,int id);
+    [DllImport("user32")] internal static extern nint SetCapture(nint hwnd);
+    [DllImport("user32")] internal static extern bool ReleaseCapture();
+    [DllImport("user32")] internal static extern bool GetCursorPos(out CursorPoint point);
+    [StructLayout(LayoutKind.Sequential)] internal struct CursorPoint {internal int X,Y;}
 }

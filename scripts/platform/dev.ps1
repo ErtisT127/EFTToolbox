@@ -12,6 +12,8 @@ try {
     New-Item -ItemType Directory -Force build | Out-Null
     & go build -o build/EFTToolbox.exe ./backend/cmd/EFTToolbox
     if ($LASTEXITCODE -ne 0) { throw 'Backend build failed' }
+    & dotnet publish overlay/Overlay.csproj -c Release -o build/overlay --no-self-contained
+    if ($LASTEXITCODE -ne 0) { throw 'Overlay build failed' }
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = Join-Path $projectRoot 'build/EFTToolbox.exe'
     $startInfo.Arguments = "-port $Port -dev-stdin -data `"$(Join-Path $projectRoot 'data')`""

@@ -44,7 +44,13 @@
             "player_upsert",
             "player_remove",
             "annotation_upsert",
-            "annotation_remove"
+            "annotation_remove",
+            "preferences_changed",
+            "annotations_changed",
+            "overlay_settings",
+            "overlay_command",
+            "overlay_status",
+            "resources_changed"
           ]
         },
         "sentAt": {
@@ -54,13 +60,48 @@
         "status": {
           "$ref": "#/$defs/Status"
         },
-        "mapId": { "type": "string" },
-        "player": { "$ref": "#/$defs/PlayerState" },
-        "playerId": { "type": "string" },
-        "players": { "type": "array", "items": { "$ref": "#/$defs/PlayerState" } },
-        "annotation": { "$ref": "#/$defs/SharedAnnotation" },
-        "annotationId": { "type": "string" },
-        "annotations": { "type": "array", "items": { "$ref": "#/$defs/SharedAnnotation" } }
+        "mapId": {
+          "type": "string"
+        },
+        "player": {
+          "$ref": "#/$defs/PlayerState"
+        },
+        "playerId": {
+          "type": "string"
+        },
+        "players": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlayerState"
+          }
+        },
+        "annotation": {
+          "$ref": "#/$defs/SharedAnnotation"
+        },
+        "annotationId": {
+          "type": "string"
+        },
+        "annotations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SharedAnnotation"
+          }
+        },
+        "operationId": {
+          "type": "string"
+        },
+        "preferences": {
+          "$ref": "#/$defs/Preferences"
+        },
+        "overlaySettings": {
+          "$ref": "#/$defs/OverlaySettings"
+        },
+        "overlayView": {
+          "$ref": "#/$defs/OverlayView"
+        },
+        "overlayCommand": {
+          "$ref": "#/$defs/OverlayCommand"
+        }
       }
     },
     "PlayerState": {
@@ -68,13 +109,27 @@
       "additionalProperties": false,
       "required": ["playerId", "displayName", "isSelf", "mapId", "floorId", "position", "heading"],
       "properties": {
-        "playerId": { "type": "string" },
-        "displayName": { "type": "string" },
-        "isSelf": { "type": "boolean" },
-        "mapId": { "type": "string" },
-        "floorId": { "type": "string" },
-        "position": { "$ref": "#/$defs/Point" },
-        "heading": { "type": "number" }
+        "playerId": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "isSelf": {
+          "type": "boolean"
+        },
+        "mapId": {
+          "type": "string"
+        },
+        "floorId": {
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/Point"
+        },
+        "heading": {
+          "type": "number"
+        }
       }
     },
     "SharedAnnotation": {
@@ -96,19 +151,49 @@
         "textSize"
       ],
       "properties": {
-        "itemId": { "type": "string" },
-        "ownerId": { "type": "string" },
-        "revision": { "type": "integer" },
-        "mapId": { "type": "string" },
-        "floorId": { "type": "string" },
-        "kind": { "type": "string", "enum": ["marker", "stroke"] },
-        "points": { "type": "array", "items": { "$ref": "#/$defs/Point" } },
-        "color": { "type": "string" },
-        "width": { "type": "number" },
-        "emoji": { "type": "string" },
-        "imageId": { "type": "string" },
-        "text": { "type": "string" },
-        "textSize": { "type": "number" }
+        "itemId": {
+          "type": "string"
+        },
+        "ownerId": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "mapId": {
+          "type": "string"
+        },
+        "floorId": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["marker", "stroke"]
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Point"
+          }
+        },
+        "color": {
+          "type": "string"
+        },
+        "width": {
+          "type": "number"
+        },
+        "emoji": {
+          "type": "string"
+        },
+        "imageId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "textSize": {
+          "type": "number"
+        }
       }
     },
     "Point": {
@@ -243,8 +328,12 @@
         "iconUrl": {
           "type": "string"
         },
-        "labelSize": { "type": "number" },
-        "labelRotation": { "type": "number" }
+        "labelSize": {
+          "type": "number"
+        },
+        "labelRotation": {
+          "type": "number"
+        }
       }
     },
     "MapTask": {
@@ -265,7 +354,9 @@
       "additionalProperties": false,
       "required": ["id", "name", "subtitle", "defaultFloor", "iconUrl"],
       "properties": {
-        "iconUrl": { "type": "string" },
+        "iconUrl": {
+          "type": "string"
+        },
         "id": {
           "type": "string"
         },
@@ -304,7 +395,9 @@
         "tiles"
       ],
       "properties": {
-        "iconUrl": { "type": "string" },
+        "iconUrl": {
+          "type": "string"
+        },
         "schemaVersion": {
           "type": "integer"
         },
@@ -566,10 +659,18 @@
       "additionalProperties": false,
       "required": ["start", "end", "icon", "label"],
       "properties": {
-        "start": { "type": "number" },
-        "end": { "type": "number" },
-        "icon": { "type": "string" },
-        "label": { "type": "string" }
+        "start": {
+          "type": "number"
+        },
+        "end": {
+          "type": "number"
+        },
+        "icon": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
       }
     },
     "MapClock": {
@@ -577,7 +678,12 @@
       "additionalProperties": false,
       "required": ["rate", "offsets", "fixed", "phases"],
       "properties": {
-        "phases": { "type": "array", "items": { "$ref": "#/$defs/DaylightPhase" } },
+        "phases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DaylightPhase"
+          }
+        },
         "rate": {
           "type": "number"
         },
@@ -642,6 +748,375 @@
           "items": {
             "$ref": "#/$defs/Point"
           }
+        }
+      }
+    },
+    "OverlayHotkeys": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["toggleEdit", "toggleVisible"],
+      "properties": {
+        "toggleEdit": {
+          "type": "string"
+        },
+        "toggleVisible": {
+          "type": "string"
+        }
+      }
+    },
+    "MapZoomOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mapId", "zoom"],
+      "properties": {
+        "mapId": {
+          "type": "string"
+        },
+        "zoom": {
+          "type": "number"
+        }
+      }
+    },
+    "OverlaySettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "visible",
+        "shape",
+        "width",
+        "height",
+        "left",
+        "top",
+        "lockAspect",
+        "svgResolution",
+        "followCenter",
+        "followFloor",
+        "followZoom",
+        "targetZoom",
+        "perMapZoom",
+        "mapZooms",
+        "devPlayerEnabled",
+        "hotkeys"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 1
+        },
+        "visible": {
+          "type": "boolean"
+        },
+        "shape": {
+          "type": "string",
+          "enum": ["square", "circle"]
+        },
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        },
+        "left": {
+          "type": "integer"
+        },
+        "top": {
+          "type": "integer"
+        },
+        "lockAspect": {
+          "type": "boolean"
+        },
+        "svgResolution": {
+          "type": "integer"
+        },
+        "followCenter": {
+          "type": "boolean"
+        },
+        "followFloor": {
+          "type": "boolean"
+        },
+        "followZoom": {
+          "type": "boolean"
+        },
+        "targetZoom": {
+          "type": "number"
+        },
+        "perMapZoom": {
+          "type": "boolean"
+        },
+        "mapZooms": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MapZoomOverride"
+          }
+        },
+        "devPlayerEnabled": {
+          "type": "boolean"
+        },
+        "hotkeys": {
+          "$ref": "#/$defs/OverlayHotkeys"
+        }
+      }
+    },
+    "OverlayBootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "mapDirectory",
+        "assetDirectory",
+        "tileDirectory",
+        "tileManifestFile",
+        "preferencesFile",
+        "annotationsDirectory",
+        "overlaySettingsFile",
+        "websocketPath",
+        "logPipeName"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "integer"
+        },
+        "mapDirectory": {
+          "type": "string"
+        },
+        "assetDirectory": {
+          "type": "string"
+        },
+        "tileDirectory": {
+          "type": "string"
+        },
+        "tileManifestFile": {
+          "type": "string"
+        },
+        "preferencesFile": {
+          "type": "string"
+        },
+        "annotationsDirectory": {
+          "type": "string"
+        },
+        "overlaySettingsFile": {
+          "type": "string"
+        },
+        "websocketPath": {
+          "type": "string"
+        },
+        "logPipeName": {
+          "type": "string"
+        }
+      }
+    },
+    "OverlayView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mapId",
+        "floorId",
+        "center",
+        "zoom",
+        "editing",
+        "visible",
+        "connected",
+        "error",
+        "renderCount",
+        "svgParseCount",
+        "svgRasterCount",
+        "textureBytes",
+        "hotkeyCount"
+      ],
+      "properties": {
+        "mapId": {
+          "type": "string"
+        },
+        "floorId": {
+          "type": "string"
+        },
+        "center": {
+          "$ref": "#/$defs/Point"
+        },
+        "zoom": {
+          "type": "number"
+        },
+        "editing": {
+          "type": "boolean"
+        },
+        "visible": {
+          "type": "boolean"
+        },
+        "connected": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": "string"
+        },
+        "renderCount": {
+          "type": "integer"
+        },
+        "svgParseCount": {
+          "type": "integer"
+        },
+        "svgRasterCount": {
+          "type": "integer"
+        },
+        "textureBytes": {
+          "type": "integer"
+        },
+        "hotkeyCount": {
+          "type": "integer"
+        }
+      }
+    },
+    "OverlayCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["view", "edit", "visible"]
+        },
+        "center": {
+          "$ref": "#/$defs/Point"
+        },
+        "zoom": {
+          "type": "number"
+        },
+        "floorId": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "DevPlayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["playerId", "displayName", "isSelf", "mapId", "floorId", "x", "z", "heading"],
+      "properties": {
+        "playerId": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "isSelf": {
+          "type": "boolean"
+        },
+        "mapId": {
+          "type": "string"
+        },
+        "floorId": {
+          "type": "string"
+        },
+        "x": {
+          "type": "number"
+        },
+        "z": {
+          "type": "number"
+        },
+        "heading": {
+          "type": "number"
+        }
+      }
+    },
+    "OperationTiming": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "totalMs",
+        "queueMs",
+        "readMs",
+        "parseMs",
+        "rasterMs",
+        "uploadMs",
+        "drawMs",
+        "presentMs",
+        "resource",
+        "count"
+      ],
+      "properties": {
+        "totalMs": {
+          "type": "number"
+        },
+        "queueMs": {
+          "type": "number"
+        },
+        "readMs": {
+          "type": "number"
+        },
+        "parseMs": {
+          "type": "number"
+        },
+        "rasterMs": {
+          "type": "number"
+        },
+        "uploadMs": {
+          "type": "number"
+        },
+        "drawMs": {
+          "type": "number"
+        },
+        "presentMs": {
+          "type": "number"
+        },
+        "resource": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        }
+      }
+    },
+    "OverlayLog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["time", "level", "component", "event", "message"],
+      "properties": {
+        "time": {
+          "type": "string"
+        },
+        "level": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "event": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "operationId": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "mapId": {
+          "type": "string"
+        },
+        "floorId": {
+          "type": "string"
+        },
+        "basemap": {
+          "type": "string"
+        },
+        "resource": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "integer"
+        },
+        "resolution": {
+          "type": "integer"
+        },
+        "timing": {
+          "$ref": "#/$defs/OperationTiming"
         }
       }
     }

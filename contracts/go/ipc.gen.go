@@ -12,16 +12,21 @@ type ErrorBody struct {
 }
 
 type ServerEvent struct {
-	Type         string              `json:"type"`
-	SentAt       string              `json:"sentAt"`
-	Status       Status              `json:"status"`
-	MapId        *string             `json:"mapId,omitempty"`
-	Player       *PlayerState        `json:"player,omitempty"`
-	PlayerId     *string             `json:"playerId,omitempty"`
-	Players      *[]PlayerState      `json:"players,omitempty"`
-	Annotation   *SharedAnnotation   `json:"annotation,omitempty"`
-	AnnotationId *string             `json:"annotationId,omitempty"`
-	Annotations  *[]SharedAnnotation `json:"annotations,omitempty"`
+	Type            string              `json:"type"`
+	SentAt          string              `json:"sentAt"`
+	Status          Status              `json:"status"`
+	MapId           *string             `json:"mapId,omitempty"`
+	Player          *PlayerState        `json:"player,omitempty"`
+	PlayerId        *string             `json:"playerId,omitempty"`
+	Players         *[]PlayerState      `json:"players,omitempty"`
+	Annotation      *SharedAnnotation   `json:"annotation,omitempty"`
+	AnnotationId    *string             `json:"annotationId,omitempty"`
+	Annotations     *[]SharedAnnotation `json:"annotations,omitempty"`
+	OperationId     *string             `json:"operationId,omitempty"`
+	Preferences     *Preferences        `json:"preferences,omitempty"`
+	OverlaySettings *OverlaySettings    `json:"overlaySettings,omitempty"`
+	OverlayView     *OverlayView        `json:"overlayView,omitempty"`
+	OverlayCommand  *OverlayCommand     `json:"overlayCommand,omitempty"`
 }
 
 type PlayerState struct {
@@ -198,4 +203,113 @@ type TileLayer struct {
 	MaxZoom   int       `json:"maxZoom"`
 	Transform []float64 `json:"transform"`
 	Bounds    []Point   `json:"bounds"`
+}
+
+type OverlayHotkeys struct {
+	ToggleEdit    string `json:"toggleEdit"`
+	ToggleVisible string `json:"toggleVisible"`
+}
+
+type MapZoomOverride struct {
+	MapId string  `json:"mapId"`
+	Zoom  float64 `json:"zoom"`
+}
+
+type OverlaySettings struct {
+	SchemaVersion    int               `json:"schemaVersion"`
+	Visible          bool              `json:"visible"`
+	Shape            string            `json:"shape"`
+	Width            int               `json:"width"`
+	Height           int               `json:"height"`
+	Left             int               `json:"left"`
+	Top              int               `json:"top"`
+	LockAspect       bool              `json:"lockAspect"`
+	SvgResolution    int               `json:"svgResolution"`
+	FollowCenter     bool              `json:"followCenter"`
+	FollowFloor      bool              `json:"followFloor"`
+	FollowZoom       bool              `json:"followZoom"`
+	TargetZoom       float64           `json:"targetZoom"`
+	PerMapZoom       bool              `json:"perMapZoom"`
+	MapZooms         []MapZoomOverride `json:"mapZooms"`
+	DevPlayerEnabled bool              `json:"devPlayerEnabled"`
+	Hotkeys          OverlayHotkeys    `json:"hotkeys"`
+}
+
+type OverlayBootstrap struct {
+	SchemaVersion        int    `json:"schemaVersion"`
+	MapDirectory         string `json:"mapDirectory"`
+	AssetDirectory       string `json:"assetDirectory"`
+	TileDirectory        string `json:"tileDirectory"`
+	TileManifestFile     string `json:"tileManifestFile"`
+	PreferencesFile      string `json:"preferencesFile"`
+	AnnotationsDirectory string `json:"annotationsDirectory"`
+	OverlaySettingsFile  string `json:"overlaySettingsFile"`
+	WebsocketPath        string `json:"websocketPath"`
+	LogPipeName          string `json:"logPipeName"`
+}
+
+type OverlayView struct {
+	MapId          string  `json:"mapId"`
+	FloorId        string  `json:"floorId"`
+	Center         Point   `json:"center"`
+	Zoom           float64 `json:"zoom"`
+	Editing        bool    `json:"editing"`
+	Visible        bool    `json:"visible"`
+	Connected      bool    `json:"connected"`
+	Error          string  `json:"error"`
+	RenderCount    int     `json:"renderCount"`
+	SvgParseCount  int     `json:"svgParseCount"`
+	SvgRasterCount int     `json:"svgRasterCount"`
+	TextureBytes   int     `json:"textureBytes"`
+	HotkeyCount    int     `json:"hotkeyCount"`
+}
+
+type OverlayCommand struct {
+	Kind    string   `json:"kind"`
+	Center  *Point   `json:"center,omitempty"`
+	Zoom    *float64 `json:"zoom,omitempty"`
+	FloorId *string  `json:"floorId,omitempty"`
+	Enabled *bool    `json:"enabled,omitempty"`
+}
+
+type DevPlayer struct {
+	PlayerId    string  `json:"playerId"`
+	DisplayName string  `json:"displayName"`
+	IsSelf      bool    `json:"isSelf"`
+	MapId       string  `json:"mapId"`
+	FloorId     string  `json:"floorId"`
+	X           float64 `json:"x"`
+	Z           float64 `json:"z"`
+	Heading     float64 `json:"heading"`
+}
+
+type OperationTiming struct {
+	TotalMs   float64 `json:"totalMs"`
+	QueueMs   float64 `json:"queueMs"`
+	ReadMs    float64 `json:"readMs"`
+	ParseMs   float64 `json:"parseMs"`
+	RasterMs  float64 `json:"rasterMs"`
+	UploadMs  float64 `json:"uploadMs"`
+	DrawMs    float64 `json:"drawMs"`
+	PresentMs float64 `json:"presentMs"`
+	Resource  string  `json:"resource"`
+	Count     int     `json:"count"`
+}
+
+type OverlayLog struct {
+	Time        string           `json:"time"`
+	Level       string           `json:"level"`
+	Component   string           `json:"component"`
+	Event       string           `json:"event"`
+	Message     string           `json:"message"`
+	Error       *string          `json:"error,omitempty"`
+	OperationId *string          `json:"operationId,omitempty"`
+	Source      *string          `json:"source,omitempty"`
+	MapId       *string          `json:"mapId,omitempty"`
+	FloorId     *string          `json:"floorId,omitempty"`
+	Basemap     *string          `json:"basemap,omitempty"`
+	Resource    *string          `json:"resource,omitempty"`
+	Generation  *int             `json:"generation,omitempty"`
+	Resolution  *int             `json:"resolution,omitempty"`
+	Timing      *OperationTiming `json:"timing,omitempty"`
 }

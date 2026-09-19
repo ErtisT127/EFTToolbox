@@ -33,8 +33,9 @@ var contentHashed = regexp.MustCompile(`^(item|trader|mob)-[0-9a-f]{24}\.[a-z]+$
 func hasContentHashName(name string) bool { return contentHashed.MatchString(name) }
 
 type mapStore struct {
-	root string
-	mu   sync.Mutex
+	root    string
+	mu      sync.Mutex
+	changed func(string, string, string)
 }
 
 func readJSON(name string, value any) error {
@@ -270,6 +271,9 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			apiError(w, http.StatusInternalServerError, "annotations_save_failed")
 			return
 		}
+		if s.changed != nil {
+			s.changed("annotations_changed", m.Id, r.Header.Get("X-Operation-ID"))
+		}
 		jsonResponse(w, data)
 	})
 	mux.HandleFunc("GET /api/map-preferences", func(w http.ResponseWriter, r *http.Request) {
@@ -316,6 +320,9 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			log.Printf("save preferences: %v", err)
 			apiError(w, http.StatusInternalServerError, "preferences_save_failed")
 			return
+		}
+		if s.changed != nil {
+			s.changed("preferences_changed", data.SelectedMap, r.Header.Get("X-Operation-ID"))
 		}
 		jsonResponse(w, data)
 	})
