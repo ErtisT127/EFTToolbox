@@ -30,6 +30,7 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 	hub := &overlayHub{store: store, status: status, players: map[string]contracts.PlayerState{}, clients: map[chan contracts.ServerEvent]bool{}, browseActive: map[string]bool{}}
 	store.changed = hub.changed
 	if writer, ok := logWriter.(*dailyLogWriter); ok {
+		hub.logWriter = writer
 		hub.pipe = startOverlayLogPipe(ctx, writer)
 	}
 	store.register(mux)

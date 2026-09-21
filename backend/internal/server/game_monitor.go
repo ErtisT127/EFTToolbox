@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -72,7 +73,7 @@ func (h *overlayHub) startGameMonitor(ctx context.Context) {
 	h.store.setMode(settings.Mode)
 	h.appliedMapID = h.loadAppliedMap()
 	h.monitorStatus = contracts.GameMonitorStatus{SchemaVersion: 1, Mode: settings.Mode, MapId: h.appliedMapID, ScreenshotWatching: settings.ScreenshotDirectory != "", LogWatching: settings.LogDirectory != ""}
-	h.monitor = gamewatch.New(gamewatch.Callbacks{Screenshot: h.acceptScreenshot, Log: h.acceptLog, Activity: h.monitorActivity})
+	h.monitor = gamewatch.New(gamewatch.Callbacks{Diagnostic: h.monitorDiagnostic, Screenshot: h.acceptScreenshot, Log: h.acceptLog, SessionChanged: h.monitorSessionChanged, Activity: h.monitorActivity})
 	h.monitor.Apply(h.monitorConfig())
 	go h.monitor.Run(ctx)
 }
@@ -85,38 +86,61 @@ func (h *overlayHub) monitorActivity(kind string, at time.Time) {
 		h.monitorStatus.ScreenshotWatching = h.monitorSettings.ScreenshotDirectory != ""
 	case "log":
 		h.monitorStatus.LastLogAt = at.UTC().Format(time.RFC3339Nano)
-	case "session":
-		h.detectedMapID = ""
-		h.pendingMap = ""
-		h.pendingMode = ""
 	}
 	h.publish(contracts.ServerEvent{Type: "game_monitor_changed", GameMonitorStatus: &h.monitorStatus})
+	h.mu.Unlock()
+}
+
+func (h *overlayHub) monitorSessionChanged(generation uint64) {
+	h.mu.Lock()
+	initialized := h.sessionGeneration != 0
+	h.sessionGeneration = generation
+	h.detectedMapID = ""
+	h.pendingMap = ""
+	h.pendingMode = ""
+	if initialized {
+		h.publish(contracts.ServerEvent{Type: "game_monitor_changed", GameMonitorStatus: &h.monitorStatus})
+	}
 	h.mu.Unlock()
 }
 
 func (h *overlayHub) acceptLog(event gamewatch.LogEvent) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if event.Generation != 0 && event.Generation != h.sessionGeneration {
+		return
+	}
 	// Log events only identify candidates. They become authoritative after a
 	// position update succeeds, so historical logs cannot lock the UI.
 	if event.Mode != "" && string(event.Mode) != h.monitorSettings.Mode {
 		h.pendingMode = string(event.Mode)
 	}
 	if event.Map != "" {
-		candidate := h.resolveLocation(strings.TrimSuffix(filepath.Base(event.Map), filepath.Ext(event.Map)))
-		if _, err := h.store.load(candidate); err == nil {
-			h.detectedMapID = candidate
-			h.pendingMap = candidate
+		name := strings.TrimSuffix(filepath.Base(event.Map), filepath.Ext(event.Map))
+		mode := h.monitorSettings.Mode
+		if h.pendingMode != "" {
+			mode = h.pendingMode
+		}
+		if event.Mode != "" {
+			mode = string(event.Mode)
+		}
+		candidate := h.resolveLocationForMode(name, mode)
+		if _, err := h.store.loadFromMode(candidate, mode); err == nil {
+			h.detectedMapID, h.pendingMap = candidate, candidate
+		} else {
+			h.monitorDiagnostic("warn", "map_candidate_rejected", fmt.Sprintf("Map %q resolved to %q in mode %q: %v", name, candidate, mode, err))
 		}
 	}
-	h.monitorStatus.Mode = h.monitorSettings.Mode
-	h.monitorStatus.LogWatching = h.monitorSettings.LogDirectory != ""
-	h.publish(contracts.ServerEvent{Type: "game_monitor_changed", GameMonitorStatus: &h.monitorStatus})
+	if !event.InitialRead {
+		h.monitorStatus.Mode = h.monitorSettings.Mode
+		h.monitorStatus.LogWatching = h.monitorSettings.LogDirectory != ""
+		h.publish(contracts.ServerEvent{Type: "game_monitor_changed", GameMonitorStatus: &h.monitorStatus})
+	}
 }
 
-func (h *overlayHub) resolveLocation(name string) string {
+func (h *overlayHub) resolveLocationForMode(name, mode string) string {
 	var locations map[string]string
-	if readJSON(filepath.Join(h.store.activeUpstream(), "locations.json"), &locations) == nil {
+	if readJSON(filepath.Join(h.store.upstreamForMode(mode), "locations.json"), &locations) == nil {
 		for _, candidate := range locationCandidates(name) {
 			if id := locations[candidate]; id != "" {
 				return id
@@ -173,10 +197,16 @@ func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
 	m, err := h.selectedPlayerMap()
 	h.mu.Lock()
 	pending := h.pendingMap
+	pendingMode := h.pendingMode
 	autoMap := h.monitorSettings.AutoMapSwitch
+	currentMode := h.monitorSettings.Mode
 	h.mu.Unlock()
 	if autoMap && pending != "" {
-		if candidate, loadErr := h.store.load(pending); loadErr == nil {
+		mode := currentMode
+		if pendingMode != "" {
+			mode = pendingMode
+		}
+		if candidate, loadErr := h.store.loadFromMode(pending, mode); loadErr == nil {
 			m, err = candidate, nil
 		}
 	}
@@ -200,7 +230,7 @@ func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
 	if floor == "" {
 		floor = m.Floors[0].Id
 	}
-	player, err := h.projectPlayer(contracts.DevPlayer{PlayerId: "self", DisplayName: "You", IsSelf: true, MapId: m.Id, FloorId: floor, X: value.X, Z: value.Z, Heading: value.Heading})
+	player, err := h.projectPlayerOnMap(m, contracts.DevPlayer{PlayerId: "self", DisplayName: "You", IsSelf: true, MapId: m.Id, FloorId: floor, X: value.X, Z: value.Z, Heading: value.Heading})
 	if err != nil {
 		return err
 	}
@@ -222,6 +252,7 @@ func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
 		h.pendingMap = ""
 		h.monitorStatus.MapId = m.Id
 		_ = h.persistAppliedMap()
+		h.monitorDiagnostic("info", "map_applied", fmt.Sprintf("Map %q", m.Id))
 	}
 	h.publish(contracts.ServerEvent{Type: "player_upsert", Player: &player})
 	if oldMap != h.appliedMapID {
@@ -241,6 +272,7 @@ func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
 			}
 		}
 		if oldMode != h.monitorSettings.Mode {
+			h.monitorDiagnostic("info", "mode_applied", fmt.Sprintf("Mode %q", h.monitorSettings.Mode))
 			h.publish(contracts.ServerEvent{Type: "resources_changed"})
 			h.publish(contracts.ServerEvent{Type: "mode_applied", GameMonitorStatus: &h.monitorStatus})
 		}

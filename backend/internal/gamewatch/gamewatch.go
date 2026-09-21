@@ -1,11 +1,14 @@
-// Package gamewatch consumes EFT's filesystem output without periodic polling.
+// Package gamewatch consumes EFT's filesystem output through polling tails and
+// a single coordinator loop.
 package gamewatch
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
-	"log"
 	"math"
 	"os"
 	"path/filepath"
@@ -17,6 +20,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/nchizhov/tail"
 )
 
 type Mode string
@@ -74,8 +78,10 @@ func ParseScreenshotName(name string) (Screenshot, bool) {
 }
 
 type LogEvent struct {
-	Mode Mode
-	Map  string
+	Mode        Mode
+	Map         string
+	InitialRead bool
+	Generation  uint64
 }
 
 var (
@@ -106,18 +112,46 @@ type Config struct {
 }
 
 type Callbacks struct {
-	Screenshot func(Screenshot) error
-	Log        func(LogEvent)
-	Activity   func(kind string, at time.Time)
+	Diagnostic     func(level, event, message string)
+	Screenshot     func(Screenshot) error
+	Log            func(LogEvent)
+	SessionChanged func(generation uint64)
+	Activity       func(kind string, at time.Time)
 }
 
-// Monitor owns at most one watcher for the screenshots directory, the log root,
-// and the active session. Historical session directories are never watched.
+type TailLine struct {
+	Generation uint64
+	Path       string
+	Text       string
+	Err        error
+}
+
+type tailHandle struct {
+	value *tail.Tail
+	stop  chan struct{}
+}
+
+const (
+	coordinatorInterval = 250 * time.Millisecond
+	rootScanTicks       = 20
+	largeLogThreshold   = 50 << 20
+	reverseChunkSize    = 64 << 10
+)
+
+// Monitor coordinates all filesystem access from one goroutine. Log contents are
+// tailed with polling so Windows directory notifications are not part of the
+// correctness path.
 type Monitor struct {
 	callbacks Callbacks
 	updates   chan Config
 	mu        sync.Mutex
 	config    Config
+}
+
+func (m *Monitor) diagnostic(level, event, format string, args ...any) {
+	if m.callbacks.Diagnostic != nil {
+		m.callbacks.Diagnostic(level, event, fmt.Sprintf(format, args...))
+	}
 }
 
 func New(callbacks Callbacks) *Monitor {
@@ -147,130 +181,397 @@ func (m *Monitor) currentConfig() Config {
 
 func (m *Monitor) Run(ctx context.Context) {
 	config := m.currentConfig()
-	var watcher *fsnotify.Watcher
-	var watchedScreenshot, watchedLogs, watchedSession string
-	readers := map[string]*incrementalReader{}
-	defer func() {
-		if watcher != nil {
-			_ = watcher.Close()
-		}
-	}()
+	lines := make(chan TailLine, 4096)
+	tails := map[string]tailHandle{}
+	var screenshotWatcher *fsnotify.Watcher
+	var screenshotEvents <-chan fsnotify.Event
+	var screenshotErrors <-chan error
+	var screenshotDirectory string
+	pendingDelete := make([]string, 0)
+	deleteOverflowLogged := false
+	var generation uint64
+	var logRoot, session, activeApplication string
+	var rootModTime time.Time
+	tick := 0
 
-	reset := func(next Config) {
-		if m.callbacks.Activity != nil {
-			m.callbacks.Activity("session", time.Now())
-		}
-		if watcher != nil {
-			_ = watcher.Close()
-		}
-		watcher = nil
-		watchedScreenshot, watchedLogs, watchedSession = "", "", ""
-		readers = map[string]*incrementalReader{}
-		config = next
-		w, err := fsnotify.NewWatcher()
-		if err != nil {
-			log.Printf("game monitor watcher: %v", err)
-			return
-		}
-		watcher = w
-		if dir := cleanDirectory(config.ScreenshotDirectory); dir != "" {
-			if err := w.Add(dir); err == nil {
-				watchedScreenshot = dir
-			}
-		}
-		if dir := cleanDirectory(config.LogDirectory); dir != "" {
-			if err := w.Add(dir); err == nil {
-				watchedLogs = dir
-				watchedSession = newestSession(dir)
-				if watchedSession != "" {
-					if err := w.Add(watchedSession); err != nil {
-						watchedSession = ""
-					}
+	drainScreenshotChannels := func(events <-chan fsnotify.Event, errors <-chan error) {
+		for events != nil || errors != nil {
+			select {
+			case _, ok := <-events:
+				if !ok {
+					events = nil
 				}
-				if watchedSession != "" {
-					readApplicationLogs(watchedSession, readers, m.consume, m.callbacks.Activity)
+			case _, ok := <-errors:
+				if !ok {
+					errors = nil
 				}
+			default:
+				return
 			}
 		}
 	}
+
+	stopScreenshotWatcher := func() {
+		if screenshotWatcher == nil {
+			return
+		}
+		oldEvents, oldErrors := screenshotEvents, screenshotErrors
+		_ = screenshotWatcher.Close()
+		drainScreenshotChannels(oldEvents, oldErrors)
+		screenshotWatcher = nil
+		screenshotEvents = nil
+		screenshotErrors = nil
+		screenshotDirectory = ""
+	}
+
+	startScreenshotWatcher := func(directory string) {
+		stopScreenshotWatcher()
+		directory = cleanDirectory(directory)
+		if directory == "" {
+			return
+		}
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			m.diagnostic("error", "screenshot_watch_failed", "Create watcher: %v", err)
+			return
+		}
+		if err := watcher.Add(directory); err != nil {
+			_ = watcher.Close()
+			m.diagnostic("error", "screenshot_watch_failed", "Watch directory %q: %v", directory, err)
+			return
+		}
+		screenshotWatcher = watcher
+		screenshotEvents = watcher.Events
+		screenshotErrors = watcher.Errors
+		screenshotDirectory = directory
+	}
+
+	stopTails := func() {
+		for path, handle := range tails {
+			close(handle.stop)
+			_ = handle.value.Stop()
+			delete(tails, path)
+		}
+		activeApplication = ""
+	}
+
+	reset := func(next Config) {
+		stopScreenshotWatcher()
+		stopTails()
+		config = next
+		generation++
+		logRoot, session = "", ""
+		rootModTime = time.Time{}
+		pendingDelete = pendingDelete[:0]
+		deleteOverflowLogged = false
+		if m.callbacks.SessionChanged != nil {
+			m.callbacks.SessionChanged(generation)
+		}
+	}
+
+	startTail := func(path string, fromEnd bool) {
+		location := (*tail.SeekInfo)(nil)
+		if fromEnd {
+			location = &tail.SeekInfo{Offset: 0, Whence: io.SeekEnd}
+		}
+		value, err := tail.TailFile(path, tail.Config{Follow: true, ReOpen: true, Poll: true, CompleteLines: true, MustExist: false, Location: location, Logger: tail.DiscardingLogger})
+		if err != nil {
+			m.diagnostic("error", "tail_start_failed", "Open %q: %v", path, err)
+			return
+		}
+		stop := make(chan struct{})
+		tails[path] = tailHandle{value: value, stop: stop}
+		go func(path string, generation uint64, value *tail.Tail) {
+			for line := range value.Lines {
+				item := TailLine{Generation: generation, Path: path, Text: line.Text, Err: line.Err}
+				select {
+				case lines <- item:
+				case <-ctx.Done():
+					return
+				case <-stop:
+					return
+				}
+			}
+		}(path, generation, value)
+	}
+
+	switchSession := func(next string, startup bool) {
+		if next == session {
+			return
+		}
+		if session != "" {
+			generation++
+			if m.callbacks.SessionChanged != nil {
+				m.callbacks.SessionChanged(generation)
+			}
+		}
+		stopTails()
+		session = next
+		if next == "" {
+			return
+		}
+		m.diagnostic("info", "session_changed", "Session %q, generation %d", next, generation)
+	}
+
+	initialize := func() {
+		startScreenshotWatcher(config.ScreenshotDirectory)
+		logRoot, rootModTime = scanSessionRoot(logRoot, rootModTime, config.LogDirectory, &session, &switchSession)
+		if session != "" {
+			scanApplicationFiles(session, &activeApplication, tails, generation, true, startTail, m.callbacks)
+		}
+	}
+
 	reset(config)
+	initialize()
+	clock := time.NewTicker(coordinatorInterval)
+	defer clock.Stop()
+	defer stopScreenshotWatcher()
+	defer stopTails()
 
 	for {
-		if watcher == nil {
-			select {
-			case <-ctx.Done():
-				return
-			case next := <-m.updates:
-				reset(next)
-			}
-			continue
-		}
 		select {
 		case <-ctx.Done():
 			return
 		case next := <-m.updates:
+			if next == config {
+				continue
+			}
 			reset(next)
-		case event, ok := <-watcher.Events:
+			initialize()
+		case <-clock.C:
+			tick++
+			m.consumeTailLines(ctx, lines, generation)
+			m.processPendingDeletes(&pendingDelete)
+			if tick%rootScanTicks == 0 {
+				logRoot, rootModTime = scanSessionRoot(logRoot, rootModTime, config.LogDirectory, &session, &switchSession)
+				if session != "" {
+					scanApplicationFiles(session, &activeApplication, tails, generation, false, startTail, m.callbacks)
+				}
+			}
+			m.consumeTailLines(ctx, lines, generation)
+		case event, ok := <-screenshotEvents:
 			if !ok {
-				reset(config)
+				directory := screenshotDirectory
+				startScreenshotWatcher(directory)
 				continue
 			}
-			eventDir := filepath.Clean(filepath.Dir(event.Name))
-			if eventDir == watchedScreenshot && event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
-				m.consumeScreenshot(config, event.Name)
+			m.consumeTailLines(ctx, lines, generation)
+			m.processScreenshotEvent(config, screenshotDirectory, event, &pendingDelete, &deleteOverflowLogged)
+			m.processPendingDeletes(&pendingDelete)
+		case err, ok := <-screenshotErrors:
+			if !ok {
+				directory := screenshotDirectory
+				startScreenshotWatcher(directory)
 				continue
 			}
-			if eventDir == watchedLogs && event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
-				next := newestSession(watchedLogs)
-				if next != "" && next != watchedSession {
-					if watchedSession != "" {
-						_ = watcher.Remove(watchedSession)
-					}
-					if err := watcher.Add(next); err == nil {
-						watchedSession = next
-						readers = map[string]*incrementalReader{}
-						readApplicationLogs(next, readers, m.consume, m.callbacks.Activity)
-					}
-				}
-				continue
-			}
-			if eventDir == watchedSession && event.Op&(fsnotify.Create|fsnotify.Rename|fsnotify.Write) != 0 {
-				if isApplicationLog(event.Name) {
-					readApplicationLog(event.Name, readers, m.consume, m.callbacks.Activity)
-				}
-				continue
-			}
-		case err, ok := <-watcher.Errors:
-			if !ok || err != nil {
-				// Overflow/revocation recovery is one rescan and watcher rebuild.
-				reset(config)
-			}
+			m.diagnostic("error", "screenshot_watch_failed", "%v", err)
+			directory := screenshotDirectory
+			startScreenshotWatcher(directory)
 		}
 	}
 }
 
-func (m *Monitor) consume(event LogEvent) {
-	if m.callbacks.Log != nil {
-		m.callbacks.Log(event)
+func (m *Monitor) consumeTailLines(ctx context.Context, lines <-chan TailLine, generation uint64) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case item := <-lines:
+			if item.Generation != generation {
+				continue
+			}
+			if item.Err != nil {
+				m.diagnostic("error", "tail_read_failed", "Read %q: %v", item.Path, item.Err)
+				continue
+			}
+			if event, ok := ParseLogLine(strings.TrimSuffix(item.Text, "\r")); ok {
+				event.Generation = generation
+				if m.callbacks.Log != nil {
+					m.callbacks.Log(event)
+				}
+				if m.callbacks.Activity != nil {
+					m.callbacks.Activity("log", time.Now())
+				}
+			}
+		default:
+			return
+		}
 	}
 }
 
-func (m *Monitor) consumeScreenshot(config Config, path string) {
-	screenshot, ok := ParseScreenshotName(path)
-	if !ok || m.callbacks.Screenshot == nil {
+func (m *Monitor) processScreenshotEvent(config Config, directory string, event fsnotify.Event, pendingDelete *[]string, overflowLogged *bool) {
+	if m.callbacks.Screenshot == nil {
 		return
 	}
-	if err := m.callbacks.Screenshot(screenshot); err != nil {
+	path := filepath.Clean(event.Name)
+	if directory == "" || filepath.Dir(path) != directory || event.Op&(fsnotify.Create|fsnotify.Rename) == 0 {
+		return
+	}
+	if strings.ToLower(filepath.Ext(path)) != ".png" {
+		return
+	}
+	value, ok := ParseScreenshotName(path)
+	if !ok {
+		m.diagnostic("warn", "screenshot_name_invalid", "Cannot parse %q", path)
+		return
+	}
+	if err := m.callbacks.Screenshot(value); err != nil {
+		m.diagnostic("warn", "position_update_failed", "Screenshot %q: %v", path, err)
 		return
 	}
 	if config.DeleteScreenshots {
-		_ = os.Remove(path)
+		if len(*pendingDelete) >= 1000 {
+			if !*overflowLogged {
+				m.diagnostic("warn", "screenshot_delete_limit", "Pending screenshot deletions reached 1000")
+				*overflowLogged = true
+			}
+			return
+		}
+		*pendingDelete = append(*pendingDelete, path)
 	}
 	if m.callbacks.Activity != nil {
 		m.callbacks.Activity("screenshot", time.Now())
 	}
 }
 
+func (m *Monitor) processPendingDeletes(pending *[]string) {
+	kept := (*pending)[:0]
+	for _, path := range *pending {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			kept = append(kept, path)
+		}
+	}
+	*pending = kept
+}
+
+func scanSessionRoot(previous string, previousMod time.Time, configured string, session *string, switchSession *func(string, bool)) (string, time.Time) {
+	root := cleanDirectory(configured)
+	if root == "" {
+		return "", time.Time{}
+	}
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return root, time.Time{}
+	}
+	if root == previous && info.ModTime().Equal(previousMod) {
+		return root, previousMod
+	}
+	next := newestSession(root)
+	if next != *session {
+		startup := *session == ""
+		(*switchSession)(next, startup)
+	}
+	return root, info.ModTime()
+}
+
+func scanApplicationFiles(session string, active *string, tails map[string]tailHandle, generation uint64, startup bool, startTail func(string, bool), callbacks Callbacks) {
+	entries, err := os.ReadDir(session)
+	if err != nil {
+		return
+	}
+	var newest string
+	var newestMod time.Time
+	for _, entry := range entries {
+		if entry.IsDir() || !isApplicationLog(entry.Name()) {
+			continue
+		}
+		info, err := entry.Info()
+		if err == nil && (newest == "" || info.ModTime().After(newestMod)) {
+			newest, newestMod = filepath.Join(session, entry.Name()), info.ModTime()
+		}
+	}
+	if newest == "" || newest == *active {
+		return
+	}
+	for path, handle := range tails {
+		close(handle.stop)
+		_ = handle.value.Stop()
+		delete(tails, path)
+	}
+	*active = newest
+	fromEnd := startup
+	// Install the tail before recovery. Lines appended while the recovery scan
+	// runs are then queued and consumed after the recovered candidate.
+	startTail(newest, fromEnd)
+	if startup {
+		if event, ok, err := recoverApplicationState(newest); err == nil && ok {
+			event.InitialRead = true
+			event.Generation = generation
+			if callbacks.Log != nil {
+				callbacks.Log(event)
+			}
+		}
+	}
+}
+
+func recoverApplicationState(path string) (LogEvent, bool, error) {
+	file, err := tail.OpenFile(path) //nolint:staticcheck // preserves Windows shared read/write/delete semantics
+	if err != nil {
+		return LogEvent{}, false, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return LogEvent{}, false, err
+	}
+	modeOffset := findLastAnchor(file, info.Size(), []byte("Session mode:"))
+	mapOffset := findLastAnchor(file, info.Size(), []byte("scene preset path:"))
+	if modeOffset < 0 && mapOffset < 0 {
+		return LogEvent{}, false, nil
+	}
+	start := modeOffset
+	if start < 0 || (mapOffset >= 0 && mapOffset < start) {
+		start = mapOffset
+	}
+	return scanLogRange(file, start)
+}
+
+func scanLogRange(file *os.File, offset int64) (LogEvent, bool, error) {
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return LogEvent{}, false, err
+	}
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64<<10), 4<<20)
+	var last LogEvent
+	found := false
+	for scanner.Scan() {
+		if event, ok := ParseLogLine(scanner.Text()); ok {
+			if event.Mode != "" {
+				last.Mode = event.Mode
+			}
+			if event.Map != "" {
+				last.Map = event.Map
+			}
+			found = true
+		}
+	}
+	return last, found, scanner.Err()
+}
+
+func findLastAnchor(file *os.File, size int64, needle []byte) int64 {
+	var suffix []byte
+	for end := size; end > 0; {
+		start := end - reverseChunkSize
+		if start < 0 {
+			start = 0
+		}
+		buf := make([]byte, end-start)
+		if _, err := file.ReadAt(buf, start); err != nil && !errors.Is(err, io.EOF) {
+			return -1
+		}
+		data := append(buf, suffix...)
+		if index := bytes.LastIndex(data, needle); index >= 0 {
+			return start + int64(index)
+		}
+		keep := len(needle) - 1
+		if keep > len(buf) {
+			keep = len(buf)
+		}
+		suffix = append([]byte(nil), buf[:keep]...)
+		end = start
+	}
+	return -1
+}
 func cleanDirectory(path string) string {
 	if path == "" {
 		return ""
@@ -324,72 +625,4 @@ func newestSession(root string) string {
 func isApplicationLog(path string) bool {
 	name := strings.ToLower(filepath.Base(path))
 	return strings.HasSuffix(name, "application.log") || strings.HasSuffix(name, "application_000.log")
-}
-
-type incrementalReader struct {
-	offset  int64
-	pending string
-}
-
-func readApplicationLogs(dir string, readers map[string]*incrementalReader, consume func(LogEvent), activity func(string, time.Time)) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	for _, entry := range entries {
-		path := filepath.Join(dir, entry.Name())
-		if !entry.IsDir() && isApplicationLog(path) {
-			readApplicationLog(path, readers, consume, activity)
-		}
-	}
-}
-
-func readApplicationLog(path string, readers map[string]*incrementalReader, consume func(LogEvent), activity func(string, time.Time)) {
-	reader := readers[path]
-	if reader == nil {
-		reader = &incrementalReader{}
-		readers[path] = reader
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return
-	}
-	defer func() { _ = file.Close() }()
-	info, err := file.Stat()
-	if err != nil {
-		return
-	}
-	if info.Size() < reader.offset {
-		reader.offset, reader.pending = 0, ""
-	}
-	if _, err = file.Seek(reader.offset, io.SeekStart); err != nil {
-		return
-	}
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return
-	}
-	reader.offset += int64(len(data))
-	reader.pending += string(data)
-	scanner := bufio.NewScanner(strings.NewReader(reader.pending))
-	lines := make([]string, 0)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	if !strings.HasSuffix(reader.pending, "\n") {
-		if len(lines) > 0 {
-			reader.pending = lines[len(lines)-1]
-			lines = lines[:len(lines)-1]
-		}
-	} else {
-		reader.pending = ""
-	}
-	for _, line := range lines {
-		if event, ok := ParseLogLine(strings.TrimSuffix(line, "\r")); ok {
-			consume(event)
-			if activity != nil {
-				activity("log", time.Now())
-			}
-		}
-	}
 }

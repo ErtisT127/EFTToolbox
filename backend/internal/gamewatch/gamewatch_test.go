@@ -81,6 +81,9 @@ func TestMonitorHandlesChildFileEvents(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := os.WriteFile(filepath.Join(session, "application.log"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	events := make(chan string, 2)
 	monitor := New(Callbacks{
 		Screenshot: func(Screenshot) error {
@@ -117,6 +120,162 @@ func TestMonitorHandlesChildFileEvents(t *testing.T) {
 			seen[kind] = true
 		case <-deadline.C:
 			t.Fatalf("monitor events = %#v, want log and screenshot", seen)
+		}
+	}
+}
+
+func TestMonitorDoesNotReplayExistingScreenshot(t *testing.T) {
+	root := t.TempDir()
+	screenshots := filepath.Join(root, "screenshots")
+	logs := filepath.Join(root, "logs")
+	if err := os.MkdirAll(screenshots, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(logs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	historical := filepath.Join(screenshots, "2026-09-21[12-34]_0.000, 0.000, 0.000_0.000, 0.000, 0.000, 1.000.png")
+	if err := os.WriteFile(historical, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	events := make(chan struct{}, 2)
+	monitor := New(Callbacks{Screenshot: func(Screenshot) error {
+		events <- struct{}{}
+		return nil
+	}})
+	monitor.Apply(Config{ScreenshotDirectory: screenshots, LogDirectory: logs})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go monitor.Run(ctx)
+
+	select {
+	case <-events:
+		t.Fatal("historical screenshot was replayed")
+	case <-time.After(400 * time.Millisecond):
+	}
+	current := filepath.Join(screenshots, "2026-09-21[12-35]_1.000, 0.000, 0.000_0.000, 0.000, 0.000, 1.000.png")
+	if err := os.WriteFile(current, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-events:
+	case <-time.After(2 * time.Second):
+		t.Fatal("new screenshot was not observed")
+	}
+}
+
+func TestMonitorIgnoresWriteForExistingScreenshot(t *testing.T) {
+	root := t.TempDir()
+	screenshots := filepath.Join(root, "screenshots")
+	logs := filepath.Join(root, "logs")
+	if err := os.MkdirAll(screenshots, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(logs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(screenshots, "2026-09-21[12-36]_1.000, 0.000, 0.000_0.000, 0.000, 0.000, 1.000.png")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	events := make(chan struct{}, 1)
+	monitor := New(Callbacks{Screenshot: func(Screenshot) error {
+		events <- struct{}{}
+		return nil
+	}})
+	monitor.Apply(Config{ScreenshotDirectory: screenshots, LogDirectory: logs})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go monitor.Run(ctx)
+	time.Sleep(100 * time.Millisecond)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = file.WriteString("ignored")
+	_ = file.Close()
+	select {
+	case <-events:
+		t.Fatal("write event triggered screenshot processing")
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+func TestMonitorRecoversLatestStateOnStartup(t *testing.T) {
+	root := t.TempDir()
+	screenshots := filepath.Join(root, "screenshots")
+	logs := filepath.Join(root, "logs")
+	session := filepath.Join(logs, "log_2026.09.21_12-34-00")
+	if err := os.MkdirAll(session, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(screenshots, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	application := filepath.Join(session, "application.log")
+	if err := os.WriteFile(application, []byte("Session mode: PVE\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	events := make(chan LogEvent, 2)
+	monitor := New(Callbacks{Log: func(event LogEvent) { events <- event }})
+	monitor.Apply(Config{ScreenshotDirectory: screenshots, LogDirectory: logs})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go monitor.Run(ctx)
+
+	select {
+	case event := <-events:
+		if !event.InitialRead || event.Mode != ModePVE {
+			t.Fatalf("recovered event = %#v, want initial PVE event", event)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("latest state was not recovered")
+	}
+
+}
+
+func TestMonitorSwitchesToNewSession(t *testing.T) {
+	root := t.TempDir()
+	screenshots := filepath.Join(root, "screenshots")
+	logs := filepath.Join(root, "logs")
+	oldSession := filepath.Join(logs, "log_2026.09.21_23-23-44_1.1.5.1.47510")
+	if err := os.MkdirAll(oldSession, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(screenshots, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldLog := filepath.Join(oldSession, "application.log")
+	if err := os.WriteFile(oldLog, []byte("Session mode: PVE\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	events := make(chan LogEvent, 2)
+	monitor := New(Callbacks{Log: func(event LogEvent) { events <- event }})
+	monitor.Apply(Config{ScreenshotDirectory: screenshots, LogDirectory: logs})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go monitor.Run(ctx)
+	time.Sleep(100 * time.Millisecond)
+
+	newSession := filepath.Join(logs, "log_2026.09.22_0-15-50_1.1.5.1.47510")
+	if err := os.MkdirAll(newSession, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	newLog := filepath.Join(newSession, "application.log")
+	if err := os.WriteFile(newLog, []byte("Session mode: PVE\nscene preset path:maps/factory_day_preset.bundle\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.NewTimer(8 * time.Second)
+	defer deadline.Stop()
+	seenMap := false
+	for !seenMap {
+		select {
+		case event := <-events:
+			if event.Map == "factory_day_preset" {
+				seenMap = true
+			}
+		case <-deadline.C:
+			t.Fatal("new session log was not replayed")
 		}
 	}
 }

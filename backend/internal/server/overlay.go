@@ -27,23 +27,25 @@ import (
 )
 
 type overlayHub struct {
-	mu              sync.Mutex
-	store           *mapStore
-	status          contracts.Status
-	players         map[string]contracts.PlayerState
-	clients         map[chan contracts.ServerEvent]bool
-	view            contracts.OverlayView
-	pipe            string
-	monitor         *gamewatch.Monitor
-	monitorSettings contracts.GameMonitorSettings
-	monitorStatus   contracts.GameMonitorStatus
-	appliedMapID    string
-	detectedMapID   string
-	pendingMap      string
-	pendingMode     string
-	browseMu        sync.Mutex
-	browseStateMu   sync.Mutex
-	browseActive    map[string]bool
+	logWriter         *dailyLogWriter
+	mu                sync.Mutex
+	store             *mapStore
+	status            contracts.Status
+	players           map[string]contracts.PlayerState
+	clients           map[chan contracts.ServerEvent]bool
+	view              contracts.OverlayView
+	pipe              string
+	monitor           *gamewatch.Monitor
+	monitorSettings   contracts.GameMonitorSettings
+	monitorStatus     contracts.GameMonitorStatus
+	appliedMapID      string
+	detectedMapID     string
+	pendingMap        string
+	pendingMode       string
+	sessionGeneration uint64
+	browseMu          sync.Mutex
+	browseStateMu     sync.Mutex
+	browseActive      map[string]bool
 }
 
 func defaultOverlaySettings() contracts.OverlaySettings {
@@ -541,7 +543,14 @@ func operationID(r *http.Request) *string { id := r.Header.Get("X-Operation-ID")
 // validation and projection math.
 func (h *overlayHub) projectPlayer(v contracts.DevPlayer) (contracts.PlayerState, error) {
 	m, err := h.store.load(v.MapId)
-	if err != nil || !safeID.MatchString(v.PlayerId) || len(v.PlayerId) > 100 || len(v.DisplayName) > 200 ||
+	if err != nil {
+		return contracts.PlayerState{}, errors.New("player_invalid")
+	}
+	return h.projectPlayerOnMap(m, v)
+}
+
+func (h *overlayHub) projectPlayerOnMap(m contracts.MapData, v contracts.DevPlayer) (contracts.PlayerState, error) {
+	if !safeID.MatchString(v.PlayerId) || len(v.PlayerId) > 100 || len(v.DisplayName) > 200 ||
 		!validPoint(contracts.Point{X: v.X, Y: v.Z}) || !finite(v.Heading) || math.Abs(v.Heading) > 1e7 ||
 		!slices.ContainsFunc(m.Floors, func(f contracts.Floor) bool { return f.Id == v.FloorId }) {
 		return contracts.PlayerState{}, errors.New("player_invalid")

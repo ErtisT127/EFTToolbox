@@ -64,6 +64,28 @@ func (s *mapStore) activeUpstream() string {
 	return filepath.Join(s.root, "upstream")
 }
 
+func (s *mapStore) upstreamForMode(mode string) string {
+	modeRoot := filepath.Join(s.root, "upstream", "modes", mode)
+	if info, err := os.Stat(filepath.Join(modeRoot, "maps")); err == nil && info.IsDir() {
+		return modeRoot
+	}
+	return filepath.Join(s.root, "upstream")
+}
+
+func (s *mapStore) loadFromMode(id, mode string) (contracts.MapData, error) {
+	var data contracts.MapData
+	if !safeID.MatchString(id) {
+		return data, os.ErrNotExist
+	}
+	if err := readJSON(filepath.Join(s.upstreamForMode(mode), "maps", id+".json"), &data); err != nil {
+		return data, err
+	}
+	if data.SchemaVersion != 1 || data.Id != id || len(data.Floors) == 0 || len(data.Projection.ViewBox) != 4 || len(data.Projection.Bounds) != 2 {
+		return data, fmt.Errorf("invalid map data: %s", id)
+	}
+	return data, nil
+}
+
 func readJSON(name string, value any) error {
 	data, err := os.ReadFile(name)
 	if err != nil {

@@ -61,6 +61,9 @@ export function SettingsPage() {
     if (loadError) notices.push(t(loadError));
   }, [loadError, t]);
   useEffect(() => {
+    if (monitor.error) notices.push(t(monitor.error));
+  }, [monitor.error, t]);
+  useEffect(() => {
     if (view?.error) notices.push(t('settings.nativeError', { error: t(view.error) }));
   }, [view?.error, t]);
   const update = (v: Partial<OverlaySettings>) => store.update(v);
@@ -191,7 +194,6 @@ export function SettingsPage() {
                 />
               </div>
             </fieldset>
-            {monitor.error && <p className="danger">{t(monitor.error)}</p>}
           </>
         ) : !value ? (
           <p>{t('common.loading')}</p>

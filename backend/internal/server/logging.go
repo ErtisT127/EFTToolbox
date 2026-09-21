@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -122,5 +123,14 @@ func (w *dailyLogWriter) cleanup() {
 		if len(name) >= len("efttoolbox-2006-01-02") && strings.TrimSuffix(strings.TrimPrefix(name, "efttoolbox-"), ".jsonl") < cutoff {
 			_ = os.Remove(filepath.Join(w.root, name))
 		}
+	}
+}
+
+func (h *overlayHub) monitorDiagnostic(level, event, message string) {
+	if h.logWriter == nil {
+		return
+	}
+	if err := h.logWriter.write(clientLog{Level: level, Component: "gamewatch", Event: event, Message: message}); err != nil {
+		log.Printf("write game monitor log: %v", err)
 	}
 }
