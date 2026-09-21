@@ -29,6 +29,26 @@ public sealed record ServerEvent {
   [JsonPropertyName("overlaySettings")] public OverlaySettings? OverlaySettings { get; init; } = null;
   [JsonPropertyName("overlayView")] public OverlayView? OverlayView { get; init; } = null;
   [JsonPropertyName("overlayCommand")] public OverlayCommand? OverlayCommand { get; init; } = null;
+  [JsonPropertyName("gameMonitorStatus")] public GameMonitorStatus? GameMonitorStatus { get; init; } = null;
+}
+
+public sealed record GameMonitorSettings {
+  [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; init; } = default;
+  [JsonPropertyName("screenshotDirectory")] public string ScreenshotDirectory { get; init; } = "";
+  [JsonPropertyName("logDirectory")] public string LogDirectory { get; init; } = "";
+  [JsonPropertyName("deleteScreenshots")] public bool DeleteScreenshots { get; init; } = default;
+  [JsonPropertyName("autoMapSwitch")] public bool AutoMapSwitch { get; init; } = default;
+  [JsonPropertyName("mode")] public string Mode { get; init; } = "";
+}
+
+public sealed record GameMonitorStatus {
+  [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; init; } = default;
+  [JsonPropertyName("mode")] public string Mode { get; init; } = "";
+  [JsonPropertyName("screenshotWatching")] public bool ScreenshotWatching { get; init; } = default;
+  [JsonPropertyName("logWatching")] public bool LogWatching { get; init; } = default;
+  [JsonPropertyName("mapId")] public string MapId { get; init; } = "";
+  [JsonPropertyName("lastScreenshotAt")] public string LastScreenshotAt { get; init; } = "";
+  [JsonPropertyName("lastLogAt")] public string LastLogAt { get; init; } = "";
 }
 
 public sealed record PlayerState {

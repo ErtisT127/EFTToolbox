@@ -20,6 +20,7 @@ import (
 var version = "0.0.0-dev"
 
 func main() {
+	setProcessDPIAwareness()
 	exe, err := os.Executable()
 	if err != nil {
 		log.Fatal(err)

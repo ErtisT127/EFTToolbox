@@ -14,21 +14,41 @@ type ErrorBody struct {
 }
 
 type ServerEvent struct {
-	Type            string              `json:"type"`
-	SentAt          string              `json:"sentAt"`
-	Status          Status              `json:"status"`
-	MapId           *string             `json:"mapId,omitempty"`
-	Player          *PlayerState        `json:"player,omitempty"`
-	PlayerId        *string             `json:"playerId,omitempty"`
-	Players         *[]PlayerState      `json:"players,omitempty"`
-	Annotation      *SharedAnnotation   `json:"annotation,omitempty"`
-	AnnotationId    *string             `json:"annotationId,omitempty"`
-	Annotations     *[]SharedAnnotation `json:"annotations,omitempty"`
-	OperationId     *string             `json:"operationId,omitempty"`
-	Preferences     *Preferences        `json:"preferences,omitempty"`
-	OverlaySettings *OverlaySettings    `json:"overlaySettings,omitempty"`
-	OverlayView     *OverlayView        `json:"overlayView,omitempty"`
-	OverlayCommand  *OverlayCommand     `json:"overlayCommand,omitempty"`
+	Type              string              `json:"type"`
+	SentAt            string              `json:"sentAt"`
+	Status            Status              `json:"status"`
+	MapId             *string             `json:"mapId,omitempty"`
+	Player            *PlayerState        `json:"player,omitempty"`
+	PlayerId          *string             `json:"playerId,omitempty"`
+	Players           *[]PlayerState      `json:"players,omitempty"`
+	Annotation        *SharedAnnotation   `json:"annotation,omitempty"`
+	AnnotationId      *string             `json:"annotationId,omitempty"`
+	Annotations       *[]SharedAnnotation `json:"annotations,omitempty"`
+	OperationId       *string             `json:"operationId,omitempty"`
+	Preferences       *Preferences        `json:"preferences,omitempty"`
+	OverlaySettings   *OverlaySettings    `json:"overlaySettings,omitempty"`
+	OverlayView       *OverlayView        `json:"overlayView,omitempty"`
+	OverlayCommand    *OverlayCommand     `json:"overlayCommand,omitempty"`
+	GameMonitorStatus *GameMonitorStatus  `json:"gameMonitorStatus,omitempty"`
+}
+
+type GameMonitorSettings struct {
+	SchemaVersion       int    `json:"schemaVersion"`
+	ScreenshotDirectory string `json:"screenshotDirectory"`
+	LogDirectory        string `json:"logDirectory"`
+	DeleteScreenshots   bool   `json:"deleteScreenshots"`
+	AutoMapSwitch       bool   `json:"autoMapSwitch"`
+	Mode                string `json:"mode"`
+}
+
+type GameMonitorStatus struct {
+	SchemaVersion      int    `json:"schemaVersion"`
+	Mode               string `json:"mode"`
+	ScreenshotWatching bool   `json:"screenshotWatching"`
+	LogWatching        bool   `json:"logWatching"`
+	MapId              string `json:"mapId"`
+	LastScreenshotAt   string `json:"lastScreenshotAt"`
+	LastLogAt          string `json:"lastLogAt"`
 }
 
 type PlayerState struct {

@@ -2,6 +2,7 @@ param([int]$Port = 47831)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 Push-Location $projectRoot
+$env:GOROOT = $null
 $serverProcess = $null
 try {
     & pnpm.cmd install --frozen-lockfile

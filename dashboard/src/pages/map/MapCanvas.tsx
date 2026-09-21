@@ -222,8 +222,8 @@ export function MapCanvas(props: Props) {
         if (player.mapId !== p.data.id) continue;
         const element = document.createElement('div');
         element.className = 'player-marker';
-        // Match the reference tool's yaw convention: zero yaw points down on the map.
-        element.style.transform = `rotate(${player.heading + 180}deg)`;
+        // The arrow tip points up at zero degrees; rotate it to the player's heading.
+        element.style.transform = `rotate(${player.heading}deg)`;
         element.style.opacity = player.floorId === p.preference.floorId ? '1' : '0.35';
         element.title = player.displayName;
         layer.addLayer(

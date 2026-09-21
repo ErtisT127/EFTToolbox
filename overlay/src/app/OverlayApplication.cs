@@ -24,6 +24,7 @@ internal sealed class OverlayApplication : IDisposable
     private CancellationTokenSource loading = new();
     private int generation;
     private int renderCount, hotkeyCount;
+    private bool hotkeysActive;
     // Kept as one instance per change: OverlayView compares arrays by reference, and a fresh array
     // every report would make every report look like a change.
     private string[] hotkeyFailed = [];
@@ -156,6 +157,8 @@ internal sealed class OverlayApplication : IDisposable
         interactions.Clear();
         hotkeyCount = 0; var failed = new List<string>();
         var values = new[] { settings.Hotkeys.ToggleEdit, settings.Hotkeys.ToggleVisible, settings.Hotkeys.ZoomIn, settings.Hotkeys.ZoomOut, settings.Hotkeys.FloorUp, settings.Hotkeys.FloorDown, settings.Hotkeys.ToggleBasemap, settings.Hotkeys.PanUp, settings.Hotkeys.PanDown, settings.Hotkeys.PanLeft, settings.Hotkeys.PanRight };
+        hotkeysActive = values.Any(value => !string.IsNullOrWhiteSpace(value));
+        if (!hotkeysActive) return;
         for (int index = 0; index < values.Length; index++)
         {
             var id = index + 1; var value = values[index]; hotkeyVirtualKey[id] = 0; hotkeyModifiers[id] = 0;
@@ -251,7 +254,7 @@ internal sealed class OverlayApplication : IDisposable
     {
         var seconds = Math.Min(0.05, Math.Max(0, now - lastFrameAt) / 1000.0);
         lastFrameAt = now;
-        if (!settings.Visible || hotkeysSuspended) { interactions.Clear(); return; }
+        if (!hotkeysActive || !settings.Visible || hotkeysSuspended) { interactions.Clear(); return; }
         var direction = Vector2.Zero;
         var panAcceleration = 0f;
         double zoom = 0;

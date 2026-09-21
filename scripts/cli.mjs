@@ -8,7 +8,7 @@ const commands = {
   'data:item-images': ['commands/data/item-images.mjs', []],
   'data:fonts': ['commands/data/fonts.mjs', args],
   package: ['commands/package.mjs', []],
-  'data:prepare': ['commands/data/prepare.mjs', []],
+  'data:prepare': ['commands/data/prepare.mjs', args],
   'data:tiles': ['commands/data/tiles.mjs', args],
   lint: ['commands/lint.mjs', []],
   cache: ['commands/cache.mjs', [command, ...args]],

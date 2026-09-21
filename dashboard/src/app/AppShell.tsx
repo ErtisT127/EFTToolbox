@@ -8,6 +8,7 @@ import { notices } from '../stores/noticeStore';
 import { workspace, useWorkspace } from '../stores/workspaceStore';
 import { useLocale } from '../hooks/useLocale';
 import { Check, Radio } from 'lucide-react';
+import { gameMonitor, useGameMonitor } from '../stores/gameMonitorStore';
 
 // Only failures that a second attempt can actually fix offer a retry: a rejected payload or an
 // unreadable file comes back the same every time.
@@ -17,6 +18,7 @@ export function AppShell() {
   const [page, setPage] = useState<'map' | 'items' | 'tools' | 'settings'>('map');
   const { t } = useLocale();
   const w = useWorkspace(workspace);
+  const monitor = useGameMonitor();
   const overlay = useOverlay();
   const session = w.sessions.get(w.activeId);
   const initialized = useRef(false);
@@ -24,6 +26,7 @@ export function AppShell() {
     if (!initialized.current) {
       initialized.current = true;
       void workspace.initialize();
+      void gameMonitor.initialize();
     }
     const disconnect = overlay.connect();
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -41,6 +44,19 @@ export function AppShell() {
       document.removeEventListener('visibilitychange', hidden);
     };
   }, [overlay]);
+  useEffect(() => {
+    if (monitor.resourceRevision > 0) void workspace.reloadForResources();
+  }, [monitor.resourceRevision]);
+  useEffect(() => {
+    const id = monitor.status?.mapId;
+    if (
+      monitor.mapRevision > 0 &&
+      id &&
+      w.catalog.some((map) => map.id === id) &&
+      w.activeId !== id
+    )
+      void workspace.select(id, true);
+  }, [monitor.mapRevision]); // eslint-disable-line react-hooks/exhaustive-deps
   // Saving is spread across three owners; the footer reports the state, the notice carries the
   // message and whatever recovery is actually available.
   const failed = overlay.error || w.error || session?.error || w.preferenceError;
@@ -57,7 +73,12 @@ export function AppShell() {
   return (
     <main className="app-shell">
       <NoticeHost />
-      <AppHeader active={page} onNavigate={setPage} />
+      <AppHeader
+        active={page}
+        onNavigate={setPage}
+        mode={monitor.settings?.mode || monitor.status?.mode || 'pvp'}
+        onModeChange={(mode) => void monitor.update({ mode })}
+      />
       {page === 'map' ? (
         <MapPage onOpenSettings={() => setPage('settings')} />
       ) : page === 'settings' ? (

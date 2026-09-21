@@ -1,14 +1,24 @@
 import { Crosshair } from 'lucide-react';
 import { useLocale } from '../hooks/useLocale';
+import type { GameMode } from '../stores/gameMonitorStore';
 
 export function AppHeader({
   active,
   onNavigate,
+  mode,
+  onModeChange,
 }: {
   active: 'map' | 'items' | 'tools' | 'settings';
   onNavigate: (page: 'map' | 'items' | 'tools' | 'settings') => void;
+  mode: GameMode;
+  onModeChange: (mode: GameMode) => void;
 }) {
   const { t } = useLocale();
+  const modeMeta = {
+    pvp: { label: 'pvp' },
+    pve: { label: 'pve' },
+    'pvp-season': { label: 'season' },
+  }[mode];
   return (
     <header className="topbar">
       <div className="brand">
@@ -29,10 +39,19 @@ export function AppHeader({
           </button>
         ))}
       </nav>
-      <div className="mode">
-        <span className="mode-dot" />
-        PVP
-      </div>
+      <button
+        className={`game-mode-toggle ${mode === 'pvp' ? 'regular' : mode}`}
+        aria-label={t('mode.select')}
+        aria-pressed="true"
+        onClick={() =>
+          onModeChange(({ pvp: 'pve', pve: 'pvp-season', 'pvp-season': 'pvp' } as const)[mode])
+        }
+      >
+        <span>{t(`mode.${modeMeta.label}`)}</span>
+        <span className="mode-tip" role="tooltip">
+          {t('mode.select')}
+        </span>
+      </button>
     </header>
   );
 }

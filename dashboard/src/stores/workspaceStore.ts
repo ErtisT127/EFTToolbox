@@ -139,7 +139,7 @@ export class Workspace {
       if (!Array.isArray(preferences.stickerUsage)) preferences.stickerUsage = [];
       this.preferences = preferences;
       const id = catalog.find((m) => m.id === preferences.selectedMap)?.id || catalog[0]?.id;
-      if (id) await this.select(id);
+      if (id) await this.select(id, true);
       else {
         this.loading = false;
         this.changed();
@@ -149,6 +149,12 @@ export class Workspace {
       this.loading = false;
       this.changed();
     }
+  }
+
+  async reloadForResources() {
+    // The active backend data root may have changed with the game mode. Re-fetch the selected map
+    // while retaining its annotation history and unsaved edits in the existing session object.
+    await this.initialize();
   }
 
   async select(id: string, reload = false) {

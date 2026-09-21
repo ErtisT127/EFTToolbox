@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react';
 import type { MapData, MapSummary, OverlaySettings } from '../../../../contracts/ts/ipc.gen';
 import { OverlaySettingsLimits, OverlayViewLimits } from '../../../../contracts/ts/ipc.gen';
 import { useOverlay } from '../../stores/overlayStore';
+import { useGameMonitor } from '../../stores/gameMonitorStore';
 import { notices } from '../../stores/noticeStore';
 import { request } from '../../stores/workspaceStore';
 import { useLocale } from '../../hooks/useLocale';
 import { NumberStepper } from '../../components/NumberStepper';
 import { HotkeyRecorder } from '../../components/HotkeyRecorder';
 import { formatCoordinate, resizeOverlay } from '../../lib/overlayScale';
-import { Link2, Unlink2 } from 'lucide-react';
+import { Check, Link2, Unlink2 } from 'lucide-react';
 import '../../styles/settings.css';
 
 // Declaration order matches the contract: the overlay reports a refused shortcut by the field name
@@ -31,9 +32,10 @@ type HotkeyKey = (typeof hotkeyKeys)[number];
 export function SettingsPage() {
   const { t } = useLocale();
   const store = useOverlay();
+  const monitor = useGameMonitor();
   const value = store.settings;
   const view = store.view;
-  const [tab, setTab] = useState<'map' | 'hotkeys'>('map');
+  const [tab, setTab] = useState<'map' | 'hotkeys' | 'gameMonitor'>('map');
   const [catalog, setCatalog] = useState<MapSummary[]>([]);
   const [map, setMap] = useState<MapData>();
   const [mapId, setMapId] = useState('');
@@ -109,7 +111,7 @@ export function SettingsPage() {
   return (
     <section className="settings-page">
       <aside className="settings-tabs" role="tablist" aria-label={t('nav.settings')}>
-        {(['map', 'hotkeys'] as const).map((key) => (
+        {(['map', 'hotkeys', 'gameMonitor'] as const).map((key) => (
           <button
             key={key}
             id={`settings-tab-${key}`}
@@ -121,7 +123,7 @@ export function SettingsPage() {
             onKeyDown={(e) => {
               if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                 e.preventDefault();
-                const next = key === 'map' ? 'hotkeys' : 'map';
+                const next = key === 'map' ? 'hotkeys' : key === 'hotkeys' ? 'gameMonitor' : 'map';
                 setTab(next);
                 document.getElementById(`settings-tab-${next}`)?.focus();
               }
@@ -138,7 +140,60 @@ export function SettingsPage() {
         aria-labelledby={`settings-tab-${tab}`}
       >
         <h1>{t(`settings.${tab}`)}</h1>
-        {!value ? (
+        {tab === 'gameMonitor' ? (
+          <>
+            <fieldset>
+              <legend>{t('settings.gameMonitor')}</legend>
+              <div className="settings-field settings-path-field">
+                <label htmlFor="monitor-screenshot-directory">
+                  {t('settings.screenshotDirectory')}
+                </label>
+                <input
+                  id="monitor-screenshot-directory"
+                  value={monitor.settings?.screenshotDirectory || ''}
+                  readOnly
+                  placeholder={t('settings.monitorUnavailable')}
+                />
+                <button
+                  type="button"
+                  disabled={monitor.browsing.screenshots}
+                  onClick={() => void monitor.browse('screenshots')}
+                >
+                  {t('settings.browse')}
+                </button>
+                <Check
+                  className={`monitor-ready${monitor.status?.screenshotWatching ? ' is-active' : ''}`}
+                  size={16}
+                  aria-label={t('settings.monitorReady')}
+                  aria-hidden={!monitor.status?.screenshotWatching}
+                />
+              </div>
+              <div className="settings-field settings-path-field">
+                <label htmlFor="monitor-log-directory">{t('settings.logDirectory')}</label>
+                <input
+                  id="monitor-log-directory"
+                  value={monitor.settings?.logDirectory || ''}
+                  readOnly
+                  placeholder={t('settings.monitorUnavailable')}
+                />
+                <button
+                  type="button"
+                  disabled={monitor.browsing.logs}
+                  onClick={() => void monitor.browse('logs')}
+                >
+                  {t('settings.browse')}
+                </button>
+                <Check
+                  className={`monitor-ready${monitor.status?.logWatching ? ' is-active' : ''}`}
+                  size={16}
+                  aria-label={t('settings.monitorReady')}
+                  aria-hidden={!monitor.status?.logWatching}
+                />
+              </div>
+            </fieldset>
+            {monitor.error && <p className="danger">{t(monitor.error)}</p>}
+          </>
+        ) : !value ? (
           <p>{t('common.loading')}</p>
         ) : tab === 'hotkeys' ? (
           <fieldset>
@@ -274,6 +329,45 @@ export function SettingsPage() {
             </fieldset>
             <fieldset>
               <legend>{t('settings.follow')}</legend>
+              <span
+                className={`settings-check-wrap${monitor.status?.logWatching ? '' : ' is-disabled'}`}
+              >
+                <label className="settings-check" aria-disabled={!monitor.status?.logWatching}>
+                  <input
+                    type="checkbox"
+                    disabled={!monitor.status?.logWatching}
+                    checked={!!monitor.settings?.autoMapSwitch}
+                    onChange={(e) => void monitor.update({ autoMapSwitch: e.target.checked })}
+                  />
+                  {t('settings.autoMapSwitch')}
+                </label>
+                {!monitor.status?.logWatching && (
+                  <span className="control-tip" role="tooltip">
+                    {t('settings.noMonitorDirectory')}
+                  </span>
+                )}
+              </span>
+              <span
+                className={`settings-check-wrap${monitor.status?.screenshotWatching ? '' : ' is-disabled'}`}
+              >
+                <label
+                  className="settings-check"
+                  aria-disabled={!monitor.status?.screenshotWatching}
+                >
+                  <input
+                    type="checkbox"
+                    disabled={!monitor.status?.screenshotWatching}
+                    checked={!!monitor.settings?.deleteScreenshots}
+                    onChange={(e) => void monitor.update({ deleteScreenshots: e.target.checked })}
+                  />
+                  {t('settings.deleteScreenshots')}
+                </label>
+                {!monitor.status?.screenshotWatching && (
+                  <span className="control-tip" role="tooltip">
+                    {t('settings.noMonitorDirectory')}
+                  </span>
+                )}
+              </span>
               {check('followCenter')}
               {check('followFloor')}
               {check('followZoom')}

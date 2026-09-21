@@ -30,6 +30,13 @@ internal sealed class OverlayStateClient : IDisposable
     internal bool TryRead(out ServerEvent? value) => events.TryDequeue(out value);
     internal bool ResourcesChanged => Interlocked.Exchange(ref resourcesChanged, 0) != 0;
     internal bool FilesChanged => Interlocked.Exchange(ref fileChanged, 0) != 0;
+    internal async Task RefreshBootstrapAsync()
+    {
+        var b = await http.GetFromJsonAsync<OverlayBootstrap>("api/overlay/bootstrap", stop.Token) ?? throw new InvalidDataException("Empty bootstrap");
+        foreach (var p in new[] { b.MapDirectory, b.AssetDirectory, b.TileDirectory, b.PreferencesFile, b.AnnotationsDirectory, b.OverlaySettingsFile })
+            if (!Path.IsPathFullyQualified(p)) throw new InvalidDataException("Bootstrap path is not absolute");
+        Bootstrap = b; Watch(b); Interlocked.Exchange(ref resourcesChanged, 1); wake();
+    }
     private void Watch(OverlayBootstrap b)
     {
         lock (watcherLock)
@@ -85,7 +92,15 @@ internal sealed class OverlayStateClient : IDisposable
                         } while (!part.EndOfMessage);
                         if (part.MessageType == WebSocketMessageType.Close) break;
                         var e = JsonSerializer.Deserialize<ServerEvent>(message.GetBuffer().AsSpan(0, (int)message.Length), OverlaySettingsStore.Json);
-                        if (e is not null && e.Type != "heartbeat") { events.Enqueue(e); wake(); }
+                        if (e is not null && e.Type != "heartbeat")
+                        {
+                            if (e.Type == "resources_changed")
+                            {
+                                try { await RefreshBootstrapAsync(); }
+                                catch (Exception error) { OverlayDiagnostics.Log("warn", "bootstrap_refresh_failed", error.Message); }
+                            }
+                            events.Enqueue(e); wake();
+                        }
                     }
                 }
                 finally

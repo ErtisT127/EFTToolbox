@@ -5,6 +5,7 @@ import {
   type OverlayView,
 } from '../../../../contracts/ts/ipc.gen';
 import { useLocale } from '../../hooks/useLocale';
+import { useGameMonitor } from '../../stores/gameMonitorStore';
 
 export function MinimapSettingsPanel({
   settings,
@@ -25,6 +26,7 @@ export function MinimapSettingsPanel({
   onClose: () => void;
 }) {
   const { t } = useLocale();
+  const monitor = useGameMonitor();
   if (!settings) return <p className="panel-scroll hint">{t('common.loading')}</p>;
   // The overlay is the source of truth for both flags; the stored settings only stand in while it
   // is not reporting (nothing is connected yet).
@@ -99,6 +101,42 @@ export function MinimapSettingsPanel({
           {t('settings.backdrop')}
         </label>
         <strong className="panel-section">{t('settings.follow')}</strong>
+        <span
+          className={`settings-check-wrap minimap-check-wrap${monitor.status?.screenshotWatching ? '' : ' is-disabled'}`}
+        >
+          <label className="check-row" aria-disabled={!monitor.status?.screenshotWatching}>
+            <input
+              type="checkbox"
+              disabled={!monitor.status?.screenshotWatching}
+              checked={!!monitor.settings?.deleteScreenshots}
+              onChange={(e) => void monitor.update({ deleteScreenshots: e.target.checked })}
+            />
+            {t('settings.deleteScreenshots')}
+          </label>
+          {!monitor.status?.screenshotWatching && (
+            <span className="control-tip" role="tooltip">
+              {t('settings.noMonitorDirectory')}
+            </span>
+          )}
+        </span>
+        <span
+          className={`settings-check-wrap minimap-check-wrap${monitor.status?.logWatching ? '' : ' is-disabled'}`}
+        >
+          <label className="check-row" aria-disabled={!monitor.status?.logWatching}>
+            <input
+              type="checkbox"
+              disabled={!monitor.status?.logWatching}
+              checked={!!monitor.settings?.autoMapSwitch}
+              onChange={(e) => void monitor.update({ autoMapSwitch: e.target.checked })}
+            />
+            {t('settings.autoMapSwitch')}
+          </label>
+          {!monitor.status?.logWatching && (
+            <span className="control-tip" role="tooltip">
+              {t('settings.noMonitorDirectory')}
+            </span>
+          )}
+        </span>
         {(['followCenter', 'followFloor', 'followZoom'] as const).map((key) => (
           <label className="check-row" key={key}>
             <input

@@ -57,19 +57,80 @@
   background: var(--control-hover);
   border-bottom-color: var(--border-hover);
 }
-.mode {
-  display: flex;
+.game-mode-toggle {
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  align-self: center;
   margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  padding-left: var(--space-4);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 1px 8px;
+  height: 28px;
+  font-size: 12px;
+  font-weight: 800;
+  background: transparent;
+  transition: 0.2s;
 }
-.mode-dot {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  background: var(--accent);
-  border-radius: 50%;
+.mode-tip {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  width: max-content;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 120ms ease-out,
+    visibility 0s linear 120ms;
+}
+.game-mode-toggle:hover .mode-tip,
+.game-mode-toggle:focus-visible .mode-tip {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 120ms, 0s;
+}
+.game-mode-toggle:hover:not(:disabled) {
+  background: rgba(46, 125, 50, 0.3);
+  border-color: #81c784;
+}
+.game-mode-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+.game-mode-toggle.regular {
+  color: #c7a981;
+  background: rgba(125, 88, 46, 0.2);
+  border-color: rgba(125, 93, 46, 0.3);
+}
+.game-mode-toggle.pve {
+  color: #4fc3f7;
+  background: rgba(2, 136, 209, 0.2);
+  border-color: rgba(2, 136, 209, 0.3);
+}
+.game-mode-toggle.pve:hover:not(:disabled) {
+  background: rgba(2, 136, 209, 0.3);
+  border-color: #4fc3f7;
+}
+.game-mode-toggle.pvp-season {
+  color: #81c784;
+  background: rgba(46, 125, 50, 0.2);
+  border-color: rgba(46, 125, 50, 0.3);
+}
+.game-mode-toggle.pvp-season:hover:not(:disabled) {
+  background: rgba(46, 125, 50, 0.3);
+  border-color: #81c784;
 }

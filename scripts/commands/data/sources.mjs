@@ -26,8 +26,27 @@ const baselineUrl = `https://raw.githubusercontent.com/${recipe.baseline.reposit
 // maps.json alone is consumed, for stable map ids and English subtitles. The rest of that
 // repository (its SVGs, objective dumps and quests) is downloaded by nothing that reads it.
 await fetchSource('tarkovdata/maps.json', `${baselineUrl}/maps.json`);
-for (const name of recipe.snapshots)
-  await fetchSource(`${name}.json`, `https://json.tarkov.dev/regular/${name}`);
+const modeSnapshots = new Set([
+  'maps',
+  'maps_zh',
+  'maps_en',
+  'tasks',
+  'tasks_zh',
+  'tasks_en',
+  'items',
+]);
+const sharedSnapshots = recipe.snapshots.filter((name) => !modeSnapshots.has(name));
+for (const [mode, upstreamMode] of [
+  ['pvp', 'regular'],
+  ['pve', 'pve'],
+  ['pvp-season', 'pvp-season'],
+]) {
+  for (const name of recipe.snapshots.filter((snapshot) => modeSnapshots.has(snapshot)))
+    await fetchSource(`${mode}/${name}.json`, `https://json.tarkov.dev/${upstreamMode}/${name}`);
+  if (mode === 'pvp')
+    for (const name of sharedSnapshots)
+      await fetchSource(`${name}.json`, `https://json.tarkov.dev/${upstreamMode}/${name}`);
+}
 const referenceUrl = `https://raw.githubusercontent.com/${recipe.reference.repository}/${recipe.reference.revision}`;
 await fetchSource('map-rules.json', `${referenceUrl}/src/data/maps.json`);
 await fetchSource('maps-static.json', `${referenceUrl}/src/data/maps_static.json`);

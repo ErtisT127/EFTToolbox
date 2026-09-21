@@ -9,7 +9,7 @@
       "properties": {
         "protocolVersion": {
           "type": "string",
-          "const": "1"
+          "const": "2"
         },
         "appVersion": {
           "type": "string"
@@ -41,6 +41,7 @@
             "snapshot",
             "heartbeat",
             "map_changed",
+            "mode_applied",
             "player_upsert",
             "player_remove",
             "annotation_upsert",
@@ -50,7 +51,8 @@
             "overlay_settings",
             "overlay_command",
             "overlay_status",
-            "resources_changed"
+            "resources_changed",
+            "game_monitor_changed"
           ]
         },
         "sentAt": {
@@ -101,7 +103,52 @@
         },
         "overlayCommand": {
           "$ref": "#/$defs/OverlayCommand"
+        },
+        "gameMonitorStatus": {
+          "$ref": "#/$defs/GameMonitorStatus"
         }
+      }
+    },
+    "GameMonitorSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "screenshotDirectory",
+        "logDirectory",
+        "deleteScreenshots",
+        "autoMapSwitch",
+        "mode"
+      ],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "screenshotDirectory": { "type": "string" },
+        "logDirectory": { "type": "string" },
+        "deleteScreenshots": { "type": "boolean" },
+        "autoMapSwitch": { "type": "boolean" },
+        "mode": { "type": "string", "enum": ["pvp", "pve", "pvp-season"] }
+      }
+    },
+    "GameMonitorStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "mode",
+        "screenshotWatching",
+        "logWatching",
+        "mapId",
+        "lastScreenshotAt",
+        "lastLogAt"
+      ],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "mode": { "type": "string", "enum": ["pvp", "pve", "pvp-season"] },
+        "screenshotWatching": { "type": "boolean" },
+        "logWatching": { "type": "boolean" },
+        "mapId": { "type": "string" },
+        "lastScreenshotAt": { "type": "string" },
+        "lastLogAt": { "type": "string" }
       }
     },
     "PlayerState": {

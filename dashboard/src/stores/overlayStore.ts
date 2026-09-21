@@ -7,6 +7,7 @@ import type {
   ServerEvent,
 } from '../../../contracts/ts/ipc.gen';
 import { request, reportClientLog } from './workspaceStore';
+import { gameMonitor } from './gameMonitorStore';
 
 class OverlayStore {
   settings?: OverlaySettings;
@@ -133,8 +134,11 @@ class OverlayStore {
       stale = setTimeout(reconnect, 7000);
       current.onmessage = (event) => {
         try {
-          const e = JSON.parse(String(event.data)) as ServerEvent;
-          if (e.status.protocolVersion !== '1') throw new Error('Unsupported protocol');
+          const e = JSON.parse(String(event.data)) as ServerEvent & Record<string, unknown>;
+          const protocolVersion = String(e.status?.protocolVersion || '');
+          if (protocolVersion !== '1' && protocolVersion !== '2')
+            throw new Error('Unsupported protocol');
+          gameMonitor.handleEvent(e);
           this.connected = true;
           clearTimeout(stale);
           stale = setTimeout(reconnect, 7000);

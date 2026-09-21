@@ -17,6 +17,28 @@ import (
 	"github.com/coder/websocket/wsjson"
 )
 
+func TestLocationCandidatesNormalizePresetVariants(t *testing.T) {
+	for _, name := range []string{"factory_day_preset", "factory_night_preset", "sandbox_high_preset", "sandbox_start_preset", "laboratory_dark_preset"} {
+		candidates := locationCandidates(name)
+		want := "factory"
+		if strings.HasPrefix(name, "sandbox") {
+			want = "sandbox"
+		}
+		if strings.HasPrefix(name, "laboratory") {
+			want = "laboratory"
+		}
+		if candidates[0] != name || candidates[len(candidates)-1] != want {
+			t.Fatalf("locationCandidates(%q) = %#v", name, candidates)
+		}
+	}
+	if got := locationCandidates("customs_preset"); len(got) != 2 || got[0] != "customs_preset" || got[1] != "customs" {
+		t.Fatalf("locationCandidates(customs_preset) = %#v", got)
+	}
+	if got := locationCandidates("shopping_mall"); len(got) != 1 || got[0] != "shopping_mall" {
+		t.Fatalf("locationCandidates(shopping_mall) = %#v", got)
+	}
+}
+
 func TestHTTPAndWebSocket(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -31,7 +53,7 @@ func TestHTTPAndWebSocket(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&status); err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != http.StatusOK || status.ProtocolVersion != "1" || status.AppVersion != "test-version" {
+	if response.StatusCode != http.StatusOK || status.ProtocolVersion != ProtocolVersion || status.AppVersion != "test-version" {
 		t.Fatalf("unexpected status: %+v", status)
 	}
 	if _, err := time.Parse(time.RFC3339Nano, status.StartedAt); err != nil {

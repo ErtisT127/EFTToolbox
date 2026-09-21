@@ -8,7 +8,23 @@ import { worldToPixel, tileTransform } from '../../../dashboard/src/pages/map/li
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const upstream = path.join(root, 'data/upstream');
 const source = path.join(upstream, 'source');
-const read = async (name) => JSON.parse(await readFile(path.join(source, name), 'utf8'));
+const mode = process.env.EFT_MODE || process.argv[2] || 'pvp';
+if (!['pvp', 'pve', 'pvp-season'].includes(mode)) throw new Error(`Unsupported EFT mode: ${mode}`);
+const modeSource = path.join(source, mode);
+const output = path.join(upstream, 'modes', mode);
+const sourceFile = async (name) => {
+  const modeFile = path.join(modeSource, name);
+  try {
+    await readFile(modeFile);
+    return modeFile;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return path.join(source, name);
+  }
+};
+const read = async (name) => {
+  return JSON.parse(await readFile(await sourceFile(name), 'utf8'));
+};
 const previousBaseline = await read('tarkovdata/maps.json');
 const rules = await read('map-rules.json');
 const raw = (await read('maps.json')).data;
@@ -57,7 +73,7 @@ const adaptationData = JSON.parse(
 );
 const adaptations = adaptationData.maps;
 const text = (value) => translations[value] || value || '';
-const report = { maps: [], omittedMaps: [], unsupportedMaps: [], sources: [] };
+const report = { mode, maps: [], omittedMaps: [], unsupportedMaps: [], sources: [] };
 const baseline = {};
 for (const group of rules) {
   const rule = group.maps.find((m) => m.projection === 'interactive');
@@ -83,6 +99,8 @@ for (const group of rules) {
     id: Object.keys(baseline).length,
     tdevId: api?.id,
     ruleMap: group.normalizedName,
+    nameId: api?.nameId || '',
+    scenePath: api?.scenePath || '',
     rule,
     layers,
     locale: { en: previous?.[1].locale.en || group.normalizedName },
@@ -122,6 +140,7 @@ for (const surface of fieldContract.surfaces) {
   const [rootName, ...segments] = surface.path.match(/[A-Za-z]+|\[[*]?\]/g);
   const known = new Set(surface.keys);
   const universal = new Set(surface.universal);
+  const optional = new Set(surface.optional || []);
   const seen = new Set();
   for (const record of selectRecords(contractRoots[rootName], segments)) {
     if (!record || typeof record !== 'object' || Array.isArray(record)) continue;
@@ -132,9 +151,11 @@ for (const surface of fieldContract.surfaces) {
     }
     // A rename shows up as an unknown key, but a plain deletion produces no unknown key at all and
     // leaves conservation balanced at zero on both sides, so it has to be caught per record.
-    for (const key of universal) if (!(key in record)) missingFields.add(`${surface.path}.${key}`);
+    for (const key of universal)
+      if (!(key in record) && !optional.has(key)) missingFields.add(`${surface.path}.${key}`);
   }
-  for (const key of surface.keys) if (!seen.has(key)) missingFields.add(`${surface.path}.${key}`);
+  for (const key of surface.keys)
+    if (!seen.has(key) && !optional.has(key)) missingFields.add(`${surface.path}.${key}`);
 }
 console.log(`字段契约：${fieldContract.surfaces.length} 个表面，${checkedRecords} 条记录`);
 if (unknownFields.size || missingFields.size)
@@ -167,7 +188,7 @@ const mapRanks = new Map(mapOrder.map((id, index) => [id, index]));
 // Category ids are shared across maps, so the sticker picker offers each one once no matter how
 // many maps carry it.
 const catalogCategories = new Map();
-await mkdir(path.join(upstream, 'maps'), { recursive: true });
+await mkdir(path.join(output, 'maps'), { recursive: true });
 await mkdir(path.join(upstream, 'assets'), { recursive: true });
 for (const icon of new Set(Object.values(iconMapping)))
   await copyFile(
@@ -760,7 +781,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
         path.join(source, 'current-svg', meta.svg.file),
         path.join(upstream, 'assets', meta.svg.file),
       );
-    await writeFile(path.join(upstream, 'maps', `${id}.json`), JSON.stringify(map));
+    await writeFile(path.join(output, 'maps', `${id}.json`), JSON.stringify(map));
     summaries.push({
       id,
       name: map.name,
@@ -794,18 +815,31 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
   }
 }
 // Remove only previously generated maps that the current SVG catalog no longer supports.
-for (const file of await readdir(path.join(upstream, 'maps'))) {
+for (const file of await readdir(path.join(output, 'maps'))) {
   if (
     file.endsWith('.json') &&
     Object.hasOwn(previousBaseline, file.slice(0, -5)) &&
     !Object.hasOwn(baseline, file.slice(0, -5))
   )
-    await unlink(path.join(upstream, 'maps', file));
+    await unlink(path.join(output, 'maps', file));
 }
 summaries.sort(
   (a, b) => (mapRanks.get(a.id) ?? mapOrder.length) - (mapRanks.get(b.id) ?? mapOrder.length),
 );
-await writeFile(path.join(upstream, 'catalog.json'), JSON.stringify(summaries));
+await writeFile(path.join(output, 'catalog.json'), JSON.stringify(summaries));
+// The game log identifies locations by EFT scene/name ids rather than our stable map id. Keep the
+// lookup table mode-local so a mode can evolve independently without changing the public map shape.
+const locations = {};
+for (const [id, meta] of Object.entries(baseline)) {
+  locations[id] = id;
+  if (meta.ruleMap) locations[meta.ruleMap] = id;
+  if (meta.nameId) locations[meta.nameId] = id;
+  if (meta.scenePath) {
+    locations[meta.scenePath] = id;
+    locations[path.basename(meta.scenePath, path.extname(meta.scenePath))] = id;
+  }
+}
+await writeFile(path.join(output, 'locations.json'), JSON.stringify(locations));
 // The sticker picker's built-in images. An entry is only listed when the item-images step cached
 // its file, so an image upstream stops shipping drops out of the picker instead of rendering as a
 // broken tile. Stored annotations reference the id, never the file, so a rename cannot strand them.
@@ -857,7 +891,7 @@ stickers.sort(
 // `af`, sharing one portrait, so without this the picker would show that tile three times.
 const byStickerId = new Map();
 for (const entry of stickers) if (!byStickerId.has(entry.id)) byStickerId.set(entry.id, entry);
-await writeFile(path.join(upstream, 'stickers.json'), JSON.stringify([...byStickerId.values()]));
+await writeFile(path.join(output, 'stickers.json'), JSON.stringify([...byStickerId.values()]));
 console.log(
   `Prepared ${byStickerId.size} stickers across ${new Set(stickers.map((s) => s.group)).size} groups.`,
 );
@@ -876,9 +910,9 @@ for (const name of [
   'maps-static.json',
 ])
   report.sources.push({
-    file: name,
+    file: path.relative(source, await sourceFile(name)).replaceAll(path.sep, '/'),
     sha256: createHash('sha256')
-      .update(await readFile(path.join(source, name)))
+      .update(await readFile(await sourceFile(name)))
       .digest('hex'),
   });
 for (const name of ['map-adaptations.json', 'upstream-fields.json'])
@@ -889,21 +923,21 @@ for (const name of ['map-adaptations.json', 'upstream-fields.json'])
       .digest('hex'),
   });
 await writeFile(
-  path.join(upstream, 'validation-report.json'),
+  path.join(output, 'validation-report.json'),
   JSON.stringify(report, null, 2) + '\n',
 );
 if (report.omittedMaps.length) {
   console.error(
-    `Some maps could not be prepared; see data/upstream/validation-report.json\n  ${report.omittedMaps.map((m) => m.id).join(', ')}`,
+    `Some maps could not be prepared; see data/upstream/modes/${mode}/validation-report.json\n  ${report.omittedMaps.map((m) => m.id).join(', ')}`,
   );
   process.exitCode = 1;
 }
 await writeFile(
-  path.join(upstream, 'versions.json'),
+  path.join(output, 'versions.json'),
   JSON.stringify(
     {
       schemaVersion: 1,
-      gameModes: ['pvp'],
+      gameModes: [mode],
       ...(await read('versions.json')),
       rulesSource: (await read('versions.json')).sources.find((s) => s.file === 'map-rules.json')
         .source,

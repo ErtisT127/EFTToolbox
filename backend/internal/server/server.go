@@ -15,7 +15,7 @@ import (
 	contracts "efttoolbox/contracts"
 )
 
-const ProtocolVersion = "1"
+const ProtocolVersion = "2"
 
 func New(ctx context.Context, version string, assets http.FileSystem, dataRoot string) http.Handler {
 	logWriter, err := newDailyLogWriter(filepath.Join(dataRoot, "..", "logs"))
@@ -27,13 +27,15 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 	status := contracts.Status{ProtocolVersion: ProtocolVersion, AppVersion: version, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	mux := http.NewServeMux()
 	store := &mapStore{root: dataRoot}
-	hub := &overlayHub{store: store, status: status, players: map[string]contracts.PlayerState{}, clients: map[chan contracts.ServerEvent]bool{}}
+	hub := &overlayHub{store: store, status: status, players: map[string]contracts.PlayerState{}, clients: map[chan contracts.ServerEvent]bool{}, browseActive: map[string]bool{}}
 	store.changed = hub.changed
 	if writer, ok := logWriter.(*dailyLogWriter); ok {
 		hub.pipe = startOverlayLogPipe(ctx, writer)
 	}
 	store.register(mux)
 	hub.register(mux)
+	hub.registerGameMonitor(mux)
+	hub.startGameMonitor(ctx)
 	if writer, ok := logWriter.(*dailyLogWriter); ok {
 		mux.HandleFunc("POST /api/logs", func(w http.ResponseWriter, r *http.Request) {
 			defer func() { _ = r.Body.Close() }()

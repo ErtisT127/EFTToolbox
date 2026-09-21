@@ -59,6 +59,20 @@
   display: block;
   margin: 0;
 }
+.settings-path-field {
+  grid-template-columns: minmax(0, 1fr) 240px auto auto;
+}
+.settings-path-field input {
+  width: 240px;
+}
+.monitor-ready {
+  visibility: hidden;
+  color: #36c275;
+  font-size: 16px;
+}
+.monitor-ready.is-active {
+  visibility: visible;
+}
 .settings-content input:not([type='checkbox']),
 .settings-content select {
   height: 34px;
@@ -94,6 +108,44 @@
 }
 .settings-content .settings-check input {
   margin: 0;
+}
+.settings-check-wrap {
+  position: relative;
+  display: block;
+  min-height: 34px;
+}
+.settings-check-wrap.is-disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+.settings-check-wrap.is-disabled .settings-check {
+  pointer-events: none;
+  color: var(--muted);
+}
+.control-tip {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 4px);
+  z-index: 20;
+  max-width: 240px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: var(--text-xs);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 120ms ease-out,
+    visibility 0s linear 120ms;
+}
+.settings-check-wrap.is-disabled:hover .control-tip,
+.settings-check-wrap.is-disabled:focus-within .control-tip {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 120ms, 0s;
 }
 .settings-content .number-stepper-control input {
   width: 100%;

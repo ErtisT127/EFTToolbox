@@ -35,7 +35,33 @@ func hasContentHashName(name string) bool { return contentHashed.MatchString(nam
 type mapStore struct {
 	root    string
 	mu      sync.Mutex
+	modeMu  sync.RWMutex
+	mode    string
 	changed func(string, string, string)
+}
+
+func (s *mapStore) setMode(mode string) {
+	if mode != "pve" && mode != "pvp-season" {
+		mode = "pvp"
+	}
+	s.modeMu.Lock()
+	s.mode = mode
+	s.modeMu.Unlock()
+}
+
+func (s *mapStore) activeUpstream() string {
+	s.modeMu.RLock()
+	mode := s.mode
+	s.modeMu.RUnlock()
+	if mode == "" {
+		mode = "pvp"
+	}
+	modeRoot := filepath.Join(s.root, "upstream", "modes", mode)
+	if info, err := os.Stat(filepath.Join(modeRoot, "maps")); err == nil && info.IsDir() {
+		return modeRoot
+	}
+	// Keep existing generated PVP data usable until all mode datasets are present.
+	return filepath.Join(s.root, "upstream")
 }
 
 func readJSON(name string, value any) error {
@@ -51,7 +77,7 @@ func (s *mapStore) load(id string) (contracts.MapData, error) {
 	if !safeID.MatchString(id) {
 		return data, os.ErrNotExist
 	}
-	err := readJSON(filepath.Join(s.root, "upstream", "maps", id+".json"), &data)
+	err := readJSON(filepath.Join(s.activeUpstream(), "maps", id+".json"), &data)
 	if err != nil {
 		return data, err
 	}
@@ -167,7 +193,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/map-tiles/{map}/{layer}/{z}/{x}/{y}", s.tile)
 	mux.HandleFunc("GET /api/stickers", func(w http.ResponseWriter, r *http.Request) {
 		data := []contracts.Sticker{}
-		err := readJSON(filepath.Join(s.root, "upstream", "stickers.json"), &data)
+		err := readJSON(filepath.Join(s.activeUpstream(), "stickers.json"), &data)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			dataError(w, err)
 			return
@@ -175,7 +201,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		jsonResponse(w, data)
 	})
 	mux.HandleFunc("GET /api/maps", func(w http.ResponseWriter, r *http.Request) {
-		files, err := os.ReadDir(filepath.Join(s.root, "upstream", "maps"))
+		files, err := os.ReadDir(filepath.Join(s.activeUpstream(), "maps"))
 		if err != nil {
 			dataError(w, err)
 			return
@@ -183,7 +209,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		summaries := []contracts.MapSummary{}
 		// The catalog supplies data-defined ordering; newly added map files are discovered too.
 		var order []contracts.MapSummary
-		_ = readJSON(filepath.Join(s.root, "upstream", "catalog.json"), &order)
+		_ = readJSON(filepath.Join(s.activeUpstream(), "catalog.json"), &order)
 		for _, file := range files {
 			if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
 				continue

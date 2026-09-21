@@ -5,8 +5,20 @@ import path from 'node:path';
 import { download } from '../../lib/download.mjs';
 
 const root = fileURLToPath(new URL('../../../data/upstream/', import.meta.url));
-const read = async (name) =>
-  JSON.parse(await readFile(path.join(root, 'source', name), 'utf8')).data;
+const read = async (name) => {
+  const candidates =
+    name === 'items.json'
+      ? [path.join(root, 'source/pvp', name), path.join(root, 'source', name)]
+      : [path.join(root, 'source', name)];
+  for (const file of candidates) {
+    try {
+      return JSON.parse(await readFile(file, 'utf8')).data;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+  }
+  throw new Error(`Missing upstream source: ${name}`);
+};
 const { maps, mobs } = await read('maps.json');
 const { items, handbookCategories } = await read('items.json');
 const traders = await read('traders.json');

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"efttoolbox/backend/internal/gamewatch"
 	contracts "efttoolbox/contracts"
 
 	"github.com/coder/websocket"
@@ -26,13 +27,23 @@ import (
 )
 
 type overlayHub struct {
-	mu      sync.Mutex
-	store   *mapStore
-	status  contracts.Status
-	players map[string]contracts.PlayerState
-	clients map[chan contracts.ServerEvent]bool
-	view    contracts.OverlayView
-	pipe    string
+	mu              sync.Mutex
+	store           *mapStore
+	status          contracts.Status
+	players         map[string]contracts.PlayerState
+	clients         map[chan contracts.ServerEvent]bool
+	view            contracts.OverlayView
+	pipe            string
+	monitor         *gamewatch.Monitor
+	monitorSettings contracts.GameMonitorSettings
+	monitorStatus   contracts.GameMonitorStatus
+	appliedMapID    string
+	detectedMapID   string
+	pendingMap      string
+	pendingMode     string
+	browseMu        sync.Mutex
+	browseStateMu   sync.Mutex
+	browseActive    map[string]bool
 }
 
 func defaultOverlaySettings() contracts.OverlaySettings {
@@ -40,7 +51,7 @@ func defaultOverlaySettings() contracts.OverlaySettings {
 		SchemaVersion: 1, Visible: true, Shape: "square", Width: 384, Height: 384, Left: 24, Top: 24, LockAspect: true, SvgResolution: 2048,
 		Opacity: ptr(defaultOpacity), Backdrop: false, SvgQualityMode: stringPtr("auto"),
 		FollowCenter: true, FollowFloor: true, FollowZoom: true, TargetZoom: 2, MapZooms: []contracts.MapZoomOverride{},
-		Hotkeys: contracts.OverlayHotkeys{ZoomIn: "Alt+Up", ZoomOut: "Alt+Down", FloorUp: "Alt+PageUp", FloorDown: "Alt+PageDown"},
+		Hotkeys: contracts.OverlayHotkeys{ZoomIn: "Ctrl+Alt+Shift+PageUp", ZoomOut: "Ctrl+Alt+Shift+PageDown", FloorUp: "Alt+PageUp", FloorDown: "Alt+PageDown"},
 	}
 }
 
@@ -297,7 +308,8 @@ func (h *overlayHub) websocket(ctx context.Context, w http.ResponseWriter, r *ht
 	_ = readJSON(filepath.Join(h.store.root, "user", "map-preferences.json"), &prefs)
 	settings, settingsErr := h.settings()
 	view := h.view
-	e := contracts.ServerEvent{Type: "snapshot", Status: h.status, SentAt: time.Now().UTC().Format(time.RFC3339Nano), Players: &players, Annotations: &annotations, Preferences: &prefs, OverlayView: &view}
+	monitorStatus := h.monitorStatus
+	e := contracts.ServerEvent{Type: "snapshot", Status: h.status, SentAt: time.Now().UTC().Format(time.RFC3339Nano), Players: &players, Annotations: &annotations, Preferences: &prefs, OverlayView: &view, GameMonitorStatus: &monitorStatus}
 	if settingsErr == nil {
 		e.OverlaySettings = &settings
 	}
@@ -365,7 +377,12 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 			dataError(w, err)
 			return
 		}
-		jsonResponse(w, contracts.OverlayBootstrap{SchemaVersion: 1, MapDirectory: filepath.Join(root, "upstream", "maps"), AssetDirectory: filepath.Join(root, "upstream", "assets"), TileDirectory: filepath.Join(root, "upstream", "tiles"), TileManifestFile: filepath.Join(root, "upstream", "tiles", "manifest.json"), PreferencesFile: filepath.Join(root, "user", "map-preferences.json"), AnnotationsDirectory: filepath.Join(root, "user"), OverlaySettingsFile: filepath.Join(root, "user", "overlay-settings.json"), WebsocketPath: "/ws", LogPipeName: h.pipe})
+		mapRoot, err := filepath.Abs(h.store.activeUpstream())
+		if err != nil {
+			dataError(w, err)
+			return
+		}
+		jsonResponse(w, contracts.OverlayBootstrap{SchemaVersion: 1, MapDirectory: filepath.Join(mapRoot, "maps"), AssetDirectory: filepath.Join(root, "upstream", "assets"), TileDirectory: filepath.Join(root, "upstream", "tiles"), TileManifestFile: filepath.Join(root, "upstream", "tiles", "manifest.json"), PreferencesFile: filepath.Join(root, "user", "map-preferences.json"), AnnotationsDirectory: filepath.Join(root, "user"), OverlaySettingsFile: filepath.Join(root, "user", "overlay-settings.json"), WebsocketPath: "/ws", LogPipeName: h.pipe})
 	})
 	mux.HandleFunc("GET /api/overlay-settings", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
@@ -496,38 +513,11 @@ func (h *overlayHub) upsertPlayer(w http.ResponseWriter, r *http.Request) {
 	if !decodeUpdate(w, r, &v) {
 		return
 	}
-	m, err := h.store.load(v.MapId)
-	if err != nil || !safeID.MatchString(v.PlayerId) || len(v.PlayerId) > 100 || len(v.DisplayName) > 200 || !validPoint(contracts.Point{X: v.X, Y: v.Z}) || !finite(v.Heading) || math.Abs(v.Heading) > 1e7 || !slices.ContainsFunc(m.Floors, func(f contracts.Floor) bool { return f.Id == v.FloorId }) {
+	player, err := h.projectPlayer(v)
+	if err != nil {
 		apiError(w, 400, "player_invalid")
 		return
 	}
-	project := func(x, y float64) contracts.Point {
-		a := m.Projection.Rotation * math.Pi / 180
-		c, s := math.Cos(a), math.Sin(a)
-		rotate := func(x, y float64) (float64, float64) { return x*c - y*s, x*s + y*c }
-		b := m.Projection.Bounds
-		minX, minY, maxX, maxY := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
-		for _, p := range []contracts.Point{b[0], b[1], {X: b[0].X, Y: b[1].Y}, {X: b[1].X, Y: b[0].Y}} {
-			px, py := rotate(p.X, p.Y)
-			minX = math.Min(minX, px)
-			maxX = math.Max(maxX, px)
-			minY = math.Min(minY, py)
-			maxY = math.Max(maxY, py)
-		}
-		px, py := rotate(x, y)
-		box := m.Projection.ViewBox
-		return contracts.Point{X: box[0] + (px-minX)/(maxX-minX)*box[2], Y: box[1] + (maxY-py)/(maxY-minY)*box[3]}
-	}
-	p := project(v.X, v.Z)
-	angle := v.Heading * math.Pi / 180
-	q := project(v.X+math.Sin(angle), v.Z+math.Cos(angle))
-	if !validPoint(p) || !validPoint(q) {
-		apiError(w, 400, "player_invalid")
-		return
-	}
-	// Dashboard's arrow artwork points down before the existing +180 degree rotation.
-	heading := math.Mod(math.Atan2(q.X-p.X, -(q.Y-p.Y))*180/math.Pi+360, 360)
-	player := contracts.PlayerState{PlayerId: v.PlayerId, DisplayName: v.DisplayName, IsSelf: v.IsSelf, MapId: v.MapId, FloorId: v.FloorId, Position: p, Heading: heading}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if v.IsSelf {
@@ -545,3 +535,38 @@ func (h *overlayHub) upsertPlayer(w http.ResponseWriter, r *http.Request) {
 }
 
 func operationID(r *http.Request) *string { id := r.Header.Get("X-Operation-ID"); return &id }
+
+// projectPlayer is shared by the development injection endpoint and the production screenshot
+// watcher. The watcher intentionally bypasses the DevPlayerEnabled gate, but uses the same map
+// validation and projection math.
+func (h *overlayHub) projectPlayer(v contracts.DevPlayer) (contracts.PlayerState, error) {
+	m, err := h.store.load(v.MapId)
+	if err != nil || !safeID.MatchString(v.PlayerId) || len(v.PlayerId) > 100 || len(v.DisplayName) > 200 ||
+		!validPoint(contracts.Point{X: v.X, Y: v.Z}) || !finite(v.Heading) || math.Abs(v.Heading) > 1e7 ||
+		!slices.ContainsFunc(m.Floors, func(f contracts.Floor) bool { return f.Id == v.FloorId }) {
+		return contracts.PlayerState{}, errors.New("player_invalid")
+	}
+	a := m.Projection.Rotation * math.Pi / 180
+	c, s := math.Cos(a), math.Sin(a)
+	rotate := func(x, y float64) (float64, float64) { return x*c - y*s, x*s + y*c }
+	b := m.Projection.Bounds
+	minX, minY, maxX, maxY := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
+	for _, p := range []contracts.Point{b[0], b[1], {X: b[0].X, Y: b[1].Y}, {X: b[1].X, Y: b[0].Y}} {
+		px, py := rotate(p.X, p.Y)
+		minX, maxX = math.Min(minX, px), math.Max(maxX, px)
+		minY, maxY = math.Min(minY, py), math.Max(maxY, py)
+	}
+	project := func(x, y float64) contracts.Point {
+		px, py := rotate(x, y)
+		box := m.Projection.ViewBox
+		return contracts.Point{X: box[0] + (px-minX)/(maxX-minX)*box[2], Y: box[1] + (maxY-py)/(maxY-minY)*box[3]}
+	}
+	p := project(v.X, v.Z)
+	angle := v.Heading * math.Pi / 180
+	q := project(v.X+math.Sin(angle), v.Z+math.Cos(angle))
+	if !validPoint(p) || !validPoint(q) {
+		return contracts.PlayerState{}, errors.New("player_invalid")
+	}
+	heading := math.Mod(math.Atan2(q.X-p.X, -(q.Y-p.Y))*180/math.Pi+360, 360)
+	return contracts.PlayerState{PlayerId: v.PlayerId, DisplayName: v.DisplayName, IsSelf: v.IsSelf, MapId: v.MapId, FloorId: v.FloorId, Position: p, Heading: heading}, nil
+}

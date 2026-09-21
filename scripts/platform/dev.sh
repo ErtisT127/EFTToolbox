@@ -3,6 +3,7 @@ set -euo pipefail
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$project_root"
+unset GOROOT
 port=${1:-47831}
 rebuild=${2:-}
 

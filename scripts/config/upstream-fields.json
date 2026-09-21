@@ -1,5 +1,5 @@
 {
-  "source": "Upstream field contract for data prepare. keys lists every field the snapshot may carry; unknown keys and vanished keys both fail the run. universal lists the fields present on every record of that surface, so a field disappearing from a single record is caught too.",
+  "source": "Upstream field contract for data prepare. keys lists every field the snapshot may carry; optional lists fields that may be absent in a mode; unknown keys and vanished non-optional keys fail the run. universal lists fields expected on every record when present.",
   "surfaces": [
     {
       "path": "live.maps[*]",
@@ -377,14 +377,10 @@
         "wikiLink"
       ],
       "universal": [
-        "avg24hPrice",
         "backgroundColor",
         "baseImageLink",
-        "basePrice",
         "buyFromTrader",
         "categories",
-        "changeLast48h",
-        "changeLast48hPercent",
         "conflictingCategories",
         "conflictingItems",
         "conflictingSlotIds",
@@ -398,7 +394,6 @@
         "image512pxLink",
         "image8xLink",
         "inspectImageLink",
-        "lastLowPrice",
         "lastOfferCount",
         "lastScan",
         "link",
@@ -413,6 +408,13 @@
         "weight",
         "width",
         "wikiLink"
+      ],
+      "optional": [
+        "avg24hPrice",
+        "basePrice",
+        "changeLast48h",
+        "changeLast48hPercent",
+        "lastLowPrice"
       ]
     },
     {
@@ -487,7 +489,8 @@
         "trader",
         "traderRequirements",
         "wikiLink"
-      ]
+      ],
+      "optional": ["gameMode", "requiredPrestige"]
     },
     {
       "path": "tasks.tasks[*].objectives[]",
