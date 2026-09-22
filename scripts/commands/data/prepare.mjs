@@ -827,6 +827,7 @@ summaries.sort(
   (a, b) => (mapRanks.get(a.id) ?? mapOrder.length) - (mapRanks.get(b.id) ?? mapOrder.length),
 );
 await writeFile(path.join(output, 'catalog.json'), JSON.stringify(summaries));
+await writeFile(path.join(upstream, 'catalog.json'), JSON.stringify(summaries));
 // The game log identifies locations by EFT scene/name ids rather than our stable map id. Keep the
 // lookup table mode-local so a mode can evolve independently without changing the public map shape.
 const locations = {};

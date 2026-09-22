@@ -604,7 +604,8 @@
     {
       "path": "rules[*].maps[].layers[]",
       "keys": ["extents", "name", "show", "svgLayer", "tilePath"],
-      "universal": ["extents", "name", "show"]
+      "universal": ["name"],
+      "optional": ["extents", "show"]
     },
     {
       "path": "rules[*].maps[].layers[].extents[]",

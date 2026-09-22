@@ -276,7 +276,7 @@ func (h *overlayHub) changed(kind, mapID, operationID string) {
 	e := contracts.ServerEvent{Type: kind, MapId: &mapID, OperationId: &operationID}
 	if kind == "preferences_changed" {
 		var p contracts.Preferences
-		if readJSON(filepath.Join(h.store.root, "user", "map-preferences.json"), &p) == nil {
+		if readJSON(h.store.userPath("map-preferences.json"), &p) == nil {
 			e.Preferences = &p
 		}
 	}
@@ -307,7 +307,7 @@ func (h *overlayHub) websocket(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 	annotations := []contracts.SharedAnnotation{}
 	prefs := contracts.Preferences{SchemaVersion: 1, Maps: []contracts.MapPreference{}, StickerUsage: []contracts.StickerUsage{}}
-	_ = readJSON(filepath.Join(h.store.root, "user", "map-preferences.json"), &prefs)
+	_ = readJSON(h.store.userPath("map-preferences.json"), &prefs)
 	settings, settingsErr := h.settings()
 	view := h.view
 	monitorStatus := h.monitorStatus
@@ -380,11 +380,14 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 			return
 		}
 		mapRoot, err := filepath.Abs(h.store.activeUpstream())
-		if err != nil {
+		if err != nil || h.store.repository() == nil {
+			if err == nil {
+				err = errors.New("mode repository unavailable")
+			}
 			dataError(w, err)
 			return
 		}
-		jsonResponse(w, contracts.OverlayBootstrap{SchemaVersion: 1, MapDirectory: filepath.Join(mapRoot, "maps"), AssetDirectory: filepath.Join(root, "upstream", "assets"), TileDirectory: filepath.Join(root, "upstream", "tiles"), TileManifestFile: filepath.Join(root, "upstream", "tiles", "manifest.json"), PreferencesFile: filepath.Join(root, "user", "map-preferences.json"), AnnotationsDirectory: filepath.Join(root, "user"), OverlaySettingsFile: filepath.Join(root, "user", "overlay-settings.json"), WebsocketPath: "/ws", LogPipeName: h.pipe})
+		jsonResponse(w, contracts.OverlayBootstrap{SchemaVersion: 1, MapDirectory: filepath.Join(mapRoot, "maps"), AssetDirectory: filepath.Join(root, "upstream", "assets"), TileDirectory: filepath.Join(root, "upstream", "tiles"), TileManifestFile: filepath.Join(root, "upstream", "tiles", "manifest.json"), PreferencesFile: h.store.userPath("map-preferences.json"), AnnotationsDirectory: filepath.Join(h.store.userRoot(), "maps"), OverlaySettingsFile: filepath.Join(root, "user", "overlay-settings.json"), WebsocketPath: "/ws", LogPipeName: h.pipe})
 	})
 	mux.HandleFunc("GET /api/overlay-settings", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
@@ -411,7 +414,7 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 		}
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		if err := h.store.save("overlay-settings.json", v); err != nil {
+		if err := h.store.saveGlobal("overlay-settings.json", v); err != nil {
 			dataError(w, err)
 			return
 		}

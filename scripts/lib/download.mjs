@@ -7,6 +7,7 @@ const allowedHosts = new Set([
   'cdn.jsdelivr.net',
   'json.tarkov.dev',
   'assets.tarkov.dev',
+  'tarkov-market.com',
 ]);
 
 // Immediate retries all land inside the same network blip, so each attempt waits longer than the

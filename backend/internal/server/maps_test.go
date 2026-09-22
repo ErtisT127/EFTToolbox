@@ -17,12 +17,12 @@ import (
 func mapFixture(t *testing.T) (string, http.Handler) {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "upstream", "maps"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "upstream", "modes", "pvp", "maps"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	m := contracts.MapData{SchemaVersion: 1, Id: "fixture", Name: "Fixture", DefaultFloor: "ground", Projection: contracts.Projection{ViewBox: []float64{0, 0, 100, 100}, Bounds: []contracts.Point{{X: 0, Y: 0}, {X: 100, Y: 100}}}, Floors: []contracts.Floor{{Id: "ground", Name: "Ground", SvgGroups: []string{"ground"}}}, Categories: []contracts.Category{}, Markers: []contracts.BuiltinMarker{}, Tasks: []contracts.MapTask{}, Warnings: []string{}}
 	data, _ := json.Marshal(m)
-	if err := os.WriteFile(filepath.Join(root, "upstream", "maps", "fixture.json"), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return root, New(context.Background(), "test", http.FS(fstest.MapFS{}), root)
@@ -70,7 +70,7 @@ func TestMapDiscoveryAndPersistence(t *testing.T) {
 	if response := callJSON(t, restarted, "PUT", "/api/maps/fixture/annotations", saved); response.Code != 200 {
 		t.Fatal(response.Body.String())
 	}
-	files, err := os.ReadDir(filepath.Join(root, "user"))
+	files, err := os.ReadDir(filepath.Join(root, "user", "modes", "pvp", "maps"))
 	if err != nil || len(files) != 1 {
 		t.Fatalf("temporary files leaked: %v %v", files, err)
 	}
@@ -82,7 +82,7 @@ func TestInvalidAnnotationCannotOverwriteSavedData(t *testing.T) {
 	if response := callJSON(t, handler, "PUT", "/api/maps/fixture/annotations", valid); response.Code != 200 {
 		t.Fatal(response.Body.String())
 	}
-	before, err := os.ReadFile(filepath.Join(root, "user", "fixture.annotations.json"))
+	before, err := os.ReadFile(filepath.Join(root, "user", "modes", "pvp", "maps", "fixture.annotations.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestInvalidAnnotationCannotOverwriteSavedData(t *testing.T) {
 	if response := callJSON(t, handler, "PUT", "/api/maps/fixture/annotations", invalid); response.Code != 400 {
 		t.Fatalf("accepted unknown floor: %d", response.Code)
 	}
-	after, err := os.ReadFile(filepath.Join(root, "user", "fixture.annotations.json"))
+	after, err := os.ReadFile(filepath.Join(root, "user", "modes", "pvp", "maps", "fixture.annotations.json"))
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("invalid write changed saved data")
 	}
@@ -115,7 +115,7 @@ func TestCorruptDataAndSaveFailure(t *testing.T) {
 	if response := callJSON(t, handler, "PUT", "/api/maps/fixture/annotations", contracts.Annotations{SchemaVersion: 1, Items: []contracts.Annotation{}}); response.Code != 500 {
 		t.Fatalf("save failure hidden: %d", response.Code)
 	}
-	if err := os.WriteFile(filepath.Join(root, "upstream", "maps", "broken.json"), []byte("{"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "upstream", "modes", "pvp", "maps", "broken.json"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if response := callJSON(t, handler, "GET", "/api/maps/broken", nil); response.Code != 500 {

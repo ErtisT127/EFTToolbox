@@ -8,7 +8,8 @@ import { mapTimes, timePhase } from '../src/pages/map/lib/time.ts';
 import { SVG_MAX_ZOOM, zoomRange } from '../src/pages/map/lib/zoom.ts';
 
 const root = new URL('../../data/upstream/', import.meta.url);
-const load = async (name) => JSON.parse(await readFile(new URL(name, root), 'utf8'));
+const dataRoot = new URL('modes/pvp/', root);
+const load = async (name) => JSON.parse(await readFile(new URL(name, dataRoot), 'utf8'));
 const catalog = await load('catalog.json');
 
 test('floor options respect basemap availability and never switch basemap implicitly', async () => {
@@ -53,7 +54,7 @@ test('daylight icons follow each clock independently at dawn/day/dusk/night boun
 });
 
 test('tile grid matches upstream world transform for rotated and nonuniform maps', async () => {
-  const sources = await load('source/map-rules.json');
+  const sources = JSON.parse(await readFile(new URL('source/map-rules.json', root), 'utf8'));
   for (const id of ['factory', 'lab', 'reserve', 'icebreaker', 'the-labyrinth']) {
     const map = await load(`maps/${id}.json`);
     const rule = sources

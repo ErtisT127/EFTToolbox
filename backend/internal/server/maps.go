@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"efttoolbox/backend/internal/gamewatch"
 	contracts "efttoolbox/contracts"
 )
 
@@ -36,54 +37,84 @@ type mapStore struct {
 	root    string
 	mu      sync.Mutex
 	modeMu  sync.RWMutex
-	mode    string
+	repo    *modeRepository
 	changed func(string, string, string)
 }
 
-func (s *mapStore) setMode(mode string) {
-	if mode != "pve" && mode != "pvp-season" {
-		mode = "pvp"
-	}
+type modeRepository struct {
+	mode string
+	root string
+}
+
+func (s *mapStore) repository() *modeRepository {
+	s.modeMu.RLock()
+	defer s.modeMu.RUnlock()
+	return s.repo
+}
+
+func (s *mapStore) setRepository(repo *modeRepository) {
 	s.modeMu.Lock()
-	s.mode = mode
+	s.repo = repo
 	s.modeMu.Unlock()
 }
 
-func (s *mapStore) activeUpstream() string {
-	s.modeMu.RLock()
-	mode := s.mode
-	s.modeMu.RUnlock()
-	if mode == "" {
-		mode = "pvp"
+func newModeRepository(root, mode string) (*modeRepository, error) {
+	if !gamewatch.ValidMode(gamewatch.Mode(mode)) {
+		return nil, fmt.Errorf("invalid mode: %s", mode)
 	}
-	modeRoot := filepath.Join(s.root, "upstream", "modes", mode)
-	if info, err := os.Stat(filepath.Join(modeRoot, "maps")); err == nil && info.IsDir() {
-		return modeRoot
+	modeRoot := filepath.Join(root, "upstream", "modes", mode)
+	info, err := os.Stat(filepath.Join(modeRoot, "maps"))
+	if err != nil || !info.IsDir() {
+		if err == nil {
+			err = errors.New("not a directory")
+		}
+		return nil, fmt.Errorf("mode %q maps directory unavailable: %w", mode, err)
 	}
-	// Keep existing generated PVP data usable until all mode datasets are present.
-	return filepath.Join(s.root, "upstream")
+	entries, err := os.ReadDir(filepath.Join(modeRoot, "maps"))
+	if err != nil {
+		return nil, fmt.Errorf("mode %q maps directory unreadable: %w", mode, err)
+	}
+	repo := &modeRepository{mode: mode, root: modeRoot}
+	validMaps := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		if _, err := (&mapStore{}).loadFromRepository(id, repo); err != nil {
+			return nil, fmt.Errorf("mode %q map %q invalid: %w", mode, id, err)
+		}
+		validMaps++
+	}
+	if validMaps == 0 {
+		return nil, fmt.Errorf("mode %q contains no maps", mode)
+	}
+	return repo, nil
 }
 
-func (s *mapStore) upstreamForMode(mode string) string {
-	modeRoot := filepath.Join(s.root, "upstream", "modes", mode)
-	if info, err := os.Stat(filepath.Join(modeRoot, "maps")); err == nil && info.IsDir() {
-		return modeRoot
-	}
-	return filepath.Join(s.root, "upstream")
-}
-
-func (s *mapStore) loadFromMode(id, mode string) (contracts.MapData, error) {
+func (s *mapStore) loadFromRepository(id string, repo *modeRepository) (contracts.MapData, error) {
 	var data contracts.MapData
 	if !safeID.MatchString(id) {
 		return data, os.ErrNotExist
 	}
-	if err := readJSON(filepath.Join(s.upstreamForMode(mode), "maps", id+".json"), &data); err != nil {
+	if repo == nil {
+		return data, errors.New("mode repository unavailable")
+	}
+	if err := readJSON(filepath.Join(repo.root, "maps", id+".json"), &data); err != nil {
 		return data, err
 	}
 	if data.SchemaVersion != 1 || data.Id != id || len(data.Floors) == 0 || len(data.Projection.ViewBox) != 4 || len(data.Projection.Bounds) != 2 {
 		return data, fmt.Errorf("invalid map data: %s", id)
 	}
 	return data, nil
+}
+
+func (s *mapStore) loadFromMode(id, mode string) (contracts.MapData, error) {
+	repo, err := newModeRepository(s.root, mode)
+	if err != nil {
+		return contracts.MapData{}, err
+	}
+	return s.loadFromRepository(id, repo)
 }
 
 func readJSON(name string, value any) error {
@@ -95,19 +126,24 @@ func readJSON(name string, value any) error {
 }
 
 func (s *mapStore) load(id string) (contracts.MapData, error) {
-	var data contracts.MapData
-	if !safeID.MatchString(id) {
-		return data, os.ErrNotExist
-	}
-	err := readJSON(filepath.Join(s.activeUpstream(), "maps", id+".json"), &data)
-	if err != nil {
-		return data, err
-	}
-	if data.SchemaVersion != 1 || data.Id != id || len(data.Floors) == 0 || len(data.Projection.ViewBox) != 4 || len(data.Projection.Bounds) != 2 {
-		return data, fmt.Errorf("invalid map data: %s", id)
-	}
-	return data, nil
+	return s.loadFromRepository(id, s.repository())
 }
+
+func (s *mapStore) activeUpstream() string {
+	if repo := s.repository(); repo != nil {
+		return repo.root
+	}
+	return filepath.Join(s.root, "upstream", "modes", "invalid")
+}
+
+func (s *mapStore) userRoot() string {
+	if repo := s.repository(); repo != nil {
+		return filepath.Join(s.root, "user", "modes", repo.mode)
+	}
+	return filepath.Join(s.root, "user", "modes", "invalid")
+}
+
+func (s *mapStore) userPath(name string) string { return filepath.Join(s.userRoot(), name) }
 
 func jsonResponse(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -158,10 +194,18 @@ func decodeUpdate(w http.ResponseWriter, r *http.Request, value any) bool {
 }
 
 func (s *mapStore) save(name string, value any) error {
+	return s.saveTo(filepath.Join(s.userRoot()), name, value)
+}
+
+func (s *mapStore) saveGlobal(name string, value any) error {
+	return s.saveTo(filepath.Join(s.root, "user"), name, value)
+}
+
+func (s *mapStore) saveTo(dir, name string, value any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	dir := filepath.Join(s.root, "user")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	target := filepath.Join(dir, name)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
 	}
 	data, err := json.Marshal(value)
@@ -185,7 +229,7 @@ func (s *mapStore) save(name string, value any) error {
 	if err = file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temp, filepath.Join(dir, name))
+	return os.Rename(temp, target)
 }
 
 func validAnnotations(data contracts.Annotations, m contracts.MapData) bool {
@@ -289,7 +333,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			return
 		}
 		data := contracts.Annotations{SchemaVersion: 1, Items: []contracts.Annotation{}}
-		err = readJSON(filepath.Join(s.root, "user", m.Id+".annotations.json"), &data)
+		err = readJSON(s.userPath(filepath.Join("maps", m.Id+".annotations.json")), &data)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			dataError(w, err)
 			return
@@ -314,7 +358,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			apiError(w, http.StatusBadRequest, "annotations_invalid")
 			return
 		}
-		if err = s.save(m.Id+".annotations.json", data); err != nil {
+		if err = s.save(filepath.Join("maps", m.Id+".annotations.json"), data); err != nil {
 			log.Printf("save annotations: %v", err)
 			apiError(w, http.StatusInternalServerError, "annotations_save_failed")
 			return
@@ -330,7 +374,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			Maps:          []contracts.MapPreference{},
 			StickerUsage:  []contracts.StickerUsage{},
 		}
-		err := readJSON(filepath.Join(s.root, "user", "map-preferences.json"), &data)
+		err := readJSON(s.userPath("map-preferences.json"), &data)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			dataError(w, err)
 			return

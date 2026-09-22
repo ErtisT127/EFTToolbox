@@ -5,23 +5,22 @@ import path from 'node:path';
 import { download } from '../../lib/download.mjs';
 
 const root = fileURLToPath(new URL('../../../data/upstream/', import.meta.url));
-const read = async (name) => {
-  const candidates =
-    name === 'items.json'
-      ? [path.join(root, 'source/pvp', name), path.join(root, 'source', name)]
-      : [path.join(root, 'source', name)];
-  for (const file of candidates) {
-    try {
-      return JSON.parse(await readFile(file, 'utf8')).data;
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
-  }
-  throw new Error(`Missing upstream source: ${name}`);
-};
-const { maps, mobs } = await read('maps.json');
-const { items, handbookCategories } = await read('items.json');
-const traders = await read('traders.json');
+const modes = ['pvp', 'pve', 'pvp-season'];
+const read = async (name, mode) =>
+  JSON.parse(await readFile(path.join(root, 'source', mode, name), 'utf8')).data;
+const modeData = await Promise.all(
+  modes.map(async (mode) => ({
+    mode,
+    maps: await read('maps.json', mode),
+    items: await read('items.json', mode),
+  })),
+);
+const traders = JSON.parse(await readFile(path.join(root, 'source', 'traders.json'), 'utf8')).data;
+const items = Object.assign({}, ...modeData.map(({ items }) => items.items));
+const handbookCategories = Object.assign(
+  {},
+  ...modeData.map(({ items }) => items.handbookCategories),
+);
 
 // Handbook categories whose items belong in the sticker picker even when no map places them,
 // so the picker can offer a category that is otherwise too new to have reached a loot point.
@@ -35,17 +34,19 @@ const add = (url, prefix = 'item-') => {
 };
 const isKey = (item) => (item.types || []).some((type) => type.toLowerCase().includes('key'));
 
-for (const map of Object.values(maps))
-  for (const id of [
-    ...map.lootLoose.flatMap((loot) => loot.items),
-    ...map.locks.map((lock) => lock.key),
-  ])
-    add(items[id]?.baseImageLink);
+for (const { maps } of modeData)
+  for (const map of Object.values(maps.maps))
+    for (const id of [
+      ...map.lootLoose.flatMap((loot) => loot.items),
+      ...map.locks.map((lock) => lock.key),
+    ])
+      add(items[id]?.baseImageLink);
 for (const item of Object.values(items))
   if (isKey(item) || stickerCategories.has(item.handbookCategories?.[0])) add(item.baseImageLink);
 for (const category of Object.values(handbookCategories)) add(category.imageLink);
 for (const trader of Object.values(traders)) add(trader.imageLink, 'trader-');
-for (const mob of Object.values(mobs)) add(mob.imagePortraitLink, 'mob-');
+for (const { maps } of modeData)
+  for (const mob of Object.values(maps.mobs)) add(mob.imagePortraitLink, 'mob-');
 
 const queue = [...jobs],
   sources = [];

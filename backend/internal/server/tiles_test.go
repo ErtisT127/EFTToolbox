@@ -21,7 +21,7 @@ func (f tileTransport) RoundTrip(r *http.Request) (*http.Response, error) { retu
 
 func TestTileCacheAndValidation(t *testing.T) {
 	root, handler := mapFixture(t)
-	name := filepath.Join(root, "upstream", "maps", "fixture.json")
+	name := filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture.json")
 	var m contracts.MapData
 	if err := readJSON(name, &m); err != nil {
 		t.Fatal(err)
