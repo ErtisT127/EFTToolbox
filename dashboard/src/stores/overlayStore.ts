@@ -6,7 +6,13 @@ import type {
   PlayerState,
   ServerEvent,
 } from '../../../contracts/ts/ipc.gen';
-import { request, reportClientLog } from './workspaceStore';
+import {
+  loadUserSettings,
+  patchUserSettingsCache,
+  request,
+  reportClientLog,
+  updateUserSettings,
+} from './workspaceStore';
 import { gameMonitor } from './gameMonitorStore';
 
 class OverlayStore {
@@ -15,6 +21,9 @@ class OverlayStore {
   players = new Map<string, PlayerState>();
   connected = false;
   error = '';
+  loading = false;
+  calibrationEpoch = 0;
+  calibrationMapId = '';
   saving = false;
   private version = 0;
   private revision = 0;
@@ -33,13 +42,17 @@ class OverlayStore {
     this.listeners.forEach((f) => f());
   }
   async load() {
+    this.loading = true;
+    this.changed();
     try {
-      this.settings = await request<OverlaySettings>('/api/overlay-settings');
+      this.settings = (await loadUserSettings()).overlay;
       this.error = '';
     } catch (e) {
       this.error = e instanceof Error ? e.message : 'errors.request_failed';
+    } finally {
+      this.loading = false;
+      this.changed();
     }
-    this.changed();
   }
   /** Visibility belongs to the overlay, not to this copy: writing a stored `visible` back would
    *  hide a panel the user turned on with the shortcut. */
@@ -75,13 +88,12 @@ class OverlayStore {
     try {
       while (this.saved < this.revision) {
         const revision = this.revision;
-        const value: OverlaySettings = await request<OverlaySettings>('/api/overlay-settings', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(this.settings),
-        });
+        const aggregate = await updateUserSettings((current) => ({
+          ...current,
+          overlay: this.settings!,
+        }));
         this.saved = revision;
-        if (revision === this.revision) this.settings = value;
+        if (revision === this.revision) this.settings = aggregate.overlay;
       }
       // Nothing pending means nothing was sent: clearing the error here would make a retry look
       // like it recovered when it never asked the server anything.
@@ -136,21 +148,26 @@ class OverlayStore {
         try {
           const e = JSON.parse(String(event.data)) as ServerEvent & Record<string, unknown>;
           const protocolVersion = String(e.status?.protocolVersion || '');
-          if (protocolVersion !== '1' && protocolVersion !== '2')
-            throw new Error('Unsupported protocol');
+          if (protocolVersion !== '1') throw new Error('Unsupported protocol');
           gameMonitor.handleEvent(e);
           this.connected = true;
           clearTimeout(stale);
           stale = setTimeout(reconnect, 7000);
           if (e.type === 'snapshot')
             this.players = new Map((e.players || []).map((p) => [p.playerId, p]));
+          if (e.type === 'calibration_changed' && e.mapId) {
+            this.calibrationMapId = e.mapId;
+            this.calibrationEpoch++;
+          }
           if (e.player) this.players = new Map(this.players).set(e.player.playerId, e.player);
           if (e.type === 'player_remove' && e.playerId) {
             this.players = new Map(this.players);
             this.players.delete(e.playerId);
           }
-          if (e.overlaySettings && !this.saving && this.saved === this.revision)
+          if (e.overlaySettings && !this.saving && this.saved === this.revision) {
             this.settings = e.overlaySettings;
+            patchUserSettingsCache((current) => ({ ...current, overlay: e.overlaySettings! }));
+          }
           if (e.overlayView) this.view = e.overlayView;
           this.changed();
         } catch (e) {

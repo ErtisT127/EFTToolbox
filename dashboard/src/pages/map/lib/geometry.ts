@@ -1,6 +1,6 @@
-import type { Point, Projection } from '../../../../../contracts/ts/ipc.gen';
+import type { MapPoint, Projection } from '../../../../../contracts/ts/ipc.gen';
 
-function rotate(point: Point, degrees: number): Point {
+function rotate(point: MapPoint, degrees: number): MapPoint {
   const angle = (degrees * Math.PI) / 180;
   return {
     x: point.x * Math.cos(angle) - point.y * Math.sin(angle),
@@ -10,8 +10,8 @@ function rotate(point: Point, degrees: number): Point {
 
 function projectedBounds(projection: Projection) {
   const [a, b] = projection.bounds;
-  const corners = [a, b, { x: a.x, y: b.y }, { x: b.x, y: a.y }].map((p) =>
-    rotate(p, projection.rotation),
+  const corners = [a, b, { x: a.x, z: b.z }, { x: b.x, z: a.z }].map((p) =>
+    rotate({ x: p.x, y: p.z }, projection.rotation),
   );
   return {
     minX: Math.min(...corners.map((p) => p.x)),
@@ -22,8 +22,8 @@ function projectedBounds(projection: Projection) {
 }
 
 // World horizontal coordinates are (x, z); SVG coordinates are (x, y), downwards.
-export function worldToPixel(point: Point, projection: Projection): Point {
-  const p = rotate(point, projection.rotation),
+export function worldToPixel(world: { x: number; z: number }, projection: Projection): MapPoint {
+  const p = rotate({ x: world.x, y: world.z }, projection.rotation),
     b = projectedBounds(projection);
   const [x, y, width, height] = projection.viewBox;
   return {
@@ -32,23 +32,24 @@ export function worldToPixel(point: Point, projection: Projection): Point {
   };
 }
 
-export function pixelToWorld(point: Point, projection: Projection): Point {
+export function pixelToWorld(point: MapPoint, projection: Projection): { x: number; z: number } {
   const b = projectedBounds(projection),
     [x, y, width, height] = projection.viewBox;
-  return rotate(
+  const projected = rotate(
     {
       x: b.minX + ((point.x - x) / width) * (b.maxX - b.minX),
       y: b.maxY - ((point.y - y) / height) * (b.maxY - b.minY),
     },
     -projection.rotation,
   );
+  return { x: projected.x, z: projected.y };
 }
 
 // Affine mapping from our stable SVG/map coordinates to the upstream tile grid at zoom 0.
 export function tileTransform(projection: Projection, transform: number[]): number[] {
-  const project = (p: Point) => {
-    const world = rotate(pixelToWorld(p, projection), projection.rotation);
-    return { x: transform[0] * world.x + transform[1], y: -transform[2] * world.y + transform[3] };
+  const project = (p: MapPoint) => {
+    const world = pixelToWorld(p, projection);
+    return { x: transform[0] * world.x + transform[1], y: -transform[2] * world.z + transform[3] };
   };
   const origin = project({ x: 0, y: 0 }),
     right = project({ x: 1, y: 0 }),
@@ -56,7 +57,7 @@ export function tileTransform(projection: Projection, transform: number[]): numb
   return [right.x - origin.x, origin.x, down.y - origin.y, origin.y];
 }
 
-export function segmentDistance(point: Point, a: Point, b: Point) {
+export function segmentDistance(point: MapPoint, a: MapPoint, b: MapPoint) {
   const dx = b.x - a.x,
     dy = b.y - a.y;
   const t = Math.max(

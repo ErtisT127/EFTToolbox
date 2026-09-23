@@ -1,4 +1,4 @@
-import { OverlaySettingsLimits, PointLimits } from '../../../contracts/ts/ipc.gen';
+import { OverlaySettingsLimits, MapPointLimits } from '../../../contracts/ts/ipc.gen';
 import type { OverlaySettings } from '../../../contracts/ts/ipc.gen';
 
 const size = OverlaySettingsLimits.width;
@@ -10,7 +10,7 @@ export function clampSize(value: number) {
 
 /** Rounds a coordinate for display. */
 export function formatCoordinate(value: number) {
-  return value.toFixed(PointLimits.x.precision);
+  return value.toFixed(MapPointLimits.x.precision);
 }
 
 /**

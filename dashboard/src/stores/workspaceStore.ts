@@ -2,12 +2,24 @@ import { useSyncExternalStore } from 'react';
 import type {
   Annotation,
   Annotations,
+  CalibratorPreferences,
   MapData,
   MapPreference,
   MapSummary,
   Preferences,
   Sticker,
+  UserSettings,
 } from '../../../contracts/ts/ipc.gen';
+class DataLoadError extends Error {
+  readonly errorKey: string;
+  readonly module = 'map' as const;
+
+  constructor(errorKey: string, _module?: 'map') {
+    super(errorKey);
+    this.name = 'DataLoadError';
+    this.errorKey = errorKey;
+  }
+}
 
 export function selectableFloors(data: MapData, basemap: string) {
   return data.floors.filter(
@@ -22,6 +34,92 @@ export function selectableFloors(data: MapData, basemap: string) {
 const locale = 'zh-CN';
 
 const defaultGroups = ['extracts', 'landmarks'];
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object';
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string');
+const isNumberArray = (value: unknown): value is number[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'number');
+const isRecordArray = (value: unknown): value is Record<string, unknown>[] =>
+  Array.isArray(value) && value.every(isRecord);
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+const hasStrings = (value: Record<string, unknown>, ...keys: string[]) =>
+  keys.every((key) => typeof value[key] === 'string');
+
+export function isUsableMapCatalog(value: unknown): value is MapSummary[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (item) =>
+        isRecord(item) && hasStrings(item, 'id', 'name', 'subtitle', 'defaultFloor', 'iconUrl'),
+    )
+  );
+}
+
+export function isUsableMapData(value: unknown): value is MapData {
+  if (!isRecord(value) || value.schemaVersion !== 1) return false;
+  if (!isRecord(value.projection) || !isRecord(value.clock)) return false;
+  if (
+    !isRecordArray(value.floors) ||
+    !isRecordArray(value.categories) ||
+    !isRecordArray(value.markers) ||
+    !isRecordArray(value.tasks) ||
+    !isStringArray(value.warnings) ||
+    !isRecordArray(value.tiles) ||
+    !isRecordArray(value.projection.bounds) ||
+    !isNumberArray(value.projection.viewBox) ||
+    !isRecordArray(value.clock.phases) ||
+    !isNumberArray(value.clock.offsets) ||
+    !isStringArray(value.clock.fixed)
+  )
+    return false;
+  if (
+    typeof value.defaultFloor !== 'string' ||
+    typeof value.baseFloor !== 'string' ||
+    value.projection.bounds.length !== 2 ||
+    value.projection.viewBox.length !== 4 ||
+    !value.projection.bounds.every((point) => isFiniteNumber(point.x) && isFiniteNumber(point.z)) ||
+    !value.projection.viewBox.every(isFiniteNumber) ||
+    !value.floors.some((floor) => floor.id === value.defaultFloor) ||
+    !value.floors.some((floor) => floor.id === value.baseFloor)
+  )
+    return false;
+  if (
+    !value.floors.every(
+      (floor) => hasStrings(floor, 'id', 'name') && isStringArray(floor.svgGroups),
+    ) ||
+    !value.categories.every((category) =>
+      hasStrings(category, 'id', 'name', 'groupId', 'symbol', 'iconUrl'),
+    ) ||
+    !value.tasks.every((task) => hasStrings(task, 'id', 'name'))
+  )
+    return false;
+  const categoryIds = new Set(value.categories.map((category) => category.id));
+  if (
+    !value.markers.every(
+      (marker) =>
+        hasStrings(marker, 'id', 'name', 'categoryId', 'iconUrl') &&
+        categoryIds.has(marker.categoryId) &&
+        isStringArray(marker.categoryIds) &&
+        isStringArray(marker.floorIds) &&
+        isRecordArray(marker.outline),
+    )
+  )
+    return false;
+  return value.tiles.every((tile) => isNumberArray(tile.transform) && isRecordArray(tile.bounds));
+}
+
+function defaultCalibratorPreferences(mapId = ''): CalibratorPreferences {
+  return {
+    schemaVersion: 1,
+    sidebarCollapsed: false,
+    collapsedMaps: [],
+    collapsedFloors: [],
+    ...(mapId ? { selection: { type: 'map', mapId } } : {}),
+  };
+}
 
 export function reportClientLog(event: string, message: string, error = '') {
   void fetch('/api/logs', {
@@ -69,6 +167,51 @@ export async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+let userSettingsCache: UserSettings | undefined;
+let userSettingsLoad: Promise<UserSettings> | undefined;
+let userSettingsWrite = Promise.resolve();
+
+export function loadUserSettings() {
+  if (userSettingsCache) return Promise.resolve(userSettingsCache);
+  userSettingsLoad ??= request<UserSettings>('/api/user-settings')
+    .then((value) => {
+      userSettingsCache = value;
+      return value;
+    })
+    .finally(() => {
+      userSettingsLoad = undefined;
+    });
+  return userSettingsLoad;
+}
+
+export function updateUserSettings(update: (value: UserSettings) => UserSettings) {
+  const next = userSettingsWrite.then(async () => {
+    const current = await loadUserSettings();
+    const saved = await request<UserSettings>('/api/user-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(update(current)),
+    });
+    userSettingsCache = saved;
+    return saved;
+  });
+  userSettingsWrite = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
+export function patchUserSettingsCache(update: (value: UserSettings) => UserSettings) {
+  if (userSettingsCache) userSettingsCache = update(userSettingsCache);
+}
+
+export async function resetUserSettings() {
+  const value = await request<UserSettings>('/api/data/reset-user-settings', { method: 'POST' });
+  userSettingsCache = value;
+  return value;
+}
+
 const put = (data: unknown): RequestInit => ({
   method: 'PUT',
   headers: { 'Content-Type': 'application/json' },
@@ -91,11 +234,14 @@ export class Workspace {
   stickers: Sticker[] = [];
   sessions = new Map<string, Session>();
   preferences: Preferences = { schemaVersion: 1, selectedMap: '', maps: [], stickerUsage: [] };
+  calibratorPreferences: CalibratorPreferences = defaultCalibratorPreferences();
   activeId = '';
   loading = true;
   error = '';
   preferenceError = '';
+  calibratorPreferenceError = '';
   savingPreferences = false;
+  savingCalibratorPreferences = false;
   private version = 0;
   private listeners = new Set<() => void>();
   private sequence = 0;
@@ -103,6 +249,9 @@ export class Workspace {
   private preferenceTimer?: ReturnType<typeof setTimeout>;
   private preferenceRevision = 0;
   private preferenceSaved = 0;
+  private calibratorPreferenceTimer?: ReturnType<typeof setTimeout>;
+  private calibratorPreferenceRevision = 0;
+  private calibratorPreferenceSaved = 0;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
@@ -120,25 +269,35 @@ export class Workspace {
     this.error = '';
     this.changed();
     try {
-      const [catalog, preferences, stickers] = await Promise.all([
+      const [catalog, preferences, stickers, calibratorPreferences] = await Promise.all([
         request<MapSummary[]>(`/api/maps?locale=${locale}`),
         request<Preferences>('/api/map-preferences'),
         request<Sticker[]>('/api/stickers'),
+        request<CalibratorPreferences>('/api/calibration-preferences'),
       ]);
       if (
-        !Array.isArray(catalog) ||
+        !isUsableMapCatalog(catalog) ||
         !Array.isArray(stickers) ||
         preferences.schemaVersion !== 1 ||
-        !Array.isArray(preferences.maps)
+        !Array.isArray(preferences.maps) ||
+        calibratorPreferences.schemaVersion !== 1
       )
-        throw new Error('errors.data_version');
+        throw new DataLoadError('errors.data_version', 'map');
       this.catalog = catalog;
       this.stickers = stickers;
       // A preferences file written before stickers existed has no usage list, and Go marshals the
       // absent slice back as null rather than an empty array.
       if (!Array.isArray(preferences.stickerUsage)) preferences.stickerUsage = [];
+      for (const preference of preferences.maps) {
+        if (!Array.isArray(preference.hiddenCategories)) preference.hiddenCategories = [];
+        if (!Array.isArray(preference.collapsedGroups)) preference.collapsedGroups = [];
+        if (!Array.isArray(preference.selectedTasks)) preference.selectedTasks = [];
+        if (!Array.isArray(preference.center)) preference.center = [];
+      }
       this.preferences = preferences;
+      this.calibratorPreferences = calibratorPreferences;
       const id = catalog.find((m) => m.id === preferences.selectedMap)?.id || catalog[0]?.id;
+      this.normalizeCalibratorPreferences(id || '');
       if (id) await this.select(id, true);
       else {
         this.loading = false;
@@ -149,6 +308,20 @@ export class Workspace {
       this.loading = false;
       this.changed();
     }
+  }
+
+  get calibratorPreference(): CalibratorPreferences {
+    return this.normalizeCalibratorPreferences(this.calibratorPreferences.selection?.mapId || '');
+  }
+
+  private normalizeCalibratorPreferences(mapId: string) {
+    const value = this.calibratorPreferences;
+    if (value.schemaVersion !== 1) this.calibratorPreferences = defaultCalibratorPreferences(mapId);
+    const normalized = this.calibratorPreferences;
+    if (!Array.isArray(normalized.collapsedMaps)) normalized.collapsedMaps = [];
+    if (!Array.isArray(normalized.collapsedFloors)) normalized.collapsedFloors = [];
+    if (!normalized.selection && mapId) normalized.selection = { type: 'map', mapId };
+    return normalized;
   }
 
   async reloadForResources() {
@@ -171,6 +344,7 @@ export class Workspace {
           signal: this.controller.signal,
         });
         if (sequence !== this.sequence) return;
+        if (!isUsableMapCatalog(catalog)) throw new DataLoadError('errors.data_version', 'map');
         this.catalog = catalog;
       }
       if (!this.sessions.has(id) || reload) {
@@ -179,12 +353,12 @@ export class Workspace {
           request<Annotations>(`/api/maps/${id}/annotations`, { signal: this.controller.signal }),
         ]);
         if (sequence !== this.sequence) return;
-        if (
-          data.schemaVersion !== 1 ||
-          !data.floors.some((f) => f.id === data.defaultFloor) ||
-          annotations.schemaVersion !== 1
-        )
-          throw new Error('errors.map_data_invalid');
+        const mapDataValid = isUsableMapData(data);
+        if (!mapDataValid || annotations.schemaVersion !== 1 || !Array.isArray(annotations.items))
+          throw new DataLoadError(
+            mapDataValid ? 'errors.annotations_invalid' : 'errors.map_data_invalid',
+            'map',
+          );
         const previous = this.sessions.get(id);
         if (previous) previous.data = data;
         else
@@ -215,7 +389,10 @@ export class Workspace {
   }
 
   preferenceFor(id: string): MapPreference {
-    const data = this.sessions.get(id)!.data;
+    return this.preferenceForData(id, this.sessions.get(id)!.data);
+  }
+
+  preferenceForData(id: string, data: MapData): MapPreference {
     let preference = this.preferences.maps.find((p) => p.mapId === id);
     if (!preference) {
       preference = {
@@ -234,8 +411,11 @@ export class Workspace {
       };
       this.preferences.maps.push(preference);
     }
-    if (!preference.collapsedGroups) preference.collapsedGroups = [];
-    if (!preference.basemap) {
+    if (!Array.isArray(preference.hiddenCategories)) preference.hiddenCategories = [];
+    if (!Array.isArray(preference.collapsedGroups)) preference.collapsedGroups = [];
+    if (!Array.isArray(preference.selectedTasks)) preference.selectedTasks = [];
+    if (!Array.isArray(preference.center)) preference.center = [];
+    if (preference.basemap !== 'svg' && preference.basemap !== 'tiles') {
       preference.basemap = data.svgUrl ? 'svg' : 'tiles';
       preference.center = [];
     }
@@ -259,6 +439,16 @@ export class Workspace {
   updatePreference(id: string, changes: Partial<MapPreference>) {
     Object.assign(this.preferenceFor(id), changes);
     this.savePreferenceSoon();
+    this.changed();
+  }
+  updatePreferenceForData(id: string, data: MapData, changes: Partial<MapPreference>) {
+    Object.assign(this.preferenceForData(id, data), changes);
+    this.savePreferenceSoon();
+    this.changed();
+  }
+  updateCalibratorPreference(changes: Partial<CalibratorPreferences>) {
+    Object.assign(this.calibratorPreference, changes);
+    this.saveCalibratorPreferenceSoon();
     this.changed();
   }
   // Stickers are map-independent, so usage lives on the global preferences. The picker sorts by
@@ -285,6 +475,13 @@ export class Workspace {
       void this.savePreferences();
     }, 350);
   }
+  private saveCalibratorPreferenceSoon() {
+    this.calibratorPreferenceRevision++;
+    clearTimeout(this.calibratorPreferenceTimer);
+    this.calibratorPreferenceTimer = setTimeout(() => {
+      void this.saveCalibratorPreferences();
+    }, 350);
+  }
   async savePreferences() {
     clearTimeout(this.preferenceTimer);
     if (this.savingPreferences) return;
@@ -302,6 +499,28 @@ export class Workspace {
       this.preferenceError = 'errors.preferences_save_failed';
     } finally {
       this.savingPreferences = false;
+      this.changed();
+    }
+  }
+  async saveCalibratorPreferences() {
+    clearTimeout(this.calibratorPreferenceTimer);
+    if (this.savingCalibratorPreferences) return;
+    this.savingCalibratorPreferences = true;
+    try {
+      while (this.calibratorPreferenceSaved < this.calibratorPreferenceRevision) {
+        const revision = this.calibratorPreferenceRevision;
+        await request('/api/calibration-preferences', put(this.calibratorPreferences));
+        this.calibratorPreferenceSaved = revision;
+      }
+      if (
+        this.calibratorPreferenceSaved >= this.calibratorPreferenceRevision &&
+        this.calibratorPreferenceSaved > 0
+      )
+        this.calibratorPreferenceError = '';
+    } catch {
+      this.calibratorPreferenceError = 'errors.preferences_save_failed';
+    } finally {
+      this.savingCalibratorPreferences = false;
       this.changed();
     }
   }
@@ -358,7 +577,8 @@ export class Workspace {
   get unsaved() {
     return (
       [...this.sessions.values()].some((s) => s.revision !== s.savedRevision) ||
-      this.preferenceSaved < this.preferenceRevision
+      this.preferenceSaved < this.preferenceRevision ||
+      this.calibratorPreferenceSaved < this.calibratorPreferenceRevision
     );
   }
 }

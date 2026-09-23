@@ -4,8 +4,22 @@ set -euo pipefail
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$project_root"
 unset GOROOT
-port=${1:-47831}
-rebuild=${2:-}
+port=47831
+rebuild=false
+for argument in "$@"; do
+  case "$argument" in
+    --rebuild)
+      rebuild=true
+      ;;
+    *)
+      if [ "$port" != '47831' ]; then
+        echo "Usage: $0 [port] [--rebuild]" >&2
+        exit 2
+      fi
+      port=$argument
+      ;;
+  esac
+done
 
 echo '[1/4] Checking dependencies'
 if [ ! -d node_modules/.pnpm ] || [ ! -d dashboard/node_modules ]; then
@@ -19,15 +33,15 @@ if [ ! -f data/upstream/catalog.json ]; then
 fi
 echo '[2/4] Checking dashboard build'
 pnpm toolbox data fonts --check
-if [ "$rebuild" != '--rebuild' ] && node scripts/cli.mjs cache check dashboard; then
+if [ "$rebuild" != true ] && node scripts/cli.mjs cache check dashboard; then
   echo 'Dashboard unchanged; using cached build.'
 else
-  pnpm build
+  EFT_TOOLBOX_DASHBOARD_DEV=1 pnpm build
   node scripts/cli.mjs cache save dashboard
 fi
 mkdir -p build
 echo '[3/4] Checking Go backend build'
-if [ "$rebuild" != '--rebuild' ] && node scripts/cli.mjs cache check backend; then
+if [ "$rebuild" != true ] && node scripts/cli.mjs cache check backend; then
   echo 'Backend unchanged; using cached executable.'
 else
   echo 'Building Go backend (the first build can take longer)'

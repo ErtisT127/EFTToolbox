@@ -7,13 +7,17 @@ export function NumberStepper({
   value,
   limit,
   unit,
+  deferInput = false,
   onChange,
+  onBlur,
 }: {
   label: string;
   value: number;
   limit: NumericLimit;
   unit?: string;
+  deferInput?: boolean;
   onChange: (value: number) => void;
+  onBlur?: () => void;
 }) {
   // The field holds free text while it has focus and applies every value the contract allows, so
   // it behaves like the rest of the dashboard: change it and it takes effect. Text outside the
@@ -46,6 +50,7 @@ export function NumberStepper({
         <button
           type="button"
           aria-label={`${label} -`}
+          title={`${label} -`}
           disabled={value <= limit.min}
           onPointerDown={(e) => e.preventDefault()}
           onClick={() => step(-1)}
@@ -69,16 +74,18 @@ export function NumberStepper({
             const raw = e.currentTarget.value;
             setDraft(raw);
             const next = raw.trim() === '' ? NaN : Number(raw);
-            if (Number.isFinite(next) && next >= limit.min && next <= limit.max)
+            if (!deferInput && Number.isFinite(next) && next >= limit.min && next <= limit.max)
               onChange(round(next));
           }}
           onBlur={(e) => {
             if (reverting.current) {
               reverting.current = false;
               setDraft(null);
+              onBlur?.();
               return;
             }
             commit(e.currentTarget.value);
+            onBlur?.();
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
@@ -99,6 +106,7 @@ export function NumberStepper({
         <button
           type="button"
           aria-label={`${label} +`}
+          title={`${label} +`}
           disabled={value >= limit.max}
           onPointerDown={(e) => e.preventDefault()}
           onClick={() => step(1)}

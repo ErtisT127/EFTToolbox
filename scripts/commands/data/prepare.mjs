@@ -342,7 +342,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
     };
     const projection = {
       rotation: meta.svg.coordinateRotation,
-      bounds: meta.svg.bounds.map(([x, y]) => ({ x, y })),
+      bounds: meta.svg.bounds.map(([x, z]) => ({ x, z })),
       viewBox,
     };
     const tiles = [];
@@ -370,7 +370,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
         minZoom: rule.minZoom || 1,
         maxZoom: rule.maxZoom || 6,
         transform: tileTransform(projection, rule.transform),
-        bounds: rule.bounds.map(([x, y]) => worldToPixel({ x, y }, projection)),
+        bounds: rule.bounds.map(([x, z]) => worldToPixel({ x, z }, projection)),
       });
     };
     addTiles(baseFloor, rule.tilePath);
@@ -414,7 +414,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
             x: viewBox[0] + (explicit.leftPercent * viewBox[2]) / 100,
             y: viewBox[1] + (explicit.topPercent * viewBox[3]) / 100,
           }
-        : worldToPixel({ x: p.x, y: p.z }, projection);
+        : worldToPixel({ x: p.x, z: p.z }, projection);
       if (![position.x, position.y].every(Number.isFinite)) {
         warn('missing coordinates');
         return;
@@ -440,7 +440,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
         position,
         outline: (entry.outline || [])
           .filter((p) => [p.x, p.z].every(Number.isFinite))
-          .map((p) => worldToPixel({ x: p.x, y: p.z }, projection)),
+          .map((p) => worldToPixel({ x: p.x, z: p.z }, projection)),
         taskId,
         iconUrl: entry.iconUrl || '',
         labelSize: entry.labelSize || 100,

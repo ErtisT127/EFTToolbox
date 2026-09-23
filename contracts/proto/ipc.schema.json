@@ -9,7 +9,7 @@
       "properties": {
         "protocolVersion": {
           "type": "string",
-          "const": "2"
+          "const": "1"
         },
         "appVersion": {
           "type": "string"
@@ -52,7 +52,8 @@
             "overlay_command",
             "overlay_status",
             "resources_changed",
-            "game_monitor_changed"
+            "game_monitor_changed",
+            "calibration_changed"
           ]
         },
         "sentAt": {
@@ -154,7 +155,16 @@
     "PlayerState": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["playerId", "displayName", "isSelf", "mapId", "floorId", "position", "heading"],
+      "required": [
+        "playerId",
+        "displayName",
+        "isSelf",
+        "mapId",
+        "worldPosition",
+        "mapPosition",
+        "resolution",
+        "heading"
+      ],
       "properties": {
         "playerId": {
           "type": "string"
@@ -168,11 +178,14 @@
         "mapId": {
           "type": "string"
         },
-        "floorId": {
-          "type": "string"
+        "worldPosition": {
+          "$ref": "#/$defs/WorldPosition"
         },
-        "position": {
-          "$ref": "#/$defs/Point"
+        "mapPosition": {
+          "$ref": "#/$defs/MapPoint"
+        },
+        "resolution": {
+          "$ref": "#/$defs/LocationResolution"
         },
         "heading": {
           "type": "number"
@@ -220,7 +233,7 @@
         "points": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/Point"
+            "$ref": "#/$defs/MapPoint"
           }
         },
         "color": {
@@ -243,7 +256,7 @@
         }
       }
     },
-    "Point": {
+    "MapPoint": {
       "description": "Coordinates are displayed rounded to x-precision digits; user-supplied coordinates are additionally bounded by the server to ±1e7.",
       "type": "object",
       "additionalProperties": false,
@@ -259,6 +272,95 @@
         }
       }
     },
+    "WorldPosition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": { "type": "number", "x-precision": 2 },
+        "y": { "type": "number", "x-precision": 2 },
+        "z": { "type": "number", "x-precision": 2 }
+      }
+    },
+    "WorldXZ": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "z"],
+      "properties": {
+        "x": { "type": "number", "x-precision": 2 },
+        "z": { "type": "number", "x-precision": 2 }
+      }
+    },
+    "WorldRectXZ": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minX", "maxX", "minZ", "maxZ"],
+      "properties": {
+        "minX": { "type": "number", "x-precision": 2 },
+        "maxX": { "type": "number", "x-precision": 2 },
+        "minZ": { "type": "number", "x-precision": 2 },
+        "maxZ": { "type": "number", "x-precision": 2 }
+      }
+    },
+    "YRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "type": "number", "x-precision": 2 },
+        "max": { "type": "number", "x-precision": 2 }
+      }
+    },
+    "CalibrationRegion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "floorId", "name", "rectangle", "yRange", "priority", "coversEntireMap"],
+      "properties": {
+        "id": { "type": "string" },
+        "floorId": { "type": "string" },
+        "name": { "type": "string" },
+        "rectangle": { "$ref": "#/$defs/WorldRectXZ" },
+        "yRange": { "$ref": "#/$defs/YRange" },
+        "priority": { "type": "integer", "minimum": 0, "maximum": 9999, "x-step": 1 },
+        "coversEntireMap": { "type": "boolean" }
+      }
+    },
+    "CalibrationDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "mapId", "basemap", "revision", "nextRegionNumber", "regions"],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "mapId": { "type": "string" },
+        "basemap": { "type": "string", "enum": ["svg", "tiles"] },
+        "revision": { "type": "integer", "minimum": 0 },
+        "nextRegionNumber": { "type": "integer", "minimum": 1 },
+        "regions": { "type": "array", "items": { "$ref": "#/$defs/CalibrationRegion" } }
+      }
+    },
+    "CalibrationDocuments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "maps"],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "maps": { "type": "array", "items": { "$ref": "#/$defs/CalibrationDocument" } }
+      }
+    },
+    "LocationResolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "floorId", "regionId", "candidates"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["resolved", "ambiguous", "unresolved", "skipped"]
+        },
+        "floorId": { "type": ["string", "null"] },
+        "regionId": { "type": ["string", "null"] },
+        "candidates": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "Projection": {
       "type": "object",
       "additionalProperties": false,
@@ -270,7 +372,7 @@
         "bounds": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/Point"
+            "$ref": "#/$defs/WorldXZ"
           }
         },
         "viewBox": {
@@ -364,12 +466,12 @@
           }
         },
         "position": {
-          "$ref": "#/$defs/Point"
+          "$ref": "#/$defs/MapPoint"
         },
         "outline": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/Point"
+            "$ref": "#/$defs/MapPoint"
           }
         },
         "taskId": {
@@ -548,7 +650,7 @@
         "points": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/Point"
+            "$ref": "#/$defs/MapPoint"
           }
         },
         "color": {
@@ -592,6 +694,7 @@
       "additionalProperties": false,
       "required": [
         "mapId",
+        "basemap",
         "floorId",
         "hiddenCategories",
         "collapsedGroups",
@@ -605,6 +708,10 @@
       "properties": {
         "mapId": {
           "type": "string"
+        },
+        "basemap": {
+          "type": "string",
+          "enum": ["svg", "tiles"]
         },
         "floorId": {
           "type": "string"
@@ -644,6 +751,52 @@
         },
         "basemap": {
           "type": "string"
+        }
+      }
+    },
+    "CalibratorSelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "mapId"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["map", "floor", "region"]
+        },
+        "mapId": {
+          "type": "string"
+        },
+        "floorId": {
+          "type": "string"
+        },
+        "regionId": {
+          "type": "string"
+        }
+      }
+    },
+    "CalibratorPreferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "sidebarCollapsed", "collapsedMaps", "collapsedFloors"],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "sidebarCollapsed": {
+          "type": "boolean"
+        },
+        "collapsedMaps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "collapsedFloors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "selection": {
+          "$ref": "#/$defs/CalibratorSelection"
         }
       }
     },
@@ -796,7 +949,7 @@
         "bounds": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/Point"
+            "$ref": "#/$defs/MapPoint"
           }
         }
       }
@@ -986,6 +1139,16 @@
         }
       }
     },
+    "UserSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "overlay", "gameMonitor"],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "overlay": { "$ref": "#/$defs/OverlaySettings" },
+        "gameMonitor": { "$ref": "#/$defs/GameMonitorSettings" }
+      }
+    },
     "OverlayBootstrap": {
       "type": "object",
       "additionalProperties": false,
@@ -1039,6 +1202,7 @@
       "additionalProperties": false,
       "required": [
         "mapId",
+        "basemap",
         "floorId",
         "center",
         "zoom",
@@ -1057,11 +1221,15 @@
         "mapId": {
           "type": "string"
         },
+        "basemap": {
+          "type": "string",
+          "enum": ["svg", "tiles"]
+        },
         "floorId": {
           "type": "string"
         },
         "center": {
-          "$ref": "#/$defs/Point"
+          "$ref": "#/$defs/MapPoint"
         },
         "zoom": {
           "type": "number",
@@ -1116,7 +1284,7 @@
           "enum": ["view", "edit", "visible", "hotkeys"]
         },
         "center": {
-          "$ref": "#/$defs/Point"
+          "$ref": "#/$defs/MapPoint"
         },
         "zoom": {
           "type": "number"
@@ -1132,7 +1300,7 @@
     "DevPlayer": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["playerId", "displayName", "isSelf", "mapId", "floorId", "x", "z", "heading"],
+      "required": ["playerId", "displayName", "isSelf", "mapId", "worldPosition", "heading"],
       "properties": {
         "playerId": {
           "type": "string"
@@ -1146,14 +1314,8 @@
         "mapId": {
           "type": "string"
         },
-        "floorId": {
-          "type": "string"
-        },
-        "x": {
-          "type": "number"
-        },
-        "z": {
-          "type": "number"
+        "worldPosition": {
+          "$ref": "#/$defs/WorldPosition"
         },
         "heading": {
           "type": "number"

@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using EFTToolbox.Contracts;
-using Point = EFTToolbox.Contracts.Point;
+using MapPoint = EFTToolbox.Contracts.MapPoint;
 
 namespace EFTToolbox.Overlay;
 
@@ -283,6 +283,19 @@ internal sealed class OverlayApplication : IDisposable
     }
     private void Select(Preferences next, bool force = false)
     {
+        var maps = next.Maps is null ? [] : (MapPreference[])next.Maps.Clone();
+        for (var i = 0; i < maps.Length; i++)
+        {
+            var mapPreference = maps[i];
+            maps[i] = mapPreference with
+            {
+                HiddenCategories = mapPreference.HiddenCategories ?? [],
+                CollapsedGroups = mapPreference.CollapsedGroups ?? [],
+                SelectedTasks = mapPreference.SelectedTasks ?? [],
+                Center = mapPreference.Center ?? [],
+            };
+        }
+        next = next with { Maps = maps, StickerUsage = next.StickerUsage ?? [] };
         var selectionChanged = preferences.SelectedMap != next.SelectedMap;
         var p = next.Maps.FirstOrDefault(p => p.MapId == next.SelectedMap); preferences = next;
         if (p is null) return;
@@ -308,6 +321,15 @@ internal sealed class OverlayApplication : IDisposable
             try
             {
                 var map = OverlayStateClient.Read<MapData>(Path.Combine(b.MapDirectory, id + ".json")) ?? throw new InvalidDataException("Empty map");
+                if (map.Projection is null || map.Projection.Bounds is null || map.Projection.ViewBox is null ||
+                    map.Floors is null || map.Categories is null || map.Markers is null || map.Tasks is null ||
+                    map.Warnings is null || map.Clock is null || map.Clock.Phases is null ||
+                    map.Clock.Offsets is null || map.Clock.Fixed is null || map.Tiles is null ||
+                    map.Projection.Bounds.Length != 2 || map.Projection.ViewBox.Length != 4 ||
+                    map.Floors.Any(f => f is null || f.SvgGroups is null) ||
+                    map.Markers.Any(m => m is null || m.CategoryIds is null || m.FloorIds is null || m.Outline is null) ||
+                    map.Tiles.Any(t => t is null || t.Transform is null || t.Bounds is null))
+                    throw new InvalidDataException("Invalid map collections");
                 var annotations = ReadAnnotations(b, id);
                 token.ThrowIfCancellationRequested();
                 completions.Enqueue(() =>
@@ -386,8 +408,8 @@ internal sealed class OverlayApplication : IDisposable
         var player = scene.Players.Values.FirstOrDefault(p => p.IsSelf); if (player is null) return;
         if (settings.FollowCenter && player.MapId != scene.Map?.Id) { LoadMap(player.MapId, follow: true); return; }
         if (player.MapId != scene.Map?.Id) return;
-        if (settings.FollowCenter) scene.Center = new((float)player.Position.X, (float)player.Position.Y);
-        if (settings.FollowFloor) scene.Floor = player.FloorId;
+        if (settings.FollowCenter) scene.Center = new((float)player.MapPosition.X, (float)player.MapPosition.Y);
+        if (settings.FollowFloor && player.Resolution.FloorId is { } floor) scene.Floor = floor;
         if (settings.FollowZoom) scene.Zoom = settings.PerMapZoom ? settings.MapZooms.FirstOrDefault(z => z.MapId == player.MapId)?.Zoom ?? settings.TargetZoom : settings.TargetZoom;
         scene.ClampZoom(); LoadResources();
     }
@@ -399,7 +421,7 @@ internal sealed class OverlayApplication : IDisposable
             || nextPreference is { } view && (view.FloorId != scene.Preference.FloorId || view.Basemap != scene.Preference.Basemap)
             || e.OverlaySettings is { } options && options.SvgResolution != settings.SvgResolution
             || e.OverlayCommand?.FloorId is { } floor && floor != scene.Floor
-            || e.Player is { IsSelf: true } self && (settings.FollowCenter && self.MapId != scene.Map?.Id || settings.FollowFloor && self.FloorId != scene.Floor);
+            || e.Player is { IsSelf: true } self && (settings.FollowCenter && self.MapId != scene.Map?.Id || settings.FollowFloor && self.Resolution.FloorId != scene.Floor);
         if (replacesResources) operation = null;
         Begin(e.Type, e.OperationId);
         if (e.OverlaySettings is { } s) ApplySettings(s);
@@ -432,7 +454,7 @@ internal sealed class OverlayApplication : IDisposable
     }
     private static bool PositionChanged(PlayerState? previous, PlayerState current) => previous is null
         || previous.PlayerId != current.PlayerId || previous.IsSelf != current.IsSelf
-        || previous.Position != current.Position || previous.MapId != current.MapId || previous.FloorId != current.FloorId;
+        || previous.MapPosition != current.MapPosition || previous.WorldPosition != current.WorldPosition || previous.MapId != current.MapId || previous.Resolution.FloorId != current.Resolution.FloorId;
     internal void Tick()
     {
         if (Interlocked.Exchange(ref resourceDirty, 0) != 0) dirty = true;
@@ -485,7 +507,7 @@ internal sealed class OverlayApplication : IDisposable
             }
         }
         UpdateSvgView(now);
-        // Nothing can be drawn before the bootstrap arrives — and nothing may be: the font atlas is
+        // Nothing can be drawn before the bootstrap arrives 鈥?and nothing may be: the font atlas is
         // only built once the asset directory is known, and ImGui cannot render an empty one.
         if (dirty && settings.Visible && bootstrap is not null && now >= nextFrame)
         {
@@ -499,8 +521,8 @@ internal sealed class OverlayApplication : IDisposable
         if (now - lastReport > 250)
         {
             // Report at the precision the contract declares; the dashboard renders these directly.
-            var coordinate = PointLimits.X.Precision;
-            var view = new OverlayView { MapId = scene.Map?.Id ?? "", FloorId = scene.Floor, Center = new Point { X = Math.Round(scene.Center.X, coordinate), Y = Math.Round(scene.Center.Y, coordinate) }, Zoom = Math.Round(scene.Zoom, OverlayViewLimits.Zoom.Precision), Editing = editing, Visible = settings.Visible, Connected = client.Connected, Error = error, RenderCount = renderCount, SvgParseCount = rasterizer.ParseCount, SvgRasterCount = rasterizer.RasterCount, TextureBytes = (int)(renderer.Svg.Bytes + renderer.Tiles.Bytes + renderer.Images.Bytes + renderer.Texts.Bytes), HotkeyCount = hotkeyCount, HotkeyFailed = hotkeyFailed };
+            var coordinate = MapPointLimits.X.Precision;
+            var view = new OverlayView { MapId = scene.Map?.Id ?? "", Basemap = scene.Basemap, FloorId = scene.Floor, Center = new MapPoint { X = Math.Round(scene.Center.X, coordinate), Y = Math.Round(scene.Center.Y, coordinate) }, Zoom = Math.Round(scene.Zoom, OverlayViewLimits.Zoom.Precision), Editing = editing, Visible = settings.Visible, Connected = client.Connected, Error = error, RenderCount = renderCount, SvgParseCount = rasterizer.ParseCount, SvgRasterCount = rasterizer.RasterCount, TextureBytes = (int)(renderer.Svg.Bytes + renderer.Tiles.Bytes + renderer.Images.Bytes + renderer.Texts.Bytes), HotkeyCount = hotkeyCount, HotkeyFailed = hotkeyFailed };
             if (view != lastView) { lastView = view; _ = client.ReportAsync(view); }
             lastReport = now;
         }

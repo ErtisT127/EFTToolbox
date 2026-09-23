@@ -29,11 +29,11 @@ func validGameMonitorSettings(value contracts.GameMonitorSettings) bool {
 }
 
 func loadGameMonitorSettings(root string) contracts.GameMonitorSettings {
-	value := defaultGameMonitorSettings()
-	if readJSON(filepath.Join(root, "user", "game-monitor-settings.json"), &value) != nil || !validGameMonitorSettings(value) {
+	value, err := readUserSettings(root)
+	if err != nil {
 		return defaultGameMonitorSettings()
 	}
-	return value
+	return value.GameMonitor
 }
 
 type gameMonitorState struct {
@@ -216,24 +216,7 @@ func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
 	if err != nil || len(m.Floors) == 0 {
 		return errors.New("no active map")
 	}
-	floor := m.DefaultFloor
-	var prefs contracts.Preferences
-	_ = readJSON(h.store.userPath("map-preferences.json"), &prefs)
-	for _, preference := range prefs.Maps {
-		if preference.MapId == m.Id && strings.TrimSpace(preference.FloorId) != "" {
-			for _, candidate := range m.Floors {
-				if candidate.Id == preference.FloorId {
-					floor = preference.FloorId
-					break
-				}
-			}
-			break
-		}
-	}
-	if floor == "" {
-		floor = m.Floors[0].Id
-	}
-	player, err := h.projectPlayerOnMap(m, contracts.DevPlayer{PlayerId: "self", DisplayName: "You", IsSelf: true, MapId: m.Id, FloorId: floor, X: value.X, Z: value.Z, Heading: value.Heading})
+	player, err := h.projectPlayerOnMap(m, contracts.DevPlayer{PlayerId: "self", DisplayName: "You", IsSelf: true, MapId: m.Id, WorldPosition: contracts.WorldPosition{X: value.X, Y: value.Y, Z: value.Z}, Heading: value.Heading})
 	if err != nil {
 		return err
 	}
@@ -268,7 +251,10 @@ func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
 		h.monitorStatus.Mode = h.monitorSettings.Mode
 		if repo, err := newModeRepository(h.store.root, h.monitorSettings.Mode); err == nil {
 			h.store.setRepository(repo)
-			_ = h.store.saveGlobal("game-monitor-settings.json", h.monitorSettings)
+			if settings, err := readUserSettings(h.store.root); err == nil {
+				settings.GameMonitor = h.monitorSettings
+				_ = h.store.saveGlobal("user-settings.json", settings)
+			}
 		}
 		for id, old := range h.players {
 			if old.IsSelf && id != player.PlayerId {
@@ -304,42 +290,24 @@ func (h *overlayHub) registerGameMonitor(mux *http.ServeMux) {
 			apiError(w, http.StatusBadRequest, "game_monitor_settings_invalid")
 			return
 		}
-		repo, err := newModeRepository(h.store.root, value.Mode)
+		current, err := h.userSettings()
 		if err != nil {
-			apiError(w, http.StatusBadRequest, "game_monitor_mode_unavailable")
-			return
-		}
-		h.mu.Lock()
-		oldMode := h.monitorSettings.Mode
-		oldLogDirectory := h.monitorSettings.LogDirectory
-		oldScreenshotDirectory := h.monitorSettings.ScreenshotDirectory
-		h.monitorSettings = value
-		if oldLogDirectory != value.LogDirectory || oldScreenshotDirectory != value.ScreenshotDirectory || oldMode != value.Mode {
-			h.detectedMapID = ""
-			h.pendingMap = ""
-			h.pendingMode = ""
-		}
-		h.monitorStatus.Mode = value.Mode
-		h.monitorStatus.ScreenshotWatching = value.ScreenshotDirectory != ""
-		h.monitorStatus.LogWatching = value.LogDirectory != ""
-		if err := h.store.saveGlobal("game-monitor-settings.json", value); err != nil {
-			h.mu.Unlock()
 			apiError(w, http.StatusInternalServerError, "game_monitor_settings_save_failed")
 			return
 		}
-		h.store.setRepository(repo)
-		if oldMode != value.Mode {
-			for id, player := range h.players {
-				if player.IsSelf {
-					delete(h.players, id)
-					h.publish(contracts.ServerEvent{Type: "player_remove", PlayerId: &id})
-				}
-			}
-			h.publish(contracts.ServerEvent{Type: "resources_changed"})
+		current.GameMonitor = value
+		if _, code := h.prepareUserSettings(&current, true); code != "" {
+			apiError(w, http.StatusBadRequest, code)
+			return
 		}
-		h.publish(contracts.ServerEvent{Type: "game_monitor_changed", GameMonitorStatus: &h.monitorStatus})
-		h.mu.Unlock()
-		h.monitor.Apply(h.monitorConfig())
+		if err := h.applyUserSettings(current, operationID(r), false, true); err != nil {
+			if code := userSettingsErrorCode(err); code != "" {
+				apiError(w, http.StatusBadRequest, code)
+			} else {
+				apiError(w, http.StatusInternalServerError, "game_monitor_settings_save_failed")
+			}
+			return
+		}
 		jsonResponse(w, value)
 	})
 	mux.HandleFunc("GET /api/game-monitor/status", func(w http.ResponseWriter, r *http.Request) {

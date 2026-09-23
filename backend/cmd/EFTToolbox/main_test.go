@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"flag"
 	"net"
@@ -21,34 +20,37 @@ func TestDevStdinClosesServer(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	probe, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := probe.Addr().String()
+	port := strconv.Itoa(probe.Addr().(*net.TCPAddr).Port)
+	_ = probe.Close()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDevServerProcess$")
-	cmd.Env = append(os.Environ(), "EFT_TEST_ASSETS="+assets)
+	cmd.Env = append(os.Environ(), "EFT_TEST_ASSETS="+assets, "EFT_TEST_PORT="+port)
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = input.Close() }()
-	output, err := cmd.StderrPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill() })
-	scanner := bufio.NewScanner(output)
-	if !scanner.Scan() {
-		t.Fatal("server did not start")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		connection, dialErr := net.DialTimeout("tcp", address, 100*time.Millisecond)
+		if dialErr == nil {
+			_ = connection.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server did not start on %s: %v", address, dialErr)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	_, address, ok := strings.Cut(scanner.Text(), "listening at http://")
-	if !ok {
-		t.Fatalf("unexpected startup output: %s", scanner.Text())
-	}
-	connection, err := net.DialTimeout("tcp", address, time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = connection.Close()
 	if err := input.Close(); err != nil {
 		t.Fatal(err)
 	}

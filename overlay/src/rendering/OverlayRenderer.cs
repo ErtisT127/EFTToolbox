@@ -50,7 +50,7 @@ internal sealed class OverlayRenderer : IDisposable
         using var dxgiDevice = device.QueryInterface<IDXGIDevice>();
         using var adapter = dxgiDevice.GetAdapter();
         using var factory = adapter.GetParent<IDXGIFactory2>();
-        Console.WriteLine($"GPU: {adapter.Description.Description}");
+        OverlayDiagnostics.Log("info", "gpu_selected", adapter.Description.Description);
         swapChain = factory.CreateSwapChainForComposition(device, new SwapChainDescription1
         {
             Width = 1,

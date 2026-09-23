@@ -4,10 +4,10 @@ import './i18n';
 import { AppShell as App } from './app/AppShell';
 import 'leaflet/dist/leaflet.css';
 import './styles/fonts.css';
-import './styles/tokens.css';
-import './styles/map-display.gen.css';
 import './styles/app.css';
+import './styles/map-display.gen.css';
 import './styles/map.css';
+import './styles/calibrator.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

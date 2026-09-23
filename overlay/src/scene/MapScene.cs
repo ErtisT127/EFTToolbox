@@ -1,6 +1,6 @@
 using System.Numerics;
 using EFTToolbox.Contracts;
-using Point = EFTToolbox.Contracts.Point;
+using MapPoint = EFTToolbox.Contracts.MapPoint;
 
 namespace EFTToolbox.Overlay;
 
@@ -20,7 +20,7 @@ internal sealed class MapScene
     internal Dictionary<string, PlayerState> Players { get; } = new();
     internal Vector2 Unit => Map?.Tiles.FirstOrDefault()?.Transform is { Length: 4 } a ? new((float)Math.Abs(a[0]), (float)Math.Abs(a[2])) : Vector2.One;
     internal Vector2 Scale => Unit * (float)Math.Pow(2, Zoom) * Dpi;
-    internal Vector2 Screen(Point p) => Screen(new Vector2((float)p.X, (float)p.Y));
+    internal Vector2 Screen(MapPoint p) => Screen(new Vector2((float)p.X, (float)p.Y));
     internal Vector2 Screen(Vector2 p) => (p - Center) * Scale + new Vector2(Width, Height) / 2;
     internal Vector2 MapPoint(Vector2 p) => (p - new Vector2(Width, Height) / 2) / Scale + Center;
     internal void ClampZoom()

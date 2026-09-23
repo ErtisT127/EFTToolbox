@@ -1,17 +1,15 @@
 package server
 
 import (
-	"bytes"
+	"container/list"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"log"
 	"math"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -20,6 +18,7 @@ import (
 	"time"
 
 	"efttoolbox/backend/internal/gamewatch"
+	"efttoolbox/backend/internal/mapper"
 	contracts "efttoolbox/contracts"
 
 	"github.com/coder/websocket"
@@ -46,6 +45,79 @@ type overlayHub struct {
 	browseMu          sync.Mutex
 	browseStateMu     sync.Mutex
 	browseActive      map[string]bool
+	indexMu           sync.RWMutex
+	indexes           map[string]regionIndexSnapshot
+	overlapDedup      *overlapDedup
+}
+
+type regionIndexSnapshot struct {
+	basemap  string
+	revision int
+	index    *mapper.Index
+}
+
+type overlapKey struct {
+	mapID    string
+	basemap  string
+	revision int
+	firstID  string
+	secondID string
+}
+
+type overlapDedup struct {
+	mu      sync.Mutex
+	entries map[overlapKey]*list.Element
+	order   *list.List
+}
+
+func newOverlapDedup() *overlapDedup {
+	return &overlapDedup{entries: map[overlapKey]*list.Element{}, order: list.New()}
+}
+
+func (d *overlapDedup) clearMapRevision(mapID, basemap string, revision int) {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for key, element := range d.entries {
+		if key.mapID == mapID && key.basemap == basemap && key.revision != revision {
+			delete(d.entries, key)
+			d.order.Remove(element)
+		}
+	}
+}
+
+func (d *overlapDedup) clear() {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	d.entries = map[overlapKey]*list.Element{}
+	d.order.Init()
+	d.mu.Unlock()
+}
+
+func (d *overlapDedup) firstOccurrence(key overlapKey) bool {
+	if d == nil {
+		return true
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if element, ok := d.entries[key]; ok {
+		d.order.MoveToFront(element)
+		return false
+	}
+	d.entries[key] = d.order.PushFront(key)
+	for d.order.Len() > 200 {
+		element := d.order.Back()
+		if element == nil {
+			break
+		}
+		delete(d.entries, element.Value.(overlapKey))
+		d.order.Remove(element)
+	}
+	return true
 }
 
 func defaultOverlaySettings() contracts.OverlaySettings {
@@ -58,7 +130,7 @@ func defaultOverlaySettings() contracts.OverlaySettings {
 }
 
 // The overlay's opacity is optional in the contract so that a settings file written before it
-// existed can be told apart from a deliberate 0% — a required field would decode as 0 there.
+// existed can be told apart from a deliberate 0% 鈥?a required field would decode as 0 there.
 const defaultOpacity = 100
 
 func ptr(value int) *int             { return &value }
@@ -203,29 +275,8 @@ func (h *overlayHub) normalize(v *contracts.OverlaySettings) bool {
 }
 
 func (h *overlayHub) settings() (contracts.OverlaySettings, error) {
-	var v contracts.OverlaySettings
-	data, err := os.ReadFile(filepath.Join(h.store.root, "user", "overlay-settings.json"))
-	if errors.Is(err, os.ErrNotExist) {
-		return defaultOverlaySettings(), nil
-	}
-	if err != nil {
-		return v, err
-	}
-	if len(data) > 8<<20 {
-		return v, errors.New("saved overlay settings exceed size limit")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(&v); err != nil {
-		return v, err
-	}
-	if decoder.Decode(new(any)) != io.EOF {
-		return v, errors.New("multiple saved overlay settings values")
-	}
-	if !h.normalize(&v) {
-		return v, errors.New("invalid saved overlay settings")
-	}
-	return v, nil
+	value, err := h.userSettings()
+	return value.Overlay, err
 }
 
 func localRequest(w http.ResponseWriter, r *http.Request) bool {
@@ -273,10 +324,14 @@ func (h *overlayHub) publish(e contracts.ServerEvent) {
 func (h *overlayHub) changed(kind, mapID, operationID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if kind == "calibration_changed" {
+		h.invalidateCalibrationMap(mapID)
+	}
 	e := contracts.ServerEvent{Type: kind, MapId: &mapID, OperationId: &operationID}
 	if kind == "preferences_changed" {
 		var p contracts.Preferences
 		if readJSON(h.store.userPath("map-preferences.json"), &p) == nil {
+			normalizeMapPreferences(&p)
 			e.Preferences = &p
 		}
 	}
@@ -308,6 +363,7 @@ func (h *overlayHub) websocket(ctx context.Context, w http.ResponseWriter, r *ht
 	annotations := []contracts.SharedAnnotation{}
 	prefs := contracts.Preferences{SchemaVersion: 1, Maps: []contracts.MapPreference{}, StickerUsage: []contracts.StickerUsage{}}
 	_ = readJSON(h.store.userPath("map-preferences.json"), &prefs)
+	normalizeMapPreferences(&prefs)
 	settings, settingsErr := h.settings()
 	view := h.view
 	monitorStatus := h.monitorStatus
@@ -387,7 +443,55 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 			dataError(w, err)
 			return
 		}
-		jsonResponse(w, contracts.OverlayBootstrap{SchemaVersion: 1, MapDirectory: filepath.Join(mapRoot, "maps"), AssetDirectory: filepath.Join(root, "upstream", "assets"), TileDirectory: filepath.Join(root, "upstream", "tiles"), TileManifestFile: filepath.Join(root, "upstream", "tiles", "manifest.json"), PreferencesFile: h.store.userPath("map-preferences.json"), AnnotationsDirectory: filepath.Join(h.store.userRoot(), "maps"), OverlaySettingsFile: filepath.Join(root, "user", "overlay-settings.json"), WebsocketPath: "/ws", LogPipeName: h.pipe})
+		jsonResponse(w, contracts.OverlayBootstrap{SchemaVersion: 1, MapDirectory: filepath.Join(mapRoot, "maps"), AssetDirectory: filepath.Join(root, "upstream", "assets"), TileDirectory: filepath.Join(root, "upstream", "tiles"), TileManifestFile: filepath.Join(root, "upstream", "tiles", "manifest.json"), PreferencesFile: h.store.userPath("map-preferences.json"), AnnotationsDirectory: filepath.Join(h.store.userRoot(), "maps"), OverlaySettingsFile: filepath.Join(root, "user", "user-settings.json"), WebsocketPath: "/ws", LogPipeName: h.pipe})
+	})
+	mux.HandleFunc("GET /api/user-settings", func(w http.ResponseWriter, r *http.Request) {
+		if !localRequest(w, r) {
+			return
+		}
+		value, err := h.userSettings()
+		if err != nil {
+			if code := userSettingsErrorCode(err); code != "" {
+				apiError(w, http.StatusInternalServerError, code)
+			} else {
+				apiError(w, http.StatusInternalServerError, "request_failed")
+			}
+			return
+		}
+		jsonResponse(w, value)
+	})
+	mux.HandleFunc("POST /api/data/reset-user-settings", func(w http.ResponseWriter, r *http.Request) {
+		if !localRequest(w, r) {
+			return
+		}
+		value := defaultUserSettings()
+		if err := h.applyUserSettings(value, operationID(r), true, true); err != nil {
+			apiError(w, http.StatusInternalServerError, "user_settings_reset_failed")
+			return
+		}
+		jsonResponse(w, value)
+	})
+	mux.HandleFunc("PUT /api/user-settings", func(w http.ResponseWriter, r *http.Request) {
+		if !localRequest(w, r) {
+			return
+		}
+		var value contracts.UserSettings
+		if !decodeUpdate(w, r, &value) {
+			return
+		}
+		if _, code := h.prepareUserSettings(&value, true); code != "" {
+			apiError(w, http.StatusBadRequest, code)
+			return
+		}
+		if err := h.applyUserSettings(value, operationID(r), true, true); err != nil {
+			if code := userSettingsErrorCode(err); code != "" {
+				apiError(w, http.StatusBadRequest, code)
+			} else {
+				dataError(w, err)
+			}
+			return
+		}
+		jsonResponse(w, value)
 	})
 	mux.HandleFunc("GET /api/overlay-settings", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
@@ -395,7 +499,11 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 		}
 		v, err := h.settings()
 		if err != nil {
-			dataError(w, err)
+			if code := userSettingsErrorCode(err); code != "" {
+				apiError(w, http.StatusInternalServerError, code)
+			} else {
+				dataError(w, err)
+			}
 			return
 		}
 		jsonResponse(w, v)
@@ -408,18 +516,21 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 		if !decodeUpdate(w, r, &v) {
 			return
 		}
-		if !h.normalize(&v) {
-			apiError(w, 400, "overlay_settings_invalid")
-			return
-		}
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		if err := h.store.saveGlobal("overlay-settings.json", v); err != nil {
+		current, err := h.userSettings()
+		if err != nil {
 			dataError(w, err)
 			return
 		}
-		h.publish(contracts.ServerEvent{Type: "overlay_settings", OverlaySettings: &v, OperationId: operationID(r)})
-		jsonResponse(w, v)
+		current.Overlay = v
+		if _, code := h.prepareUserSettings(&current, false); code != "" {
+			apiError(w, 400, "overlay_settings_invalid")
+			return
+		}
+		if err := h.applyUserSettings(current, operationID(r), true, false); err != nil {
+			dataError(w, err)
+			return
+		}
+		jsonResponse(w, current.Overlay)
 	})
 	mux.HandleFunc("GET /api/overlay/state", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
@@ -438,7 +549,7 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 			return
 		}
 		zoom := contracts.OverlayViewLimits.Zoom
-		if !validPoint(v.Center) || !finite(v.Zoom) || v.Zoom < zoom.Min || v.Zoom > zoom.Max || len(v.Error) > 1024 || !validHotkeyFailures(v.HotkeyFailed) {
+		if !validBasemap(v.Basemap) || !validPoint(v.Center) || !finite(v.Zoom) || v.Zoom < zoom.Min || v.Zoom > zoom.Max || len(v.Error) > 1024 || !validHotkeyFailures(v.HotkeyFailed) {
 			apiError(w, 400, "overlay_settings_invalid")
 			return
 		}
@@ -495,7 +606,7 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 	})
 }
 
-func validPoint(p contracts.Point) bool {
+func validPoint(p contracts.MapPoint) bool {
 	return finite(p.X) && finite(p.Y) && math.Abs(p.X) <= 1e7 && math.Abs(p.Y) <= 1e7
 }
 func (h *overlayHub) allowPlayer(w http.ResponseWriter, r *http.Request) bool {
@@ -554,31 +665,118 @@ func (h *overlayHub) projectPlayer(v contracts.DevPlayer) (contracts.PlayerState
 
 func (h *overlayHub) projectPlayerOnMap(m contracts.MapData, v contracts.DevPlayer) (contracts.PlayerState, error) {
 	if !safeID.MatchString(v.PlayerId) || len(v.PlayerId) > 100 || len(v.DisplayName) > 200 ||
-		!validPoint(contracts.Point{X: v.X, Y: v.Z}) || !finite(v.Heading) || math.Abs(v.Heading) > 1e7 ||
-		!slices.ContainsFunc(m.Floors, func(f contracts.Floor) bool { return f.Id == v.FloorId }) {
+		!finite(v.WorldPosition.X) || !finite(v.WorldPosition.Y) || !finite(v.WorldPosition.Z) || math.Abs(v.WorldPosition.X) > 1e7 || math.Abs(v.WorldPosition.Y) > 1e7 || math.Abs(v.WorldPosition.Z) > 1e7 || !finite(v.Heading) || math.Abs(v.Heading) > 1e7 {
 		return contracts.PlayerState{}, errors.New("player_invalid")
 	}
-	a := m.Projection.Rotation * math.Pi / 180
-	c, s := math.Cos(a), math.Sin(a)
-	rotate := func(x, y float64) (float64, float64) { return x*c - y*s, x*s + y*c }
-	b := m.Projection.Bounds
-	minX, minY, maxX, maxY := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
-	for _, p := range []contracts.Point{b[0], b[1], {X: b[0].X, Y: b[1].Y}, {X: b[1].X, Y: b[0].Y}} {
-		px, py := rotate(p.X, p.Y)
-		minX, maxX = math.Min(minX, px), math.Max(maxX, px)
-		minY, maxY = math.Min(minY, py), math.Max(maxY, py)
-	}
-	project := func(x, y float64) contracts.Point {
-		px, py := rotate(x, y)
-		box := m.Projection.ViewBox
-		return contracts.Point{X: box[0] + (px-minX)/(maxX-minX)*box[2], Y: box[1] + (maxY-py)/(maxY-minY)*box[3]}
-	}
-	p := project(v.X, v.Z)
+	p := mapper.Project(m, v.WorldPosition)
 	angle := v.Heading * math.Pi / 180
-	q := project(v.X+math.Sin(angle), v.Z+math.Cos(angle))
+	q := mapper.Project(m, contracts.WorldPosition{X: v.WorldPosition.X + math.Sin(angle), Y: v.WorldPosition.Y, Z: v.WorldPosition.Z + math.Cos(angle)})
 	if !validPoint(p) || !validPoint(q) {
 		return contracts.PlayerState{}, errors.New("player_invalid")
 	}
 	heading := math.Mod(math.Atan2(q.X-p.X, -(q.Y-p.Y))*180/math.Pi+360, 360)
-	return contracts.PlayerState{PlayerId: v.PlayerId, DisplayName: v.DisplayName, IsSelf: v.IsSelf, MapId: v.MapId, FloorId: v.FloorId, Position: p, Heading: heading}, nil
+	followFloor := true
+	if settings, err := h.settings(); err == nil {
+		followFloor = settings.FollowFloor
+	}
+	var snapshot regionIndexSnapshot
+	if followFloor {
+		snapshot = h.regionIndex(m.Id, h.currentBasemap(m))
+	}
+	resolution, overlaps := mapper.ResolveWithDiagnostics(snapshot.index, v.WorldPosition, followFloor)
+	for _, pair := range overlaps {
+		if h.overlapDedup != nil && !h.overlapDedup.firstOccurrence(overlapKey{mapID: m.Id, basemap: snapshot.basemap, revision: snapshot.revision, firstID: pair.FirstID, secondID: pair.SecondID}) {
+			continue
+		}
+		if h.logWriter != nil {
+			if err := h.logWriter.write(clientLog{
+				Level:     "warn",
+				Component: "mapper",
+				Event:     "region_overlap",
+				Message:   fmt.Sprintf("map=%s basemap=%s revision=%d regions=%s,%s", m.Id, snapshot.basemap, snapshot.revision, pair.FirstID, pair.SecondID),
+			}); err != nil {
+				log.Printf("write region overlap log: %v", err)
+			}
+		}
+	}
+	return contracts.PlayerState{PlayerId: v.PlayerId, DisplayName: v.DisplayName, IsSelf: v.IsSelf, MapId: v.MapId, WorldPosition: v.WorldPosition, MapPosition: p, Resolution: resolution, Heading: heading}, nil
+}
+
+func (h *overlayHub) currentBasemap(m contracts.MapData) string {
+	h.mu.Lock()
+	connected := h.overlayConnected()
+	view := h.view
+	h.mu.Unlock()
+	if connected && view.MapId == m.Id && validBasemap(view.Basemap) {
+		return view.Basemap
+	}
+	var preferences contracts.Preferences
+	if readJSON(h.store.userPath("map-preferences.json"), &preferences) == nil {
+		normalizeMapPreferences(&preferences)
+		if preferences.SelectedMap == m.Id {
+			for _, preference := range preferences.Maps {
+				if preference.MapId == m.Id && validBasemap(preference.Basemap) {
+					return preference.Basemap
+				}
+			}
+		}
+	}
+	if m.SvgUrl != "" {
+		return "svg"
+	}
+	return "tiles"
+}
+
+func (h *overlayHub) regionIndex(mapID, basemap string) regionIndexSnapshot {
+	key := mapID + ":" + basemap
+	h.indexMu.RLock()
+	snapshot, ok := h.indexes[key]
+	h.indexMu.RUnlock()
+	if ok {
+		return snapshot
+	}
+	doc, err := h.store.readCalibrationDocument(mapID, basemap)
+	if err != nil {
+		doc = emptyCalibrationDocument(mapID, basemap)
+	} else if mapData, err := h.store.load(mapID); err != nil || !mapper.ValidDocument(doc, mapData) {
+		log.Printf("calibration index: invalid document for map %q", mapID)
+		doc = emptyCalibrationDocument(mapID, basemap)
+	}
+	snapshot = regionIndexSnapshot{basemap: basemap, revision: doc.Revision, index: mapper.Build(doc.Regions)}
+	h.indexMu.Lock()
+	if h.indexes == nil {
+		h.indexes = map[string]regionIndexSnapshot{}
+	}
+	if current, exists := h.indexes[key]; exists {
+		h.indexMu.Unlock()
+		return current
+	}
+	h.indexes[key] = snapshot
+	h.indexMu.Unlock()
+	if h.overlapDedup != nil {
+		h.overlapDedup.clearMapRevision(mapID, basemap, snapshot.revision)
+	}
+	return snapshot
+}
+
+func (h *overlayHub) invalidateCalibrationMap(mapID string) {
+	h.indexMu.Lock()
+	for key := range h.indexes {
+		if strings.HasPrefix(key, mapID+":") {
+			delete(h.indexes, key)
+		}
+	}
+	h.indexMu.Unlock()
+	if h.overlapDedup != nil {
+		h.overlapDedup.clear()
+	}
+}
+
+func (h *overlayHub) invalidateCalibrationIndexes() {
+	h.indexMu.Lock()
+	h.indexes = map[string]regionIndexSnapshot{}
+	h.indexMu.Unlock()
+	if h.overlapDedup != nil {
+		h.overlapDedup.clear()
+	}
 }

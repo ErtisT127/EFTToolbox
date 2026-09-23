@@ -3,13 +3,13 @@ import L from 'leaflet';
 import type {
   Annotation,
   MapPreference,
-  Point,
+  MapPoint,
   Sticker,
 } from '../../../../../contracts/ts/ipc.gen';
 import { segmentDistance } from './geometry';
 import { rimmedArtwork } from './artwork';
 
-export const latLng = (point: Point): L.LatLngTuple => [-point.y, point.x];
+export const latLng = (MapPoint: MapPoint): L.LatLngTuple => [-MapPoint.y, MapPoint.x];
 
 // Leaflet paints every vector layer onto a canvas (`preferCanvas`), so CSS never reaches these
 // colours and the design token has to be read into JS. Cached because paint() also runs from
@@ -137,11 +137,11 @@ export function paintAnnotations(
 export function hitAnnotation(
   map: L.Map,
   a: Annotation,
-  pixel: Point,
+  pixel: MapPoint,
   preference: MapPreference,
   radius = 8,
 ) {
-  const screen = (p: Point) => {
+  const screen = (p: MapPoint) => {
     const v = map.latLngToContainerPoint(latLng(p));
     return { x: v.x, y: v.y };
   };

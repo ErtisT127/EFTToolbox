@@ -6,6 +6,7 @@ import {
 } from '../../../../contracts/ts/ipc.gen';
 import { useLocale } from '../../hooks/useLocale';
 import { useGameMonitor } from '../../stores/gameMonitorStore';
+import { AppTooltip } from '../../components/HintTooltip';
 
 export function MinimapSettingsPanel({
   settings,
@@ -104,37 +105,43 @@ export function MinimapSettingsPanel({
         <span
           className={`settings-check-wrap minimap-check-wrap${monitor.status?.screenshotWatching ? '' : ' is-disabled'}`}
         >
-          <label className="check-row" aria-disabled={!monitor.status?.screenshotWatching}>
-            <input
-              type="checkbox"
-              disabled={!monitor.status?.screenshotWatching}
-              checked={!!monitor.settings?.deleteScreenshots}
-              onChange={(e) => void monitor.update({ deleteScreenshots: e.target.checked })}
-            />
-            {t('settings.deleteScreenshots')}
-          </label>
-          {!monitor.status?.screenshotWatching && (
-            <span className="control-tip" role="tooltip">
-              {t('settings.noMonitorDirectory')}
-            </span>
+          {monitor.status?.screenshotWatching ? (
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={!!monitor.settings?.deleteScreenshots}
+                onChange={(e) => void monitor.update({ deleteScreenshots: e.target.checked })}
+              />
+              {t('settings.deleteScreenshots')}
+            </label>
+          ) : (
+            <AppTooltip content={t('settings.noMonitorDirectory')}>
+              <label className="check-row" aria-disabled="true">
+                <input type="checkbox" disabled checked={!!monitor.settings?.deleteScreenshots} />
+                {t('settings.deleteScreenshots')}
+              </label>
+            </AppTooltip>
           )}
         </span>
         <span
           className={`settings-check-wrap minimap-check-wrap${monitor.status?.logWatching ? '' : ' is-disabled'}`}
         >
-          <label className="check-row" aria-disabled={!monitor.status?.logWatching}>
-            <input
-              type="checkbox"
-              disabled={!monitor.status?.logWatching}
-              checked={!!monitor.settings?.autoMapSwitch}
-              onChange={(e) => void monitor.update({ autoMapSwitch: e.target.checked })}
-            />
-            {t('settings.autoMapSwitch')}
-          </label>
-          {!monitor.status?.logWatching && (
-            <span className="control-tip" role="tooltip">
-              {t('settings.noMonitorDirectory')}
-            </span>
+          {monitor.status?.logWatching ? (
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={!!monitor.settings?.autoMapSwitch}
+                onChange={(e) => void monitor.update({ autoMapSwitch: e.target.checked })}
+              />
+              {t('settings.autoMapSwitch')}
+            </label>
+          ) : (
+            <AppTooltip content={t('settings.noMonitorDirectory')}>
+              <label className="check-row" aria-disabled="true">
+                <input type="checkbox" disabled checked={!!monitor.settings?.autoMapSwitch} />
+                {t('settings.autoMapSwitch')}
+              </label>
+            </AppTooltip>
           )}
         </span>
         {(['followCenter', 'followFloor', 'followZoom'] as const).map((key) => (

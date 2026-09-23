@@ -1,3 +1,353 @@
+:root {
+  --font-ui: 'Barlow Condensed', 'Map CJK', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Map CJK', monospace;
+  --bg: #0a0c0b;
+  --panel: rgba(20, 24, 23, 0.88);
+  --panel-2: #1a1e1d;
+  --border: #2a302d;
+  --text: #d4d8d5;
+  --muted: #7f8782;
+  --accent: #c8a24a;
+  --success: #7bc576;
+  --warning: #d9a93e;
+  --danger: #c4554b;
+  --info: #4f9fb3;
+  --player-self: #5fd3c4;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 24px;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-bold: 600;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --control-height-sm: 24px;
+  --control-height-md: 28px;
+  --control-height-lg: 32px;
+  --toolbar-width: 44px;
+  --topbar-height: 44px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-slow: 320ms;
+  --hover: rgba(255, 255, 255, 0.08);
+  --control-hover: #282e2b;
+  --border-hover: #667067;
+  --selected-hover: rgba(200, 162, 74, 0.22);
+  --selected: rgba(200, 162, 74, 0.14);
+  /* A disc with the cross knocked out, shared by search clear controls. */
+  --search-clear-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0Zm3.54 10.13-1.41 1.41L8 9.41l-2.13 2.13-1.41-1.41L6.59 8 4.46 5.87l1.41-1.41L8 6.59l2.13-2.13 1.41 1.41L9.41 8l2.13 2.13Z'/%3E%3C/svg%3E");
+  color: var(--text);
+  background: var(--bg);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  font-weight: var(--weight-regular);
+  color-scheme: dark;
+  font-synthesis: none;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  min-height: var(--control-height-md);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) ease-out,
+    border-color var(--duration-fast) ease-out,
+    color var(--duration-fast) ease-out;
+}
+
+button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+
+button.active,
+button[aria-pressed='true'] {
+  color: var(--accent);
+  background: var(--selected);
+}
+
+button.active:hover:not(:disabled),
+button[aria-pressed='true']:hover:not(:disabled) {
+  color: var(--accent);
+  background: var(--selected-hover);
+}
+
+button:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.55;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.icon-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: var(--control-height-md);
+  min-height: var(--control-height-md);
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  font-weight: var(--weight-bold);
+}
+
+.panel-title .icon-button {
+  min-height: 20px;
+  height: 20px;
+  width: 20px;
+}
+
+.floating {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  backdrop-filter: blur(8px);
+}
+
+.hint-tooltip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+}
+
+.app-tooltip {
+  display: inline-flex;
+  max-width: 100%;
+}
+
+.app-tooltip-reference {
+  display: inline-flex;
+  max-width: 100%;
+}
+
+.app-tooltip-reference:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.app-popover {
+  position: absolute;
+  z-index: 5;
+  contain: layout paint;
+  max-height: min(var(--popover-available-height, 100dvh), calc(100dvh - 40px));
+  visibility: hidden;
+  overflow: hidden;
+}
+
+/* Avoid forcing the Leaflet canvas/SVG behind a portal popover through a new
+   backdrop-filter compositing pass when the panel is mounted. */
+.app-popover .floating {
+  backdrop-filter: none;
+}
+
+.app-popover[data-ready='true'] {
+  visibility: visible;
+}
+
+.hint-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  cursor: help;
+}
+
+.hint-mark:hover:not(:disabled),
+.hint-mark:focus-visible {
+  color: var(--text);
+  background: transparent;
+  border-color: transparent;
+}
+
+.hint-tip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: 240px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--duration-fast) ease-out;
+  pointer-events: none;
+}
+
+.hint-tip[data-open='true'] {
+  visibility: visible;
+  opacity: 1;
+}
+
+.view-controls {
+  position: absolute;
+  top: var(--space-4);
+  left: var(--space-4);
+  width: 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.view-controls > button {
+  position: relative;
+  width: 100%;
+  height: 44px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
+
+.zoom-buttons {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: var(--radius-sm);
+}
+
+.zoom-buttons button {
+  width: 100%;
+  padding: 0;
+}
+
+.zoom-buttons button + button {
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.toolbar {
+  width: calc(var(--toolbar-width) + 2px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.toolbar button {
+  width: var(--toolbar-width);
+  height: var(--toolbar-width);
+  min-height: var(--toolbar-width);
+  flex-shrink: 0;
+  padding: 0;
+  position: relative;
+}
+
+.toolbar button.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  width: 2px;
+  height: 18px;
+  background: var(--accent);
+}
+
+.toolbar button.active:hover:not(:disabled) {
+  color: var(--accent);
+  background: var(--selected-hover);
+}
+
+.tool-divider {
+  height: 1px;
+  margin: var(--space-1);
+  background: var(--border);
+}
+
+button svg {
+  flex-shrink: 0;
+  stroke-width: 1.5;
+}
+
+input {
+  accent-color: var(--accent);
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  width: 13px;
+  height: 13px;
+  margin: 0 var(--space-2) 0 0;
+  flex-shrink: 0;
+}
+
+input[type='range'] {
+  width: 100%;
+  height: 18px;
+  margin: var(--space-2) 0 0;
+  cursor: pointer;
+}
+
 .app-shell {
   display: flex;
   flex-direction: column;
@@ -5,6 +355,69 @@
   min-width: 640px;
   overflow: hidden;
 }
+
+.error-state {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  color: var(--muted);
+  text-align: center;
+}
+
+.workspace > .error-state,
+.calibrator-page > .error-state {
+  position: absolute;
+  inset: 0;
+}
+
+.error-state-icon {
+  width: 44px;
+  height: 44px;
+  margin-bottom: var(--space-2);
+}
+
+.error-state-icon--network {
+  color: var(--info);
+}
+
+.error-state-icon--data {
+  color: var(--warning);
+}
+
+.error-state h2,
+.error-state p {
+  margin: 0;
+}
+
+.error-state h2 {
+  color: var(--text);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+}
+
+.error-state p {
+  max-width: 520px;
+  font-size: var(--text-md);
+  line-height: 1.6;
+}
+
+.error-state-actions {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.error-state-actions button {
+  min-width: 96px;
+  border: 1px solid var(--border);
+}
+
 .topbar {
   display: flex;
   align-items: stretch;
@@ -14,6 +427,7 @@
   background: var(--bg);
   padding: 0 var(--space-4);
 }
+
 .brand {
   display: flex;
   align-items: center;
@@ -28,15 +442,18 @@
      their own width or scroll, and the wordmark has to stay whole. */
   flex-shrink: 0;
 }
+
 .brand-secondary {
   color: var(--text);
   font-weight: 400;
 }
+
 .topbar nav {
   display: flex;
   align-items: stretch;
   gap: var(--space-2);
 }
+
 .topbar nav button {
   padding: 0 var(--space-4);
   border-radius: 0;
@@ -46,17 +463,20 @@
      squeezing these into unreadable stubs. */
   min-width: 84px;
 }
+
 .topbar nav button.active {
   color: var(--text);
   background: var(--panel-2);
   border-bottom-color: var(--border);
   font-weight: var(--weight-bold);
 }
+
 .topbar nav button.active:hover:not(:disabled) {
   color: var(--text);
   background: var(--control-hover);
   border-bottom-color: var(--border-hover);
 }
+
 .game-mode-toggle {
   position: relative;
   display: inline-flex;
@@ -75,6 +495,7 @@
   background: transparent;
   transition: 0.2s;
 }
+
 .mode-tip {
   position: absolute;
   right: 0;
@@ -97,39 +518,47 @@
     opacity 120ms ease-out,
     visibility 0s linear 120ms;
 }
+
 .game-mode-toggle:hover .mode-tip,
 .game-mode-toggle:focus-visible .mode-tip {
   opacity: 1;
   visibility: visible;
   transition-delay: 120ms, 0s;
 }
+
 .game-mode-toggle:hover:not(:disabled) {
   background: rgba(46, 125, 50, 0.3);
   border-color: #81c784;
 }
+
 .game-mode-toggle:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 2px;
 }
+
 .game-mode-toggle.regular {
   color: #c7a981;
   background: rgba(125, 88, 46, 0.2);
   border-color: rgba(125, 93, 46, 0.3);
 }
+
 .game-mode-toggle.pve {
   color: #4fc3f7;
   background: rgba(2, 136, 209, 0.2);
   border-color: rgba(2, 136, 209, 0.3);
 }
+
 .game-mode-toggle.pve:hover:not(:disabled) {
   background: rgba(2, 136, 209, 0.3);
   border-color: #4fc3f7;
 }
+
 .game-mode-toggle.pvp-season {
   color: #81c784;
   background: rgba(46, 125, 50, 0.2);
   border-color: rgba(46, 125, 50, 0.3);
 }
+
 .game-mode-toggle.pvp-season:hover:not(:disabled) {
   background: rgba(46, 125, 50, 0.3);
   border-color: #81c784;

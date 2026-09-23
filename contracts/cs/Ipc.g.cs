@@ -56,8 +56,9 @@ public sealed record PlayerState {
   [JsonPropertyName("displayName")] public string DisplayName { get; init; } = "";
   [JsonPropertyName("isSelf")] public bool IsSelf { get; init; } = default;
   [JsonPropertyName("mapId")] public string MapId { get; init; } = "";
-  [JsonPropertyName("floorId")] public string FloorId { get; init; } = "";
-  [JsonPropertyName("position")] public Point Position { get; init; } = new();
+  [JsonPropertyName("worldPosition")] public WorldPosition WorldPosition { get; init; } = new();
+  [JsonPropertyName("mapPosition")] public MapPoint MapPosition { get; init; } = new();
+  [JsonPropertyName("resolution")] public LocationResolution Resolution { get; init; } = new();
   [JsonPropertyName("heading")] public double Heading { get; init; } = default;
 }
 
@@ -68,7 +69,7 @@ public sealed record SharedAnnotation {
   [JsonPropertyName("mapId")] public string MapId { get; init; } = "";
   [JsonPropertyName("floorId")] public string FloorId { get; init; } = "";
   [JsonPropertyName("kind")] public string Kind { get; init; } = "";
-  [JsonPropertyName("points")] public Point[] Points { get; init; } = [];
+  [JsonPropertyName("points")] public MapPoint[] Points { get; init; } = [];
   [JsonPropertyName("color")] public string Color { get; init; } = "";
   [JsonPropertyName("width")] public double Width { get; init; } = default;
   [JsonPropertyName("emoji")] public string Emoji { get; init; } = "";
@@ -77,14 +78,68 @@ public sealed record SharedAnnotation {
   [JsonPropertyName("textSize")] public double TextSize { get; init; } = default;
 }
 
-public sealed record Point {
+public sealed record MapPoint {
   [JsonPropertyName("x")] public double X { get; init; } = default;
   [JsonPropertyName("y")] public double Y { get; init; } = default;
 }
 
+public sealed record WorldPosition {
+  [JsonPropertyName("x")] public double X { get; init; } = default;
+  [JsonPropertyName("y")] public double Y { get; init; } = default;
+  [JsonPropertyName("z")] public double Z { get; init; } = default;
+}
+
+public sealed record WorldXZ {
+  [JsonPropertyName("x")] public double X { get; init; } = default;
+  [JsonPropertyName("z")] public double Z { get; init; } = default;
+}
+
+public sealed record WorldRectXZ {
+  [JsonPropertyName("minX")] public double MinX { get; init; } = default;
+  [JsonPropertyName("maxX")] public double MaxX { get; init; } = default;
+  [JsonPropertyName("minZ")] public double MinZ { get; init; } = default;
+  [JsonPropertyName("maxZ")] public double MaxZ { get; init; } = default;
+}
+
+public sealed record YRange {
+  [JsonPropertyName("min")] public double Min { get; init; } = default;
+  [JsonPropertyName("max")] public double Max { get; init; } = default;
+}
+
+public sealed record CalibrationRegion {
+  [JsonPropertyName("id")] public string Id { get; init; } = "";
+  [JsonPropertyName("floorId")] public string FloorId { get; init; } = "";
+  [JsonPropertyName("name")] public string Name { get; init; } = "";
+  [JsonPropertyName("rectangle")] public WorldRectXZ Rectangle { get; init; } = new();
+  [JsonPropertyName("yRange")] public YRange YRange { get; init; } = new();
+  [JsonPropertyName("priority")] public int Priority { get; init; } = default;
+  [JsonPropertyName("coversEntireMap")] public bool CoversEntireMap { get; init; } = default;
+}
+
+public sealed record CalibrationDocument {
+  [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; init; } = default;
+  [JsonPropertyName("mapId")] public string MapId { get; init; } = "";
+  [JsonPropertyName("basemap")] public string Basemap { get; init; } = "";
+  [JsonPropertyName("revision")] public int Revision { get; init; } = default;
+  [JsonPropertyName("nextRegionNumber")] public int NextRegionNumber { get; init; } = default;
+  [JsonPropertyName("regions")] public CalibrationRegion[] Regions { get; init; } = [];
+}
+
+public sealed record CalibrationDocuments {
+  [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; init; } = default;
+  [JsonPropertyName("maps")] public CalibrationDocument[] Maps { get; init; } = [];
+}
+
+public sealed record LocationResolution {
+  [JsonPropertyName("status")] public string Status { get; init; } = "";
+  [JsonPropertyName("floorId")] public string? FloorId { get; init; } = null;
+  [JsonPropertyName("regionId")] public string? RegionId { get; init; } = null;
+  [JsonPropertyName("candidates")] public string[] Candidates { get; init; } = [];
+}
+
 public sealed record Projection {
   [JsonPropertyName("rotation")] public double Rotation { get; init; } = default;
-  [JsonPropertyName("bounds")] public Point[] Bounds { get; init; } = [];
+  [JsonPropertyName("bounds")] public WorldXZ[] Bounds { get; init; } = [];
   [JsonPropertyName("viewBox")] public double[] ViewBox { get; init; } = [];
 }
 
@@ -109,8 +164,8 @@ public sealed record BuiltinMarker {
   [JsonPropertyName("categoryId")] public string CategoryId { get; init; } = "";
   [JsonPropertyName("categoryIds")] public string[] CategoryIds { get; init; } = [];
   [JsonPropertyName("floorIds")] public string[] FloorIds { get; init; } = [];
-  [JsonPropertyName("position")] public Point Position { get; init; } = new();
-  [JsonPropertyName("outline")] public Point[] Outline { get; init; } = [];
+  [JsonPropertyName("position")] public MapPoint Position { get; init; } = new();
+  [JsonPropertyName("outline")] public MapPoint[] Outline { get; init; } = [];
   [JsonPropertyName("taskId")] public string TaskId { get; init; } = "";
   [JsonPropertyName("iconUrl")] public string IconUrl { get; init; } = "";
   [JsonPropertyName("labelSize")] public double LabelSize { get; init; } = default;
@@ -155,7 +210,7 @@ public sealed record Annotation {
   [JsonPropertyName("id")] public string Id { get; init; } = "";
   [JsonPropertyName("floorId")] public string FloorId { get; init; } = "";
   [JsonPropertyName("kind")] public string Kind { get; init; } = "";
-  [JsonPropertyName("points")] public Point[] Points { get; init; } = [];
+  [JsonPropertyName("points")] public MapPoint[] Points { get; init; } = [];
   [JsonPropertyName("color")] public string Color { get; init; } = "";
   [JsonPropertyName("width")] public double Width { get; init; } = default;
   [JsonPropertyName("emoji")] public string Emoji { get; init; } = "";
@@ -171,6 +226,7 @@ public sealed record Annotations {
 
 public sealed record MapPreference {
   [JsonPropertyName("mapId")] public string MapId { get; init; } = "";
+  [JsonPropertyName("basemap")] public string Basemap { get; init; } = "";
   [JsonPropertyName("floorId")] public string FloorId { get; init; } = "";
   [JsonPropertyName("hiddenCategories")] public string[] HiddenCategories { get; init; } = [];
   [JsonPropertyName("collapsedGroups")] public string[] CollapsedGroups { get; init; } = [];
@@ -179,7 +235,21 @@ public sealed record MapPreference {
   [JsonPropertyName("center")] public double[] Center { get; init; } = [];
   [JsonPropertyName("zoom")] public double Zoom { get; init; } = default;
   [JsonPropertyName("taskFilterActive")] public bool TaskFilterActive { get; init; } = default;
-  [JsonPropertyName("basemap")] public string Basemap { get; init; } = "";
+}
+
+public sealed record CalibratorSelection {
+  [JsonPropertyName("type")] public string Type { get; init; } = "";
+  [JsonPropertyName("mapId")] public string MapId { get; init; } = "";
+  [JsonPropertyName("floorId")] public string? FloorId { get; init; } = null;
+  [JsonPropertyName("regionId")] public string? RegionId { get; init; } = null;
+}
+
+public sealed record CalibratorPreferences {
+  [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; init; } = default;
+  [JsonPropertyName("sidebarCollapsed")] public bool SidebarCollapsed { get; init; } = default;
+  [JsonPropertyName("collapsedMaps")] public string[] CollapsedMaps { get; init; } = [];
+  [JsonPropertyName("collapsedFloors")] public string[] CollapsedFloors { get; init; } = [];
+  [JsonPropertyName("selection")] public CalibratorSelection? Selection { get; init; } = null;
 }
 
 public sealed record Preferences {
@@ -224,7 +294,7 @@ public sealed record TileLayer {
   [JsonPropertyName("minZoom")] public int MinZoom { get; init; } = default;
   [JsonPropertyName("maxZoom")] public int MaxZoom { get; init; } = default;
   [JsonPropertyName("transform")] public double[] Transform { get; init; } = [];
-  [JsonPropertyName("bounds")] public Point[] Bounds { get; init; } = [];
+  [JsonPropertyName("bounds")] public MapPoint[] Bounds { get; init; } = [];
 }
 
 public sealed record OverlayHotkeys {
@@ -269,6 +339,12 @@ public sealed record OverlaySettings {
   [JsonPropertyName("hotkeys")] public OverlayHotkeys Hotkeys { get; init; } = new();
 }
 
+public sealed record UserSettings {
+  [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; init; } = default;
+  [JsonPropertyName("overlay")] public OverlaySettings Overlay { get; init; } = new();
+  [JsonPropertyName("gameMonitor")] public GameMonitorSettings GameMonitor { get; init; } = new();
+}
+
 public sealed record OverlayBootstrap {
   [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; init; } = default;
   [JsonPropertyName("mapDirectory")] public string MapDirectory { get; init; } = "";
@@ -284,8 +360,9 @@ public sealed record OverlayBootstrap {
 
 public sealed record OverlayView {
   [JsonPropertyName("mapId")] public string MapId { get; init; } = "";
+  [JsonPropertyName("basemap")] public string Basemap { get; init; } = "";
   [JsonPropertyName("floorId")] public string FloorId { get; init; } = "";
-  [JsonPropertyName("center")] public Point Center { get; init; } = new();
+  [JsonPropertyName("center")] public MapPoint Center { get; init; } = new();
   [JsonPropertyName("zoom")] public double Zoom { get; init; } = default;
   [JsonPropertyName("editing")] public bool Editing { get; init; } = default;
   [JsonPropertyName("visible")] public bool Visible { get; init; } = default;
@@ -301,7 +378,7 @@ public sealed record OverlayView {
 
 public sealed record OverlayCommand {
   [JsonPropertyName("kind")] public string Kind { get; init; } = "";
-  [JsonPropertyName("center")] public Point? Center { get; init; } = null;
+  [JsonPropertyName("center")] public MapPoint? Center { get; init; } = null;
   [JsonPropertyName("zoom")] public double? Zoom { get; init; } = null;
   [JsonPropertyName("floorId")] public string? FloorId { get; init; } = null;
   [JsonPropertyName("enabled")] public bool? Enabled { get; init; } = null;
@@ -312,9 +389,7 @@ public sealed record DevPlayer {
   [JsonPropertyName("displayName")] public string DisplayName { get; init; } = "";
   [JsonPropertyName("isSelf")] public bool IsSelf { get; init; } = default;
   [JsonPropertyName("mapId")] public string MapId { get; init; } = "";
-  [JsonPropertyName("floorId")] public string FloorId { get; init; } = "";
-  [JsonPropertyName("x")] public double X { get; init; } = default;
-  [JsonPropertyName("z")] public double Z { get; init; } = default;
+  [JsonPropertyName("worldPosition")] public WorldPosition WorldPosition { get; init; } = new();
   [JsonPropertyName("heading")] public double Heading { get; init; } = default;
 }
 
@@ -351,9 +426,41 @@ public sealed record OverlayLog {
 
 public readonly record struct NumericLimit(double Min, double Max, double Step, int Precision);
 
-public static class PointLimits {
+public static class MapPointLimits {
   public static readonly NumericLimit X = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);
   public static readonly NumericLimit Y = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);
+}
+
+public static class WorldPositionLimits {
+  public static readonly NumericLimit X = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);
+  public static readonly NumericLimit Y = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);
+  public static readonly NumericLimit Z = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);
+}
+
+public static class WorldXZLimits {
+  public static readonly NumericLimit X = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);
+  public static readonly NumericLimit Z = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);
+}
+
+public static class WorldRectXZLimits {
+  public static readonly NumericLimit MinX = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);
+  public static readonly NumericLimit MaxX = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);
+  public static readonly NumericLimit MinZ = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);
+  public static readonly NumericLimit MaxZ = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);
+}
+
+public static class YRangeLimits {
+  public static readonly NumericLimit Min = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);
+  public static readonly NumericLimit Max = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);
+}
+
+public static class CalibrationRegionLimits {
+  public static readonly NumericLimit Priority = new(0, 9999, 1, 0);
+}
+
+public static class CalibrationDocumentLimits {
+  public static readonly NumericLimit Revision = new(0, double.PositiveInfinity, 0, 0);
+  public static readonly NumericLimit NextRegionNumber = new(1, double.PositiveInfinity, 0, 0);
 }
 
 public static class MapZoomOverrideLimits {

@@ -6,7 +6,8 @@ import type {
   MapData,
   MapPreference,
   PlayerState,
-  Point,
+  MapPoint,
+  WorldXZ,
   Sticker,
 } from '../../../../contracts/ts/ipc.gen';
 import { pixelToWorld } from './lib/geometry';
@@ -18,9 +19,7 @@ import {
   hitAnnotation,
 } from './lib/annotations';
 import { BuiltinMarkers } from './lib/BuiltinMarkers';
-import { zoomRange } from './lib/zoom';
-import { useLocale } from '../../hooks/useLocale';
-import { notices } from '../../stores/noticeStore';
+import { MapViewport } from './MapViewport';
 
 export type Tool = 'select' | 'edit' | 'brush' | 'marker' | 'text' | 'eraser';
 export type ToolOptions = {
@@ -46,62 +45,31 @@ type Props = {
   onSelectTool: (tool: Tool) => void;
   onTemporaryHand: (active: boolean) => void;
   onActivateFloor: (floorId: string) => void;
-  onCursor: (point: Point | null) => void;
+  onCursor: (point: WorldXZ | null) => void;
   onZoomChange: (state: { zoom: number; min: number; max: number }) => void;
   onReady: (map: L.Map | null) => void;
+  onError?: (error: string) => void;
   players: Map<string, PlayerState>;
   playerFollow?: boolean;
   playerAutoZoom?: { enabled: boolean; zoomLevel: number };
 };
-const point = (value: L.LatLng): Point => ({ x: value.lng, y: -value.lat });
+const point = (value: L.LatLng): MapPoint => ({ x: value.lng, y: -value.lat });
 
 export function MapCanvas(props: Props) {
-  const { t } = useLocale();
-  const container = useRef<HTMLDivElement>(null);
   const current = useRef(props);
   useEffect(() => {
     current.current = props;
   });
   const mapRef = useRef<L.Map | null>(null);
-  const baseRef = useRef<SVGElement | null>(null);
-  const tileLayers = useRef<L.LayerGroup | null>(null);
   const userLayer = useRef<L.LayerGroup | null>(null);
   const playerLayer = useRef<L.LayerGroup | null>(null);
   const builtins = useRef<BuiltinMarkers | null>(null);
   const renderUsers = useRef<(items: Annotation[]) => void>(() => {});
   const renderPlayers = useRef<(players: Map<string, PlayerState>) => void>(() => {});
   const [ready, setReady] = useState(0);
-  const [error, setError] = useState('');
-  const [retry, setRetry] = useState(0);
-  // A basemap that failed to load is reported at the window level, with the reload it offers.
-  useEffect(() => {
-    if (error) notices.push(t(error), () => setRetry((value) => value + 1));
-  }, [error, t]);
-  useEffect(() => {
-    const host = container.current!;
+  const mount = (map: L.Map) => {
+    const host = map.getContainer();
     const p = current.current;
-    const affine = p.data.tiles[0]?.transform;
-    const crs = affine
-      ? L.extend({}, L.CRS.Simple, {
-          transformation: new L.Transformation(affine[0], affine[1], -affine[2], affine[3]),
-        })
-      : L.CRS.Simple;
-    const range = zoomRange(p.data, host.clientWidth, host.clientHeight);
-    const map = L.map(host, {
-      crs,
-      zoomControl: false,
-      markerZoomAnimation: false,
-      attributionControl: false,
-      minZoom: range.min,
-      maxZoom: range.max,
-      zoomSnap: 0.1,
-      zoomDelta: 1,
-      wheelPxPerZoomLevel: 120,
-      doubleClickZoom: false,
-      boxZoom: false,
-      keyboard: false,
-      preferCanvas: true,
-    });
     mapRef.current = map;
     let zoomTimer: ReturnType<typeof setTimeout>;
     const fadeMarkers = () => {
@@ -119,30 +87,12 @@ export function MapCanvas(props: Props) {
     map.on('zoomstart', fadeMarkers);
     map.on('zoomend', settleMarkers);
     host.addEventListener('wheel', wheelMarkers, { passive: true });
-    const [x, y, width, height] = p.data.projection.viewBox;
-    const bounds = L.latLngBounds([
-      [-y - height, x],
-      [-y, x + width],
-    ]);
-    const navigable = L.latLngBounds(bounds.getSouthWest(), bounds.getNorthEast());
-    for (const marker of p.data.markers) navigable.extend(latLng(marker.position));
-    map.setMaxBounds(navigable.pad(1));
-    if (p.preference.center.length === 2)
-      map.setView(p.preference.center as L.LatLngTuple, p.preference.zoom);
-    else map.fitBounds(bounds, { padding: [48, 48] });
-    const basePane = map.createPane('base');
-    basePane.style.zIndex = '200';
-    basePane.style.pointerEvents = 'none';
-    const tilePane = map.createPane('satellite');
-    tilePane.style.zIndex = '190';
-    tilePane.style.pointerEvents = 'none';
     const landmarkPane = map.createPane('landmarks');
     landmarkPane.style.zIndex = String(mapDisplay.landmarkPane);
     landmarkPane.style.pointerEvents = 'none';
     const playerPane = map.createPane('player');
     playerPane.style.zIndex = String(mapDisplay.playerPane);
     playerPane.style.pointerEvents = 'none';
-    tileLayers.current = L.layerGroup().addTo(map);
     map.getPane('overlayPane')!.style.zIndex = String(mapDisplay.strokePane);
     map.getPane('markerPane')!.style.zIndex = String(mapDisplay.markerPane);
     userLayer.current = L.layerGroup().addTo(map);
@@ -154,35 +104,6 @@ export function MapCanvas(props: Props) {
     ).addTo(map);
     const preview = L.layerGroup().addTo(map);
     const selection = new Set<string>();
-    const controller = new AbortController();
-    setError('');
-    setReady((value) => value + 1);
-    if (p.data.svgUrl)
-      fetch(p.data.svgUrl, { signal: controller.signal, cache: 'no-store' })
-        .then(async (response) => {
-          if (!response.ok) throw new Error('map.canvas.loadFailed');
-          const text = await response.text();
-          if (controller.signal.aborted) return;
-          const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
-          if (doc.querySelector('parsererror') || doc.documentElement.localName !== 'svg')
-            throw new Error('map.canvas.svgInvalid');
-          doc.querySelectorAll('script, foreignObject, iframe, image').forEach((e) => e.remove());
-          doc.querySelectorAll('*').forEach((e) =>
-            Array.from(e.attributes).forEach((a) => {
-              if (/^on/i.test(a.name) || (a.localName === 'href' && !a.value.startsWith('#')))
-                e.removeAttribute(a.name);
-            }),
-          );
-          const svg = document.importNode(doc.documentElement, true) as unknown as SVGElement;
-          baseRef.current = svg;
-          L.svgOverlay(svg, bounds, { pane: 'base', interactive: false }).addTo(map);
-          setReady((value) => value + 1);
-        })
-        .catch((error) => {
-          if (!controller.signal.aborted)
-            setError(error instanceof Error ? error.message : 'map.canvas.loadFailed');
-        });
-
     const isVisible = (a: Annotation) => isAnnotationVisible(a, current.current.preference);
     function paint(items: Annotation[]) {
       paintAnnotations(
@@ -212,11 +133,13 @@ export function MapCanvas(props: Props) {
       const self = [...players.values()].find(
         (player) => player.isSelf && player.mapId === p.data.id,
       );
-      const positionKey = self ? `${self.playerId}:${self.position.x}:${self.position.y}` : '';
+      const positionKey = self
+        ? `${self.playerId}:${self.mapPosition.x}:${self.mapPosition.y}`
+        : '';
       if (self && p.playerFollow !== false && positionKey !== followedPosition) {
         followedPosition = positionKey;
         const zoom = p.playerAutoZoom?.enabled ? p.playerAutoZoom.zoomLevel : map.getZoom();
-        map.setView(latLng(self.position), zoom, { animate: false });
+        map.setView(latLng(self.mapPosition), zoom, { animate: false });
       }
       for (const player of players.values()) {
         if (player.mapId !== p.data.id) continue;
@@ -224,10 +147,10 @@ export function MapCanvas(props: Props) {
         element.className = 'player-marker';
         // The arrow tip points up at zero degrees; rotate it to the player's heading.
         element.style.transform = `rotate(${player.heading}deg)`;
-        element.style.opacity = player.floorId === p.preference.floorId ? '1' : '0.35';
+        element.style.opacity = player.resolution.floorId === p.preference.floorId ? '1' : '0.35';
         element.title = player.displayName;
         layer.addLayer(
-          L.marker(latLng(player.position), {
+          L.marker(latLng(player.mapPosition), {
             pane: 'player',
             icon: L.divIcon({
               html: element,
@@ -248,8 +171,8 @@ export function MapCanvas(props: Props) {
       kind: Tool | 'pan' | 'box';
       builtin: number | null;
       start: L.Point;
-      startPoint: Point;
-      points: Point[];
+      startPoint: MapPoint;
+      points: MapPoint[];
       original: Annotation[];
       draft: Annotation[];
       dragIds: Set<string>;
@@ -269,10 +192,10 @@ export function MapCanvas(props: Props) {
     let builtinClick = false;
     const eventPixel = (event: PointerEvent) => map.mouseEventToContainerPoint(event);
     const toPoint = (pixel: L.Point) => point(map.containerPointToLatLng(pixel));
-    function hit(a: Annotation, pixel: Point, radius = 8) {
+    function hit(a: Annotation, pixel: MapPoint, radius = 8) {
       return hitAnnotation(map, a, pixel, current.current.preference, radius);
     }
-    function erase(g: Gesture, pixel: Point) {
+    function erase(g: Gesture, pixel: MapPoint) {
       const o = current.current.options;
       g.draft = g.draft.filter((a) => !hit(a, pixel, o.eraserSize / 2));
       paint(g.draft);
@@ -619,17 +542,10 @@ export function MapCanvas(props: Props) {
         max: map.getMaxZoom(),
       });
     map.on('zoomend zoomlevelschange', publishZoom);
-    // The lower bound follows the window, so a small window can still show the whole map.
-    const observer = new ResizeObserver(() => {
-      map.invalidateSize();
-      map.setMinZoom(zoomRange(current.current.data, host.clientWidth, host.clientHeight).min);
-    });
-    observer.observe(host);
     current.current.onReady(map);
     publishZoom();
     setReady((value) => value + 1);
     return () => {
-      controller.abort();
       window.removeEventListener('resize', refreshPixelRatio);
       current.current.onTemporaryHand(false);
       clearTimeout(zoomTimer);
@@ -638,7 +554,6 @@ export function MapCanvas(props: Props) {
       host.removeEventListener('dragstart', preventDrag);
       host.removeEventListener('click', consumeBuiltinClick, true);
       host.classList.remove('markers-zooming');
-      observer.disconnect();
       window.removeEventListener('keydown', keydown);
       window.removeEventListener('keyup', keyup);
       window.removeEventListener('blur', blur);
@@ -655,79 +570,11 @@ export function MapCanvas(props: Props) {
       builtins.current = null;
       playerLayer.current?.clearLayers();
       playerLayer.current = null;
-      map.remove();
       mapRef.current = null;
-      baseRef.current = null;
     };
-  }, [retry]);
+  };
 
   const { data, preference, items } = props;
-  const raster = preference.basemap === 'tiles';
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const size = map.getSize();
-    const max = zoomRange(data, size.x, size.y).max;
-    const clampZoom = () => {
-      if (map.getZoom() > max) map.setZoom(max, { animate: false });
-    };
-    // A zoom already animating can finish above a newly lowered basemap limit.
-    map.on('zoomend', clampZoom);
-    map.setMaxZoom(max);
-    clampZoom();
-    return () => {
-      map.off('zoomend', clampZoom);
-    };
-  }, [data, preference.basemap, ready]);
-  useEffect(() => {
-    const group = tileLayers.current;
-    if (!group) return;
-    group.clearLayers();
-    if (!raster) return;
-    const active = data.tiles.find((t) => t.floorId === preference.floorId);
-    const base = data.tiles.find((t) => t.floorId === data.baseFloor) || data.tiles[0];
-    for (const tile of [base, ...(active && active !== base ? [active] : [])]) {
-      if (!tile) continue;
-      L.tileLayer(tile.url, {
-        pane: 'satellite',
-        tileSize: tile.tileSize,
-        minNativeZoom: tile.minZoom,
-        maxNativeZoom: tile.maxZoom,
-        minZoom: -10,
-        maxZoom: 12,
-        noWrap: true,
-        bounds: L.latLngBounds(tile.bounds.map(latLng)),
-        opacity: tile === base && preference.floorId !== base.floorId ? 0.2 : 1,
-      })
-        .on('tileerror', () => setError('map.canvas.tileFailed'))
-        .addTo(group);
-    }
-    return () => {
-      group.clearLayers();
-    };
-  }, [data, preference.floorId, raster, ready]);
-  useEffect(() => {
-    const svg = baseRef.current;
-    if (!svg) return;
-    const active = data.floors.find((f) => f.id === preference.floorId)!;
-    const base = data.floors.find((f) => f.id === data.baseFloor)!;
-    const tileFloor = data.tiles.some((t) => t.floorId === active.id);
-    svg.style.display = raster && tileFloor ? 'none' : '';
-    const groups = new Set(data.floors.flatMap((f) => f.svgGroups));
-    for (const child of Array.from(svg.children))
-      if (child.tagName.toLowerCase() === 'g') {
-        const linked = child.getAttribute('data-keep-with-group');
-        if (groups.has(child.id) || linked || child.id) {
-          const belongs = (ids: string[]) =>
-            ids.includes(child.id) || (!!linked && ids.includes(linked));
-          const selected = belongs(active.svgGroups),
-            background = !raster && belongs(base.svgGroups);
-          (child as SVGElement).style.display = selected || background ? '' : 'none';
-          (child as SVGElement).style.opacity = background && !selected ? '0.2' : '1';
-          if (selected) svg.appendChild(child);
-        }
-      }
-  }, [data, preference.floorId, raster, ready]);
   useEffect(() => {
     builtins.current?.setPreference(preference);
   }, [
@@ -750,13 +597,12 @@ export function MapCanvas(props: Props) {
     else mapRef.current?.doubleClickZoom.disable();
   }, [props.tool, ready]);
   return (
-    <>
-      <div
-        ref={container}
-        className={`leaflet-container map-canvas tool-${props.tool}`}
-        tabIndex={0}
-        aria-label={t('map.canvas.aria', { name: props.data.name })}
-      />
-    </>
+    <MapViewport
+      data={data}
+      preference={preference}
+      className={`tool-${props.tool}`}
+      onMount={mount}
+      onError={props.onError}
+    />
   );
 }

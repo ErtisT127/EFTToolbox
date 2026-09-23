@@ -8,8 +8,8 @@ export function AppHeader({
   mode,
   onModeChange,
 }: {
-  active: 'map' | 'items' | 'tools' | 'settings';
-  onNavigate: (page: 'map' | 'items' | 'tools' | 'settings') => void;
+  active: 'map' | 'calibrator' | 'items' | 'tools' | 'settings';
+  onNavigate: (page: 'map' | 'calibrator' | 'items' | 'tools' | 'settings') => void;
   mode: GameMode;
   onModeChange: (mode: GameMode) => void;
 }) {
@@ -28,7 +28,7 @@ export function AppHeader({
         </span>
       </div>
       <nav aria-label={t('nav.aria')}>
-        {(['map', 'items', 'tools', 'settings'] as const).map((key) => (
+        {(['map', 'calibrator', 'items', 'tools', 'settings'] as const).map((key) => (
           <button
             key={key}
             className={active === key ? 'active' : ''}

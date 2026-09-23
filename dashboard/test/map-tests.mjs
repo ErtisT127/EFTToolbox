@@ -61,11 +61,11 @@ test('tile grid matches upstream world transform for rotated and nonuniform maps
       .flatMap((s) => s.maps)
       .find((r) => map.tiles.some((t) => t.sourceUrl === r.tilePath));
     assert.ok(rule, `${id}: upstream tile rule`);
-    const world = { x: map.projection.bounds[0].x + 13, y: map.projection.bounds[0].y + 21 };
+    const world = { x: map.projection.bounds[0].x + 13, z: map.projection.bounds[0].z + 21 };
     const p = worldToPixel(world, map.projection);
     const angle = (rule.coordinateRotation * Math.PI) / 180;
-    const rx = world.x * Math.cos(angle) - world.y * Math.sin(angle);
-    const rz = world.x * Math.sin(angle) + world.y * Math.cos(angle);
+    const rx = world.x * Math.cos(angle) - world.z * Math.sin(angle);
+    const rz = world.x * Math.sin(angle) + world.z * Math.cos(angle);
     const expected = [
       rule.transform[0] * rx + rule.transform[1],
       -rule.transform[2] * rz + rule.transform[3],
@@ -187,12 +187,12 @@ test('rotation orientation and stroke hit testing have independent expected valu
   const projection = {
     rotation: 180,
     bounds: [
-      { x: -100, y: -50 },
-      { x: 100, y: 50 },
+      { x: -100, z: -50 },
+      { x: 100, z: 50 },
     ],
     viewBox: [10, 20, 400, 200],
   };
-  const p = worldToPixel({ x: 100, y: -50 }, projection);
+  const p = worldToPixel({ x: 100, z: -50 }, projection);
   assert.ok(Math.abs(p.x - 10) < 1e-8 && Math.abs(p.y - 20) < 1e-8);
   assert.equal(segmentDistance({ x: 5, y: 3 }, { x: 0, y: 0 }, { x: 10, y: 0 }), 3);
   assert.equal(segmentDistance({ x: 13, y: 4 }, { x: 0, y: 0 }, { x: 10, y: 0 }), 5);

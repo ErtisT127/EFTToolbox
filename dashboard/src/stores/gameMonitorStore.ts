@@ -3,7 +3,12 @@ import type {
   GameMonitorSettings as ContractMonitorSettings,
   GameMonitorStatus as ContractMonitorStatus,
 } from '../../../contracts/ts/ipc.gen';
-import { request } from './workspaceStore';
+import {
+  loadUserSettings,
+  patchUserSettingsCache,
+  request,
+  updateUserSettings,
+} from './workspaceStore';
 
 export type GameMode = 'pvp' | 'pve' | 'pvp-season';
 
@@ -43,11 +48,11 @@ class GameMonitorStore {
   async initialize() {
     this.loading = true;
     try {
-      const [settings, status] = await Promise.all([
-        request<GameMonitorSettings>('/api/game-monitor/settings'),
+      const [userSettings, status] = await Promise.all([
+        loadUserSettings(),
         request<GameMonitorStatus>('/api/game-monitor/status'),
       ]);
-      this.settings = settings;
+      this.settings = userSettings.gameMonitor;
       this.status = status;
       this.error = '';
     } catch (error) {
@@ -59,17 +64,20 @@ class GameMonitorStore {
   }
 
   async update(changes: Partial<GameMonitorSettings>) {
+    const previous = this.settings;
     const next = { ...this.settings, ...changes } as GameMonitorSettings;
     this.settings = next;
     this.changed();
     try {
-      this.settings = await request<GameMonitorSettings>('/api/game-monitor/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(next),
-      });
+      this.settings = (
+        await updateUserSettings((current) => ({
+          ...current,
+          gameMonitor: next,
+        }))
+      ).gameMonitor;
       this.error = '';
     } catch (error) {
+      if (this.settings === next) this.settings = previous;
       this.error = error instanceof Error ? error.message : 'errors.request_failed';
     }
     this.changed();
@@ -84,6 +92,7 @@ class GameMonitorStore {
         method: 'POST',
       });
       const path = typeof result === 'string' ? result : result.path;
+      // An empty path intentionally disables this watcher when the dialog is cancelled.
       if (path !== undefined)
         await this.update({
           [kind === 'screenshots' ? 'screenshotDirectory' : 'logDirectory']: path,
@@ -123,6 +132,11 @@ class GameMonitorStore {
         mode: incomingStatus.mode,
       };
     }
+    if (
+      this.settings &&
+      (event.gameMonitorSettings || event.monitorSettings || incomingStatus || event.mode)
+    )
+      patchUserSettingsCache((current) => ({ ...current, gameMonitor: this.settings! }));
     if (event.type === 'resources_changed') this.resourceRevision++;
     this.changed();
   }

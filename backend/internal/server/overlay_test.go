@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -55,15 +56,24 @@ func TestOverlaySettingsAndPlayerSnapshot(t *testing.T) {
 	if saved.Width != 2048 || saved.Hotkeys.ToggleEdit != "" {
 		t.Fatalf("normalization failed: %+v", saved)
 	}
+	var aggregateSaved contracts.UserSettings
+	if err := json.Unmarshal(call("GET", "/api/user-settings", nil, 200), &aggregateSaved); err != nil {
+		t.Fatal(err)
+	}
+	if aggregateSaved.Overlay.Width != 2048 || aggregateSaved.GameMonitor.Mode != "pvp" {
+		t.Fatalf("aggregate settings mismatch: %+v", aggregateSaved)
+	}
 	s.Hotkeys.ToggleEdit = "Ctrl+Ctrl+M"
 	call("PUT", "/api/overlay-settings", s, 400)
 	s.Hotkeys.ToggleEdit = ""
 	s.Width = 1
-	data, err := json.Marshal(s)
+	aggregate := contracts.UserSettings{SchemaVersion: 1, Overlay: s, GameMonitor: defaultGameMonitorSettings()}
+	aggregateData, err := json.Marshal(aggregate)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(root, "user", "overlay-settings.json"), data, 0o600); err != nil {
+	settingsPath := filepath.Join(root, "user", "user-settings.json")
+	if err = os.WriteFile(settingsPath, aggregateData, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err = json.Unmarshal(call("GET", "/api/overlay-settings", nil, 200), &saved); err != nil {
@@ -72,7 +82,6 @@ func TestOverlaySettingsAndPlayerSnapshot(t *testing.T) {
 	if saved.Width != 160 {
 		t.Fatalf("GET did not normalize disk: %+v", saved)
 	}
-	settingsPath := filepath.Join(root, "user", "overlay-settings.json")
 	for _, corrupt := range []string{"null", "{}", "[]", `{"schemaVersion":1,"shape":"square","svgResolution":2048,"unknown":1}`, "{} {}"} {
 		if err = os.WriteFile(settingsPath, []byte(corrupt), 0o600); err != nil {
 			t.Fatal(err)
@@ -83,10 +92,10 @@ func TestOverlaySettingsAndPlayerSnapshot(t *testing.T) {
 			t.Fatalf("invalid settings overwritten: %q %v", unchanged, readErr)
 		}
 	}
-	if err = os.WriteFile(settingsPath, data, 0o600); err != nil {
+	if err = os.WriteFile(settingsPath, aggregateData, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	player := contracts.DevPlayer{PlayerId: "self", MapId: "fixture", FloorId: "ground", IsSelf: true, X: 25, Z: 75, Heading: 0}
+	player := contracts.DevPlayer{PlayerId: "self", MapId: "fixture", IsSelf: true, WorldPosition: contracts.WorldPosition{X: 25, Y: 1, Z: 75}, Heading: 0}
 	call("POST", "/api/dev/player", player, 200)
 	readSnapshot := func() contracts.ServerEvent {
 		t.Helper()
@@ -109,7 +118,7 @@ func TestOverlaySettingsAndPlayerSnapshot(t *testing.T) {
 			t.Fatalf("missing player snapshot: %+v", e)
 		}
 		p := (*e.Players)[0]
-		if p.Position.X != 25 || p.Position.Y != 25 || p.Heading != 0 {
+		if p.MapPosition.X != 25 || p.MapPosition.Y != 25 || p.Heading != 0 {
 			t.Fatalf("world projection: %+v", p)
 		}
 	}
@@ -117,11 +126,11 @@ func TestOverlaySettingsAndPlayerSnapshot(t *testing.T) {
 	if e := readSnapshot(); e.Players == nil || len(*e.Players) != 0 {
 		t.Fatal("removed player survived snapshot")
 	}
-	player.FloorId = "unknown"
-	call("POST", "/api/dev/player", player, 400)
+	player.WorldPosition.Y = 999
+	call("POST", "/api/dev/player", player, 200)
 	s.DevPlayerEnabled = false
 	call("PUT", "/api/overlay-settings", s, 200)
-	player.FloorId = "ground"
+	player.WorldPosition.Y = 1
 	call("POST", "/api/dev/player", player, 403)
 	req := httptest.NewRequest("GET", "http://localhost/api/overlay/bootstrap", nil)
 	req.RemoteAddr = "192.0.2.1:9000"
@@ -170,5 +179,28 @@ func TestOverlayConnectionReplacement(t *testing.T) {
 			t.Fatal("old connection marked its active replacement offline")
 		}
 		break
+	}
+}
+
+func TestOverlapDedupRevisionAndLRU(t *testing.T) {
+	dedup := newOverlapDedup()
+	key := overlapKey{mapID: "map", basemap: "svg", revision: 1, firstID: "a", secondID: "b"}
+	if !dedup.firstOccurrence(key) || dedup.firstOccurrence(key) {
+		t.Fatal("duplicate overlap was not deduplicated")
+	}
+	if !dedup.firstOccurrence(overlapKey{mapID: "map", basemap: "tiles", revision: 1, firstID: "a", secondID: "b"}) {
+		t.Fatal("overlap dedup crossed basemaps")
+	}
+	dedup.clearMapRevision("map", "svg", 2)
+	if !dedup.firstOccurrence(key) {
+		t.Fatal("old revision was not cleared")
+	}
+	for i := 0; i < 220; i++ {
+		if !dedup.firstOccurrence(overlapKey{mapID: "map", revision: 2, firstID: "first", secondID: fmt.Sprint(i)}) {
+			t.Fatalf("unexpected duplicate at %d", i)
+		}
+	}
+	if got := dedup.order.Len(); got > 200 {
+		t.Fatalf("LRU grew beyond limit: %d", got)
 	}
 }

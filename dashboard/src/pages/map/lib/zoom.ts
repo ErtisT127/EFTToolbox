@@ -16,7 +16,7 @@ function unitScale(data: MapData): [number, number] {
 
 // Zoom bounds for one map: the deepest level keeps tiles upscaled one step past their native max
 // (as tarkov.dev does), and the shallowest is where the whole map still fits the window. Every
-// zoom entry point shares these two numbers - wheel, zoom buttons and Fit - so the control and the
+// zoom entry MapPoint shares these two numbers - wheel, zoom buttons and Fit - so the control and the
 // wheel can never disagree about where the map stops.
 export function zoomRange(data: MapData, width: number, height: number, padding = 48) {
   const nativeMin = data.tiles.length ? Math.min(...data.tiles.map((t) => t.minZoom)) : undefined;

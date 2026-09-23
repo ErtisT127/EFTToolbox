@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,20 +14,21 @@ import (
 	contracts "efttoolbox/contracts"
 )
 
-const ProtocolVersion = "2"
+const ProtocolVersion = "1"
 
 func New(ctx context.Context, version string, assets http.FileSystem, dataRoot string) http.Handler {
 	logWriter, err := newDailyLogWriter(filepath.Join(dataRoot, "..", "logs"))
 	if err == nil {
-		log.SetOutput(io.MultiWriter(os.Stderr, logWriter))
+		log.SetOutput(logWriter)
 	} else {
 		log.Printf("initialize daily log writer: %v", err)
 	}
 	status := contracts.Status{ProtocolVersion: ProtocolVersion, AppVersion: version, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	mux := http.NewServeMux()
 	store := &mapStore{root: dataRoot}
-	hub := &overlayHub{store: store, status: status, players: map[string]contracts.PlayerState{}, clients: map[chan contracts.ServerEvent]bool{}, browseActive: map[string]bool{}}
+	hub := &overlayHub{store: store, status: status, players: map[string]contracts.PlayerState{}, clients: map[chan contracts.ServerEvent]bool{}, browseActive: map[string]bool{}, indexes: map[string]regionIndexSnapshot{}, overlapDedup: newOverlapDedup()}
 	store.changed = hub.changed
+	store.calibrationReset = hub.invalidateCalibrationIndexes
 	if writer, ok := logWriter.(*dailyLogWriter); ok {
 		hub.logWriter = writer
 		hub.pipe = startOverlayLogPipe(ctx, writer)

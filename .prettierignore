@@ -4,6 +4,7 @@ _reference/
 docs/
 .agents/
 .playwright-mcp/
+.planning/
 contracts/go/
 contracts/ts/
 overlay/packages.lock.json

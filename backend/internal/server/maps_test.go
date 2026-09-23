@@ -20,7 +20,7 @@ func mapFixture(t *testing.T) (string, http.Handler) {
 	if err := os.MkdirAll(filepath.Join(root, "upstream", "modes", "pvp", "maps"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	m := contracts.MapData{SchemaVersion: 1, Id: "fixture", Name: "Fixture", DefaultFloor: "ground", Projection: contracts.Projection{ViewBox: []float64{0, 0, 100, 100}, Bounds: []contracts.Point{{X: 0, Y: 0}, {X: 100, Y: 100}}}, Floors: []contracts.Floor{{Id: "ground", Name: "Ground", SvgGroups: []string{"ground"}}}, Categories: []contracts.Category{}, Markers: []contracts.BuiltinMarker{}, Tasks: []contracts.MapTask{}, Warnings: []string{}}
+	m := contracts.MapData{SchemaVersion: 1, Id: "fixture", Name: "Fixture", DefaultFloor: "ground", Projection: contracts.Projection{ViewBox: []float64{0, 0, 100, 100}, Bounds: []contracts.WorldXZ{{X: 0, Z: 0}, {X: 100, Z: 100}}}, Floors: []contracts.Floor{{Id: "ground", Name: "Ground", SvgGroups: []string{"ground"}}}, Categories: []contracts.Category{}, Markers: []contracts.BuiltinMarker{}, Tasks: []contracts.MapTask{}, Warnings: []string{}}
 	data, _ := json.Marshal(m)
 	if err := os.WriteFile(filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture.json"), data, 0o644); err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestMapDiscoveryAndPersistence(t *testing.T) {
 	if initial.Code != 200 || !bytes.Contains(initial.Body.Bytes(), []byte(`"items":[]`)) {
 		t.Fatal(initial.Body.String())
 	}
-	saved := contracts.Annotations{SchemaVersion: 1, Items: []contracts.Annotation{{Id: "user-mark", FloorId: "ground", Kind: "marker", Points: []contracts.Point{{X: 25, Y: 35}}, Color: "#5FD3C4", Width: 3, TextSize: 15, Text: "保留我的标记", Emoji: "📍"}}}
+	saved := contracts.Annotations{SchemaVersion: 1, Items: []contracts.Annotation{{Id: "user-mark", FloorId: "ground", Kind: "marker", Points: []contracts.MapPoint{{X: 25, Y: 35}}, Color: "#5FD3C4", Width: 3, TextSize: 15, Text: "淇濈暀鎴戠殑鏍囪", Emoji: "馃搷"}}}
 	if response := callJSON(t, handler, "PUT", "/api/maps/fixture/annotations", saved); response.Code != 200 {
 		t.Fatal(response.Body.String())
 	}
@@ -86,7 +86,7 @@ func TestInvalidAnnotationCannotOverwriteSavedData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	invalid := contracts.Annotations{SchemaVersion: 1, Items: []contracts.Annotation{{Id: "x", FloorId: "unknown", Kind: "marker", Points: []contracts.Point{{X: 0, Y: 0}}, Color: "#ffffff", Width: 3, TextSize: 15}}}
+	invalid := contracts.Annotations{SchemaVersion: 1, Items: []contracts.Annotation{{Id: "x", FloorId: "unknown", Kind: "marker", Points: []contracts.MapPoint{{X: 0, Y: 0}}, Color: "#ffffff", Width: 3, TextSize: 15}}}
 	if response := callJSON(t, handler, "PUT", "/api/maps/fixture/annotations", invalid); response.Code != 400 {
 		t.Fatalf("accepted unknown floor: %d", response.Code)
 	}
@@ -104,6 +104,195 @@ func TestInvalidAnnotationCannotOverwriteSavedData(t *testing.T) {
 	}
 	if response := callJSON(t, handler, "GET", "/api/maps/does-not-exist", nil); response.Code != 404 {
 		t.Fatalf("missing map: %d", response.Code)
+	}
+}
+
+func TestCorruptCalibrationReturnsCalibrationError(t *testing.T) {
+	root, handler := mapFixture(t)
+	path := filepath.Join(root, "user", "calibration", "maps.calibration.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	response := callJSON(t, handler, "GET", "/api/maps/fixture/calibration?basemap=svg", nil)
+	if response.Code != http.StatusInternalServerError || !bytes.Contains(response.Body.Bytes(), []byte(`"code":"calibration_invalid"`)) {
+		t.Fatalf("corrupt calibration was not classified correctly: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCalibrationRegionDeletionPersistsEmptyDocument(t *testing.T) {
+	_, handler := mapFixture(t)
+	withRegion := contracts.CalibrationDocument{
+		SchemaVersion:    1,
+		MapId:            "fixture",
+		Basemap:          "svg",
+		Revision:         0,
+		NextRegionNumber: 2,
+		Regions: []contracts.CalibrationRegion{{
+			Id:      "region-1",
+			FloorId: "ground",
+			Name:    "Region 1",
+			Rectangle: contracts.WorldRectXZ{
+				MinX: 0,
+				MaxX: 10,
+				MinZ: 0,
+				MaxZ: 10,
+			},
+			YRange:   contracts.YRange{Min: 0, Max: 10},
+			Priority: 1,
+		}},
+	}
+	if response := callJSON(t, handler, "PUT", "/api/maps/fixture/calibration?basemap=svg", withRegion); response.Code != http.StatusOK {
+		t.Fatalf("save region: %d %s", response.Code, response.Body.String())
+	}
+
+	deleted := withRegion
+	deleted.Revision = 1
+	deleted.Regions = []contracts.CalibrationRegion{}
+	response := callJSON(t, handler, "PUT", "/api/maps/fixture/calibration?basemap=svg", deleted)
+	if response.Code != http.StatusOK {
+		t.Fatalf("delete region: %d %s", response.Code, response.Body.String())
+	}
+	var saved contracts.CalibrationDocument
+	if err := json.Unmarshal(response.Body.Bytes(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Revision != 2 || len(saved.Regions) != 0 {
+		t.Fatalf("deleted document: %+v", saved)
+	}
+
+	response = callJSON(t, handler, "GET", "/api/maps/fixture/calibration?basemap=svg", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("read deleted document: %d %s", response.Code, response.Body.String())
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Revision != 2 || len(saved.Regions) != 0 {
+		t.Fatalf("persisted deleted document: %+v", saved)
+	}
+
+	stale := deleted
+	stale.Revision = 1
+	stale.NextRegionNumber = 3
+	response = callJSON(t, handler, "PUT", "/api/maps/fixture/calibration?basemap=svg", stale)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("stale deletion accepted: %d %s", response.Code, response.Body.String())
+	}
+	response = callJSON(t, handler, "GET", "/api/maps/fixture/calibration?basemap=svg", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("read after stale deletion: %d %s", response.Code, response.Body.String())
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Revision != 2 || len(saved.Regions) != 0 {
+		t.Fatalf("stale deletion changed saved document: %+v", saved)
+	}
+}
+
+func TestCalibrationDocumentsAreIsolatedByBasemap(t *testing.T) {
+	_, handler := mapFixture(t)
+	document := func(basemap, id string) contracts.CalibrationDocument {
+		return contracts.CalibrationDocument{
+			SchemaVersion: 1, MapId: "fixture", Basemap: basemap, NextRegionNumber: 2,
+			Regions: []contracts.CalibrationRegion{{
+				Id: id, FloorId: "ground", Name: id,
+				Rectangle: contracts.WorldRectXZ{MinX: 0, MaxX: 10, MinZ: 0, MaxZ: 10},
+				YRange:    contracts.YRange{Min: 0, Max: 10}, Priority: 1,
+			}},
+		}
+	}
+	for _, value := range []struct {
+		basemap string
+		id      string
+	}{
+		{"svg", "svg-region"},
+		{"tiles", "tiles-region"},
+	} {
+		if response := callJSON(t, handler, "PUT", "/api/maps/fixture/calibration?basemap="+value.basemap, document(value.basemap, value.id)); response.Code != http.StatusOK {
+			t.Fatalf("save %s: %d %s", value.basemap, response.Code, response.Body.String())
+		}
+	}
+	for _, value := range []struct {
+		basemap string
+		id      string
+	}{
+		{"svg", "svg-region"},
+		{"tiles", "tiles-region"},
+	} {
+		response := callJSON(t, handler, "GET", "/api/maps/fixture/calibration?basemap="+value.basemap, nil)
+		var actual contracts.CalibrationDocument
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &actual) != nil || actual.Basemap != value.basemap || len(actual.Regions) != 1 || actual.Regions[0].Id != value.id || actual.Revision != 1 {
+			t.Fatalf("read %s: %d %s", value.basemap, response.Code, response.Body.String())
+		}
+	}
+	if response := callJSON(t, handler, "GET", "/api/maps/fixture/calibration", nil); response.Code != http.StatusBadRequest {
+		t.Fatalf("missing basemap accepted: %d", response.Code)
+	}
+}
+
+func TestCorruptCalibrationPreferencesReturnsCalibrationError(t *testing.T) {
+	root, handler := mapFixture(t)
+	path := filepath.Join(root, "user", "calibration", "calibration-preferences.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	response := callJSON(t, handler, "GET", "/api/calibration-preferences", nil)
+	if response.Code != http.StatusInternalServerError || !bytes.Contains(response.Body.Bytes(), []byte(`"code":"calibration_preferences_invalid"`)) {
+		t.Fatalf("corrupt calibration preferences were not classified correctly: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCalibrationResetPreservesOtherUserData(t *testing.T) {
+	root, handler := mapFixture(t)
+	files := map[string]string{
+		filepath.Join(root, "user", "calibration", "maps.calibration.json"):             `{ "schemaVersion": 1, "maps": [] }`,
+		filepath.Join(root, "user", "calibration", "calibration-preferences.json"):      `{ "schemaVersion": 1, "sidebarCollapsed": false, "collapsedMaps": [], "collapsedFloors": [] }`,
+		filepath.Join(root, "user", "maps", "keep.txt"):                                 "keep",
+		filepath.Join(root, "user", "modes", "pvp", "map-preferences.json"):             "preferences",
+		filepath.Join(root, "user", "modes", "pvp", "maps", "fixture.annotations.json"): "annotations",
+		filepath.Join(root, "user", "user-settings.json"):                               "settings",
+	}
+	for path, value := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(value), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	request := httptest.NewRequest("POST", "/api/data/reset-calibration", nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	request.Host = "localhost"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("calibration reset failed: %d %s", response.Code, response.Body.String())
+	}
+	for _, path := range []string{
+		filepath.Join(root, "user", "calibration", "maps.calibration.json"),
+		filepath.Join(root, "user", "calibration", "calibration-preferences.json"),
+	} {
+		if _, err := os.Stat(path); err == nil {
+			t.Fatalf("calibration file was not removed: %s", path)
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(root, "user", "maps", "keep.txt"),
+		filepath.Join(root, "user", "modes", "pvp", "map-preferences.json"),
+		filepath.Join(root, "user", "modes", "pvp", "maps", "fixture.annotations.json"),
+		filepath.Join(root, "user", "user-settings.json"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("reset removed unrelated user data %s: %v", path, err)
+		}
 	}
 }
 

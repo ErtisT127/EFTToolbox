@@ -52,39 +52,94 @@ type GameMonitorStatus struct {
 }
 
 type PlayerState struct {
-	PlayerId    string  `json:"playerId"`
-	DisplayName string  `json:"displayName"`
-	IsSelf      bool    `json:"isSelf"`
-	MapId       string  `json:"mapId"`
-	FloorId     string  `json:"floorId"`
-	Position    Point   `json:"position"`
-	Heading     float64 `json:"heading"`
+	PlayerId      string             `json:"playerId"`
+	DisplayName   string             `json:"displayName"`
+	IsSelf        bool               `json:"isSelf"`
+	MapId         string             `json:"mapId"`
+	WorldPosition WorldPosition      `json:"worldPosition"`
+	MapPosition   MapPoint           `json:"mapPosition"`
+	Resolution    LocationResolution `json:"resolution"`
+	Heading       float64            `json:"heading"`
 }
 
 type SharedAnnotation struct {
-	ItemId   string  `json:"itemId"`
-	OwnerId  string  `json:"ownerId"`
-	Revision int     `json:"revision"`
-	MapId    string  `json:"mapId"`
-	FloorId  string  `json:"floorId"`
-	Kind     string  `json:"kind"`
-	Points   []Point `json:"points"`
-	Color    string  `json:"color"`
-	Width    float64 `json:"width"`
-	Emoji    string  `json:"emoji"`
-	ImageId  string  `json:"imageId"`
-	Text     string  `json:"text"`
-	TextSize float64 `json:"textSize"`
+	ItemId   string     `json:"itemId"`
+	OwnerId  string     `json:"ownerId"`
+	Revision int        `json:"revision"`
+	MapId    string     `json:"mapId"`
+	FloorId  string     `json:"floorId"`
+	Kind     string     `json:"kind"`
+	Points   []MapPoint `json:"points"`
+	Color    string     `json:"color"`
+	Width    float64    `json:"width"`
+	Emoji    string     `json:"emoji"`
+	ImageId  string     `json:"imageId"`
+	Text     string     `json:"text"`
+	TextSize float64    `json:"textSize"`
 }
 
-type Point struct {
+type MapPoint struct {
 	X float64 `json:"x"`
 	Y float64 `json:"y"`
 }
 
+type WorldPosition struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	Z float64 `json:"z"`
+}
+
+type WorldXZ struct {
+	X float64 `json:"x"`
+	Z float64 `json:"z"`
+}
+
+type WorldRectXZ struct {
+	MinX float64 `json:"minX"`
+	MaxX float64 `json:"maxX"`
+	MinZ float64 `json:"minZ"`
+	MaxZ float64 `json:"maxZ"`
+}
+
+type YRange struct {
+	Min float64 `json:"min"`
+	Max float64 `json:"max"`
+}
+
+type CalibrationRegion struct {
+	Id              string      `json:"id"`
+	FloorId         string      `json:"floorId"`
+	Name            string      `json:"name"`
+	Rectangle       WorldRectXZ `json:"rectangle"`
+	YRange          YRange      `json:"yRange"`
+	Priority        int         `json:"priority"`
+	CoversEntireMap bool        `json:"coversEntireMap"`
+}
+
+type CalibrationDocument struct {
+	SchemaVersion    int                 `json:"schemaVersion"`
+	MapId            string              `json:"mapId"`
+	Basemap          string              `json:"basemap"`
+	Revision         int                 `json:"revision"`
+	NextRegionNumber int                 `json:"nextRegionNumber"`
+	Regions          []CalibrationRegion `json:"regions"`
+}
+
+type CalibrationDocuments struct {
+	SchemaVersion int                   `json:"schemaVersion"`
+	Maps          []CalibrationDocument `json:"maps"`
+}
+
+type LocationResolution struct {
+	Status     string   `json:"status"`
+	FloorId    *string  `json:"floorId"`
+	RegionId   *string  `json:"regionId"`
+	Candidates []string `json:"candidates"`
+}
+
 type Projection struct {
 	Rotation float64   `json:"rotation"`
-	Bounds   []Point   `json:"bounds"`
+	Bounds   []WorldXZ `json:"bounds"`
 	ViewBox  []float64 `json:"viewBox"`
 }
 
@@ -104,17 +159,17 @@ type Category struct {
 }
 
 type BuiltinMarker struct {
-	Id            string   `json:"id"`
-	Name          string   `json:"name"`
-	CategoryId    string   `json:"categoryId"`
-	CategoryIds   []string `json:"categoryIds"`
-	FloorIds      []string `json:"floorIds"`
-	Position      Point    `json:"position"`
-	Outline       []Point  `json:"outline"`
-	TaskId        string   `json:"taskId"`
-	IconUrl       string   `json:"iconUrl"`
-	LabelSize     float64  `json:"labelSize"`
-	LabelRotation float64  `json:"labelRotation"`
+	Id            string     `json:"id"`
+	Name          string     `json:"name"`
+	CategoryId    string     `json:"categoryId"`
+	CategoryIds   []string   `json:"categoryIds"`
+	FloorIds      []string   `json:"floorIds"`
+	Position      MapPoint   `json:"position"`
+	Outline       []MapPoint `json:"outline"`
+	TaskId        string     `json:"taskId"`
+	IconUrl       string     `json:"iconUrl"`
+	LabelSize     float64    `json:"labelSize"`
+	LabelRotation float64    `json:"labelRotation"`
 }
 
 type MapTask struct {
@@ -152,16 +207,16 @@ type MapData struct {
 }
 
 type Annotation struct {
-	Id       string  `json:"id"`
-	FloorId  string  `json:"floorId"`
-	Kind     string  `json:"kind"`
-	Points   []Point `json:"points"`
-	Color    string  `json:"color"`
-	Width    float64 `json:"width"`
-	Emoji    string  `json:"emoji"`
-	ImageId  string  `json:"imageId"`
-	Text     string  `json:"text"`
-	TextSize float64 `json:"textSize"`
+	Id       string     `json:"id"`
+	FloorId  string     `json:"floorId"`
+	Kind     string     `json:"kind"`
+	Points   []MapPoint `json:"points"`
+	Color    string     `json:"color"`
+	Width    float64    `json:"width"`
+	Emoji    string     `json:"emoji"`
+	ImageId  string     `json:"imageId"`
+	Text     string     `json:"text"`
+	TextSize float64    `json:"textSize"`
 }
 
 type Annotations struct {
@@ -171,6 +226,7 @@ type Annotations struct {
 
 type MapPreference struct {
 	MapId            string    `json:"mapId"`
+	Basemap          string    `json:"basemap"`
 	FloorId          string    `json:"floorId"`
 	HiddenCategories []string  `json:"hiddenCategories"`
 	CollapsedGroups  []string  `json:"collapsedGroups"`
@@ -179,7 +235,21 @@ type MapPreference struct {
 	Center           []float64 `json:"center"`
 	Zoom             float64   `json:"zoom"`
 	TaskFilterActive bool      `json:"taskFilterActive"`
-	Basemap          string    `json:"basemap"`
+}
+
+type CalibratorSelection struct {
+	Type     string  `json:"type"`
+	MapId    string  `json:"mapId"`
+	FloorId  *string `json:"floorId,omitempty"`
+	RegionId *string `json:"regionId,omitempty"`
+}
+
+type CalibratorPreferences struct {
+	SchemaVersion    int                  `json:"schemaVersion"`
+	SidebarCollapsed bool                 `json:"sidebarCollapsed"`
+	CollapsedMaps    []string             `json:"collapsedMaps"`
+	CollapsedFloors  []string             `json:"collapsedFloors"`
+	Selection        *CalibratorSelection `json:"selection,omitempty"`
 }
 
 type Preferences struct {
@@ -216,15 +286,15 @@ type MapClock struct {
 }
 
 type TileLayer struct {
-	Id        string    `json:"id"`
-	FloorId   string    `json:"floorId"`
-	SourceUrl string    `json:"sourceUrl"`
-	Url       string    `json:"url"`
-	TileSize  int       `json:"tileSize"`
-	MinZoom   int       `json:"minZoom"`
-	MaxZoom   int       `json:"maxZoom"`
-	Transform []float64 `json:"transform"`
-	Bounds    []Point   `json:"bounds"`
+	Id        string     `json:"id"`
+	FloorId   string     `json:"floorId"`
+	SourceUrl string     `json:"sourceUrl"`
+	Url       string     `json:"url"`
+	TileSize  int        `json:"tileSize"`
+	MinZoom   int        `json:"minZoom"`
+	MaxZoom   int        `json:"maxZoom"`
+	Transform []float64  `json:"transform"`
+	Bounds    []MapPoint `json:"bounds"`
 }
 
 type OverlayHotkeys struct {
@@ -269,6 +339,12 @@ type OverlaySettings struct {
 	Hotkeys          OverlayHotkeys    `json:"hotkeys"`
 }
 
+type UserSettings struct {
+	SchemaVersion int                 `json:"schemaVersion"`
+	Overlay       OverlaySettings     `json:"overlay"`
+	GameMonitor   GameMonitorSettings `json:"gameMonitor"`
+}
+
 type OverlayBootstrap struct {
 	SchemaVersion        int    `json:"schemaVersion"`
 	MapDirectory         string `json:"mapDirectory"`
@@ -284,8 +360,9 @@ type OverlayBootstrap struct {
 
 type OverlayView struct {
 	MapId          string   `json:"mapId"`
+	Basemap        string   `json:"basemap"`
 	FloorId        string   `json:"floorId"`
-	Center         Point    `json:"center"`
+	Center         MapPoint `json:"center"`
 	Zoom           float64  `json:"zoom"`
 	Editing        bool     `json:"editing"`
 	Visible        bool     `json:"visible"`
@@ -300,22 +377,20 @@ type OverlayView struct {
 }
 
 type OverlayCommand struct {
-	Kind    string   `json:"kind"`
-	Center  *Point   `json:"center,omitempty"`
-	Zoom    *float64 `json:"zoom,omitempty"`
-	FloorId *string  `json:"floorId,omitempty"`
-	Enabled *bool    `json:"enabled,omitempty"`
+	Kind    string    `json:"kind"`
+	Center  *MapPoint `json:"center,omitempty"`
+	Zoom    *float64  `json:"zoom,omitempty"`
+	FloorId *string   `json:"floorId,omitempty"`
+	Enabled *bool     `json:"enabled,omitempty"`
 }
 
 type DevPlayer struct {
-	PlayerId    string  `json:"playerId"`
-	DisplayName string  `json:"displayName"`
-	IsSelf      bool    `json:"isSelf"`
-	MapId       string  `json:"mapId"`
-	FloorId     string  `json:"floorId"`
-	X           float64 `json:"x"`
-	Z           float64 `json:"z"`
-	Heading     float64 `json:"heading"`
+	PlayerId      string        `json:"playerId"`
+	DisplayName   string        `json:"displayName"`
+	IsSelf        bool          `json:"isSelf"`
+	MapId         string        `json:"mapId"`
+	WorldPosition WorldPosition `json:"worldPosition"`
+	Heading       float64       `json:"heading"`
 }
 
 type OperationTiming struct {
@@ -356,12 +431,64 @@ type NumericLimit struct {
 	Precision int
 }
 
-var PointLimits = struct {
+var MapPointLimits = struct {
 	X NumericLimit
 	Y NumericLimit
 }{
 	X: NumericLimit{Min: math.Inf(-1), Max: math.Inf(1), Step: 0, Precision: 2},
 	Y: NumericLimit{Min: math.Inf(-1), Max: math.Inf(1), Step: 0, Precision: 2},
+}
+
+var WorldPositionLimits = struct {
+	X NumericLimit
+	Y NumericLimit
+	Z NumericLimit
+}{
+	X: NumericLimit{Min: math.Inf(-1), Max: math.Inf(1), Step: 0, Precision: 2},
+	Y: NumericLimit{Min: math.Inf(-1), Max: math.Inf(1), Step: 0, Precision: 2},
+	Z: NumericLimit{Min: math.Inf(-1), Max: math.Inf(1), Step: 0, Precision: 2},
+}
+
+var WorldXZLimits = struct {
+	X NumericLimit
+	Z NumericLimit
+}{
+	X: NumericLimit{Min: math.Inf(-1), Max: math.Inf(1), Step: 0, Precision: 2},
+	Z: NumericLimit{Min: math.Inf(-1), Max: math.Inf(1), Step: 0, Precision: 2},
+}
+
+var WorldRectXZLimits = struct {
+	MinX NumericLimit
+	MaxX NumericLimit
+	MinZ NumericLimit
+	MaxZ NumericLimit
+}{
+	MinX: NumericLimit{Min: math.Inf(-1), Max: math.Inf(1), Step: 0, Precision: 2},
+	MaxX: NumericLimit{Min: math.Inf(-1), Max: math.Inf(1), Step: 0, Precision: 2},
+	MinZ: NumericLimit{Min: math.Inf(-1), Max: math.Inf(1), Step: 0, Precision: 2},
+	MaxZ: NumericLimit{Min: math.Inf(-1), Max: math.Inf(1), Step: 0, Precision: 2},
+}
+
+var YRangeLimits = struct {
+	Min NumericLimit
+	Max NumericLimit
+}{
+	Min: NumericLimit{Min: math.Inf(-1), Max: math.Inf(1), Step: 0, Precision: 2},
+	Max: NumericLimit{Min: math.Inf(-1), Max: math.Inf(1), Step: 0, Precision: 2},
+}
+
+var CalibrationRegionLimits = struct {
+	Priority NumericLimit
+}{
+	Priority: NumericLimit{Min: 0, Max: 9999, Step: 1, Precision: 0},
+}
+
+var CalibrationDocumentLimits = struct {
+	Revision         NumericLimit
+	NextRegionNumber NumericLimit
+}{
+	Revision:         NumericLimit{Min: 0, Max: math.Inf(1), Step: 0, Precision: 0},
+	NextRegionNumber: NumericLimit{Min: 1, Max: math.Inf(1), Step: 0, Precision: 0},
 }
 
 var MapZoomOverrideLimits = struct {

@@ -26,7 +26,7 @@ func TestTileCacheAndValidation(t *testing.T) {
 	if err := readJSON(name, &m); err != nil {
 		t.Fatal(err)
 	}
-	m.Tiles = []contracts.TileLayer{{Id: "base", FloorId: "ground", SourceUrl: "https://assets.tarkov.dev/maps/test/{z}/{x}/{y}.png", MinZoom: 1, MaxZoom: 2, TileSize: 256, Transform: []float64{1, 0, 1, 0}, Bounds: []contracts.Point{{X: 0, Y: 0}, {X: 256, Y: 256}}}}
+	m.Tiles = []contracts.TileLayer{{Id: "base", FloorId: "ground", SourceUrl: "https://assets.tarkov.dev/maps/test/{z}/{x}/{y}.png", MinZoom: 1, MaxZoom: 2, TileSize: 256, Transform: []float64{1, 0, 1, 0}, Bounds: []contracts.MapPoint{{X: 0, Y: 0}, {X: 256, Y: 256}}}}
 	data, _ := json.Marshal(m)
 	if err := os.WriteFile(name, data, 0o644); err != nil {
 		t.Fatal(err)
