@@ -105,6 +105,26 @@ function regionsOverlap(a: CalibrationRegion, b: CalibrationRegion) {
   );
 }
 
+const conflictCache = new WeakMap<CalibrationRegion[], Set<string>>();
+
+function findConflicts(regions: CalibrationRegion[]) {
+  const cached = conflictCache.get(regions);
+  if (cached) return cached;
+  const conflicts = new Set<string>();
+  // ponytail: quadratic per document; use a spatial index only if region counts make this measurable.
+  for (let i = 0; i < regions.length; i++)
+    for (let j = i + 1; j < regions.length; j++) {
+      const a = regions[i],
+        b = regions[j];
+      if (a.priority === b.priority && regionsOverlap(a, b)) {
+        conflicts.add(a.id);
+        conflicts.add(b.id);
+      }
+    }
+  conflictCache.set(regions, conflicts);
+  return conflicts;
+}
+
 function sameCalibration(a: CalibrationDocument | undefined, b: CalibrationDocument) {
   if (!a) return false;
   return JSON.stringify({ ...a, revision: 0 }) === JSON.stringify({ ...b, revision: 0 });
@@ -303,19 +323,14 @@ export function CalibratorPage() {
     () => activeDoc?.regions.filter((r) => r.floorId === floorId) || [],
     [activeDoc, floorId],
   );
-  const conflictIds = useMemo(() => {
-    const conflicts = new Set<string>();
-    for (let i = 0; i < regions.length; i++)
-      for (let j = i + 1; j < regions.length; j++) {
-        const a = regions[i],
-          b = regions[j];
-        if (a.priority === b.priority && regionsOverlap(a, b)) {
-          conflicts.add(a.id);
-          conflicts.add(b.id);
-        }
-      }
-    return conflicts;
-  }, [regions]);
+  const conflictsByCalibration = useMemo(
+    () =>
+      new Map(
+        [...calibrationData].map(([key, calibration]) => [key, findConflicts(calibration.regions)]),
+      ),
+    [calibrationData],
+  );
+  const conflictIds = conflictsByCalibration.get(activeCalibrationKey);
   const updateTreeSelection = (selection: TreeSelection) => {
     workspace.updateCalibratorPreference({ selection });
   };
@@ -461,7 +476,7 @@ export function CalibratorPage() {
     if (persistence === 'debounce') scheduleSave(next);
   };
   const create = (rectangle = emptyRect) => {
-    if (!doc || !floorId) return;
+    if (!doc || !floorId) return false;
     const n = doc.nextRegionNumber;
     const region: CalibrationRegion = {
       id: crypto.randomUUID(),
@@ -475,6 +490,7 @@ export function CalibratorPage() {
     const next = { ...doc, nextRegionNumber: n + 1, regions: [...doc.regions, region] };
     applyDocument(next, 'immediate');
     selectRegion(region);
+    return true;
   };
   const update = (patch: Partial<CalibrationRegion>, persist = true) => {
     if (!draft || !doc) return;
@@ -971,7 +987,9 @@ export function CalibratorPage() {
                                     )}
                                     <span>{region.name}</span>
                                   </span>
-                                  {conflictIds.has(region.id) && (
+                                  {conflictsByCalibration
+                                    .get(calibrationKey(map.id, mapBasemap))
+                                    ?.has(region.id) && (
                                     <span
                                       className="tree-warning"
                                       title={t('calibrator.conflictWarning')}
@@ -1028,8 +1046,7 @@ export function CalibratorPage() {
           selectedId={selected}
           tool={tool}
           onCreate={(rectangle) => {
-            create(rectangle);
-            setTool('select');
+            if (create(rectangle)) setTool('resize');
           }}
           onSelect={(id) => {
             const region = regions.find((item) => item.id === id);
@@ -1324,7 +1341,7 @@ export function CalibratorPage() {
                 </small>
               ) : null}
             </div>
-            {draft && conflictIds.has(draft.id) && (
+            {draft && conflictIds?.has(draft.id) && (
               <p className="conflict-warning">
                 <TriangleAlert size={14} />
                 {t('calibrator.conflictWarning')}

@@ -102,14 +102,21 @@ export function CalibrationViewport(props: Props) {
           map.latLngToContainerPoint(project(handlePoint(region.rectangle, h))).distanceTo(pixel) <=
           HANDLE_HIT_RADIUS,
       );
-    const handleCursor = (handle: Handle) =>
-      handle.x === 0
-        ? 'ns-resize'
+    const handleCursor = (handle: Handle) => {
+      const angle = (current.current.data.projection.rotation * Math.PI) / 180;
+      const zIsVertical = Math.abs(Math.cos(angle)) >= Math.abs(Math.sin(angle));
+      return handle.x === 0
+        ? zIsVertical
+          ? 'ns-resize'
+          : 'ew-resize'
         : handle.z === 0
-          ? 'ew-resize'
-          : handle.x === handle.z
-            ? 'nwse-resize'
-            : 'nesw-resize';
+          ? zIsVertical
+            ? 'ew-resize'
+            : 'ns-resize'
+          : (handle.x === handle.z) === zIsVertical
+            ? 'nesw-resize'
+            : 'nwse-resize';
+    };
     const labelWidth = (name: string) => {
       const cached = labelWidths.get(name);
       if (cached !== undefined) return cached;
