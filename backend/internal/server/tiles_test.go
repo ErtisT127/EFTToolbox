@@ -2,10 +2,11 @@ package server
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"image"
 	"image/png"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,10 +15,6 @@ import (
 
 	contracts "efttoolbox/contracts"
 )
-
-type tileTransport func(*http.Request) (*http.Response, error)
-
-func (f tileTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestTileCacheAndValidation(t *testing.T) {
 	root, handler := mapFixture(t)
@@ -35,16 +32,15 @@ func TestTileCacheAndValidation(t *testing.T) {
 	if err := png.Encode(&imageData, image.NewNRGBA(image.Rect(0, 0, 2, 2))); err != nil {
 		t.Fatal(err)
 	}
-	previous := tileClient
-	defer func() { tileClient = previous }()
-	calls := 0
-	tileClient = &http.Client{Transport: tileTransport(func(r *http.Request) (*http.Response, error) {
-		calls++
-		if r.URL.String() != "https://assets.tarkov.dev/maps/test/1/0/0.png" {
-			t.Errorf("unexpected URL: %s", r.URL)
-		}
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(imageData.Bytes())), Header: make(http.Header)}, nil
-	})}
+	source := "https://assets.tarkov.dev/maps/test/1/0/0.png"
+	key := sha256.Sum256([]byte(source))
+	tilePath := filepath.Join(root, "upstream", "tiles", hex.EncodeToString(key[:])[:2], hex.EncodeToString(key[:])+".png")
+	if err := os.MkdirAll(filepath.Dir(tilePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tilePath, imageData.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 2; i++ {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest("GET", "/api/map-tiles/fixture/base/1/0/0.png", nil))
@@ -52,8 +48,10 @@ func TestTileCacheAndValidation(t *testing.T) {
 			t.Fatalf("tile response: %d %s", response.Code, response.Body)
 		}
 	}
-	if calls != 1 {
-		t.Fatalf("cached request used upstream: %d calls", calls)
+	missing := httptest.NewRecorder()
+	handler.ServeHTTP(missing, httptest.NewRequest("GET", "/api/map-tiles/fixture/base/1/1/0.png", nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing tile: %d %s", missing.Code, missing.Body)
 	}
 	for _, path := range []string{"base/0/0/0.png", "base/1/99/0.png", "base/1/a/0.png", "unknown/1/0/0.png"} {
 		response := httptest.NewRecorder()
@@ -61,8 +59,5 @@ func TestTileCacheAndValidation(t *testing.T) {
 		if response.Code != 404 {
 			t.Errorf("invalid tile %s: %d", path, response.Code)
 		}
-	}
-	if calls != 1 {
-		t.Fatal("invalid requests reached upstream")
 	}
 }

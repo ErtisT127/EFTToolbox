@@ -86,6 +86,7 @@ export function isUsableMapData(value: unknown): value is MapData {
     !value.floors.some((floor) => floor.id === value.baseFloor)
   )
     return false;
+  if (typeof value.svgUrl !== 'string' || (!value.svgUrl && value.tiles.length === 0)) return false;
   if (
     !value.floors.every(
       (floor) => hasStrings(floor, 'id', 'name') && isStringArray(floor.svgGroups),

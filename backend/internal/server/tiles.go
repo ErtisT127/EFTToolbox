@@ -1,38 +1,21 @@
 package server
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"image"
-	"image/png"
-	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	contracts "efttoolbox/contracts"
 )
 
 var tileLocks [64]sync.Mutex
-var tileDownloads = make(chan struct{}, 8)
-var tileClient = &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(r *http.Request, _ []*http.Request) error {
-	if !allowedTileURL(r.URL) {
-		return fmt.Errorf("tile redirect rejected")
-	}
-	return nil
-}}
-
-func allowedTileURL(u *url.URL) bool {
-	return u.Scheme == "https" && u.Host == "assets.tarkov.dev" && strings.HasPrefix(u.Path, "/maps/") && u.User == nil
-}
 
 func tileInBounds(t contracts.TileLayer, z, x, y int) bool {
 	if z < t.MinZoom || z > t.MaxZoom || z < 0 || z > 20 || len(t.Transform) != 4 || len(t.Bounds) != 2 || t.TileSize <= 0 {
@@ -66,11 +49,6 @@ func (s *mapStore) tile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	source := strings.NewReplacer("{z}", strconv.Itoa(z), "{x}", strconv.Itoa(x), "{y}", strconv.Itoa(y)).Replace(layer.SourceUrl)
-	u, err := url.Parse(source)
-	if err != nil || !allowedTileURL(u) {
-		http.Error(w, "invalid tile source", 500)
-		return
-	}
 	sum := sha256.Sum256([]byte(source))
 	key := hex.EncodeToString(sum[:])
 	lock := &tileLocks[int(sum[0])%len(tileLocks)]
@@ -79,66 +57,8 @@ func (s *mapStore) tile(w http.ResponseWriter, r *http.Request) {
 	name := filepath.Join(s.root, "upstream", "tiles", key[:2], key+".png")
 	data, err := os.ReadFile(name)
 	if err != nil {
-		select {
-		case tileDownloads <- struct{}{}:
-			defer func() { <-tileDownloads }()
-		case <-r.Context().Done():
-			return
-		}
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, source, nil)
-		if err != nil {
-			http.Error(w, "invalid tile request", 500)
-			return
-		}
-		response, err := tileClient.Do(req)
-		if err != nil {
-			http.Error(w, "tile upstream unavailable", http.StatusBadGateway)
-			return
-		}
-		defer func() { _ = response.Body.Close() }()
-		if response.StatusCode == http.StatusNotFound {
-			var blank bytes.Buffer
-			_ = png.Encode(&blank, image.NewNRGBA(image.Rect(0, 0, 1, 1)))
-			data = blank.Bytes()
-		} else if response.StatusCode != http.StatusOK {
-			http.Error(w, "tile upstream unavailable", http.StatusBadGateway)
-			return
-		} else {
-			data, err = io.ReadAll(io.LimitReader(response.Body, (4<<20)+1))
-			if err != nil || len(data) > 4<<20 {
-				http.Error(w, "invalid tile response", http.StatusBadGateway)
-				return
-			}
-			config, decodeErr := png.DecodeConfig(bytes.NewReader(data))
-			if decodeErr != nil || config.Width > 4096 || config.Height > 4096 {
-				http.Error(w, "invalid tile image", http.StatusBadGateway)
-				return
-			}
-		}
-		dir := filepath.Dir(name)
-		if err = os.MkdirAll(dir, 0o755); err != nil {
-			dataError(w, err)
-			return
-		}
-		file, err := os.CreateTemp(dir, ".tile-*")
-		if err != nil {
-			dataError(w, err)
-			return
-		}
-		temp := file.Name()
-		defer func() { _ = os.Remove(temp) }()
-		_, err = file.Write(data)
-		closeErr := file.Close()
-		if err == nil {
-			err = closeErr
-		}
-		if err == nil {
-			err = os.Rename(temp, name)
-		}
-		if err != nil {
-			dataError(w, err)
-			return
-		}
+		http.NotFound(w, r)
+		return
 	}
 	w.Header().Set("Content-Type", "image/png")
 	etagSum := sha256.Sum256(data)

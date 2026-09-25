@@ -1,6 +1,7 @@
 import { readFile, mkdir, access, writeFile, rename, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { downloadResponse, setAnnouncer } from '../../lib/download.mjs';
+import { tileUrls } from '../../lib/tile-urls.mjs';
 
 const upstream = new URL('../../../data/upstream/', import.meta.url);
 const root = new URL('tiles/', upstream);
@@ -26,17 +27,7 @@ try {
 const jobs = new Set();
 for (const summary of catalog) {
   const map = JSON.parse(await readFile(new URL(`maps/${summary.id}.json`, dataRoot), 'utf8'));
-  for (const tile of map.tiles) {
-    const [a, b, c, d] = tile.transform;
-    for (let z = tile.minZoom; z <= (allZooms ? tile.maxZoom : tile.minZoom); z++) {
-      const scale = 2 ** z / tile.tileSize;
-      const xs = tile.bounds.map((p) => (a * p.x + b) * scale);
-      const ys = tile.bounds.map((p) => (c * p.y + d) * scale);
-      for (let x = Math.floor(Math.min(...xs)); x < Math.ceil(Math.max(...xs)); x++)
-        for (let y = Math.floor(Math.min(...ys)); y < Math.ceil(Math.max(...ys)); y++)
-          jobs.add(tile.sourceUrl.replace('{z}', z).replace('{x}', x).replace('{y}', y));
-    }
-  }
+  for (const url of tileUrls(map, allZooms)) jobs.add(url);
 }
 console.log(`${jobs.size} tile URLs (${allZooms ? 'all zooms' : 'lowest zoom per floor'}).`);
 if (args.includes('--count')) process.exit(0);
