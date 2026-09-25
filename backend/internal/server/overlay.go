@@ -48,6 +48,8 @@ type overlayHub struct {
 	indexMu           sync.RWMutex
 	indexes           map[string]regionIndexSnapshot
 	overlapDedup      *overlapDedup
+	mobile            *mobileManager
+	mobileBase        http.Handler
 }
 
 type regionIndexSnapshot struct {
@@ -319,6 +321,9 @@ func (h *overlayHub) publish(e contracts.ServerEvent) {
 			delete(h.clients, ch)
 		}
 	}
+	if h.mobile != nil {
+		h.mobile.publish(e)
+	}
 }
 
 func (h *overlayHub) changed(kind, mapID, operationID string) {
@@ -336,6 +341,28 @@ func (h *overlayHub) changed(kind, mapID, operationID string) {
 		}
 	}
 	h.publish(e)
+	if kind == "preferences_changed" && h.mobile != nil && e.Preferences != nil {
+		h.mobile.publishFilters(e.Preferences, mapID)
+	}
+}
+
+func (h *overlayHub) mobileSnapshot() contracts.ServerEvent {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	players := make([]contracts.PlayerState, 0, len(h.players))
+	for _, player := range h.players {
+		players = append(players, player)
+	}
+	prefs := contracts.Preferences{SchemaVersion: 1, Maps: []contracts.MapPreference{}, StickerUsage: []contracts.StickerUsage{}}
+	_ = readJSON(h.store.userPath("map-preferences.json"), &prefs)
+	normalizeMapPreferences(&prefs)
+	view := h.view
+	monitorStatus := h.monitorStatus
+	event := contracts.ServerEvent{Type: "snapshot", Status: h.status, SentAt: time.Now().UTC().Format(time.RFC3339Nano), Players: &players, Preferences: &prefs, OverlayView: &view, GameMonitorStatus: &monitorStatus}
+	if settings, err := h.settings(); err == nil {
+		event.OverlaySettings = &settings
+	}
+	return event
 }
 
 // Caller holds mu; an old socket must not invalidate its replacement.

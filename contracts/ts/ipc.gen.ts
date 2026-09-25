@@ -10,8 +10,32 @@ export interface ErrorBody {
   code: string;
 }
 
+export interface MobileFiltersChanged {
+  mapId: string;
+  hiddenCategories: Array<string>;
+  collapsedGroups: Array<string>;
+  showAnnotations: boolean;
+  selectedTasks: Array<string>;
+  taskFilterActive: boolean;
+}
+
+export interface MobileStatus {
+  enabled: boolean;
+  url?: string;
+  address?: string;
+  connected: number;
+}
+
+export interface MobileStartRequest {
+  address: string;
+}
+
+export interface MobileInterfaces {
+  addresses: Array<string>;
+}
+
 export interface ServerEvent {
-  type: "snapshot" | "heartbeat" | "map_changed" | "mode_applied" | "player_upsert" | "player_remove" | "annotation_upsert" | "annotation_remove" | "preferences_changed" | "annotations_changed" | "overlay_settings" | "overlay_command" | "overlay_status" | "resources_changed" | "game_monitor_changed" | "calibration_changed";
+  type: "snapshot" | "heartbeat" | "map_changed" | "floor_changed" | "basemap_changed" | "center_changed" | "filters_changed" | "mode_applied" | "player_upsert" | "player_remove" | "annotation_upsert" | "annotation_remove" | "preferences_changed" | "annotations_changed" | "overlay_settings" | "overlay_command" | "overlay_status" | "resources_changed" | "game_monitor_changed" | "calibration_changed" | "session_end" | "session_expired";
   sentAt: string;
   status: Status;
   mapId?: string;
@@ -22,7 +46,9 @@ export interface ServerEvent {
   annotationId?: string;
   annotations?: Array<SharedAnnotation>;
   operationId?: string;
+  reason?: string;
   preferences?: Preferences;
+  filtersChanged?: MobileFiltersChanged;
   overlaySettings?: OverlaySettings;
   overlayView?: OverlayView;
   overlayCommand?: OverlayCommand;
@@ -223,7 +249,7 @@ export interface Annotations {
 
 export interface MapPreference {
   mapId: string;
-  basemap: string;
+  basemap: "svg" | "tiles";
   floorId: string;
   hiddenCategories: Array<string>;
   collapsedGroups: Array<string>;
@@ -427,6 +453,10 @@ export interface NumericLimit {
   readonly step: number;
   readonly precision: number;
 }
+
+export const MobileStatusLimits = {
+  connected: { min: 0, max: Infinity, step: 0, precision: 0 },
+} as const;
 
 export const MapPointLimits = {
   x: { min: -Infinity, max: Infinity, step: 0, precision: 2 },

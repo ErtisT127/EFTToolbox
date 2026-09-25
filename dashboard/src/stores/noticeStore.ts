@@ -3,9 +3,12 @@ import { useSyncExternalStore } from 'react';
 export interface Notice {
   id: number;
   message: string;
+  severity: NoticeSeverity;
   /** Present only when retrying the failed operation can actually change the outcome. */
   retry?: () => void;
 }
+
+export type NoticeSeverity = 'error' | 'warning' | 'success';
 
 /**
  * Transient, actionable messages that belong to no single page. Anything a page can show next to
@@ -27,16 +30,17 @@ class NoticeStore {
     this.version++;
     this.listeners.forEach((listener) => listener());
   }
-  push(message: string, retry?: () => void) {
+  push(message: string, retry?: () => void, severity: NoticeSeverity = 'error') {
     if (!message) return;
     const existing = this.notices.find((notice) => notice.message === message);
     if (existing) {
       // A newer retry for the same failure supersedes the one already on screen.
       existing.retry = retry;
+      existing.severity = severity;
       this.changed();
       return;
     }
-    this.notices = [...this.notices.slice(-2), { id: ++this.sequence, message, retry }];
+    this.notices = [...this.notices.slice(-2), { id: ++this.sequence, message, retry, severity }];
     this.changed();
   }
   dismiss(id: number) {

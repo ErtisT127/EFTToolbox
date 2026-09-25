@@ -27,6 +27,9 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 	mux := http.NewServeMux()
 	store := &mapStore{root: dataRoot}
 	hub := &overlayHub{store: store, status: status, players: map[string]contracts.PlayerState{}, clients: map[chan contracts.ServerEvent]bool{}, browseActive: map[string]bool{}, indexes: map[string]regionIndexSnapshot{}, overlapDedup: newOverlapDedup()}
+	mobile := newMobileManager(ctx, assets, hub)
+	hub.mobile = mobile
+	hub.mobileBase = mux
 	store.changed = hub.changed
 	store.calibrationReset = hub.invalidateCalibrationIndexes
 	if writer, ok := logWriter.(*dailyLogWriter); ok {
@@ -35,6 +38,7 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 	}
 	store.register(mux)
 	hub.register(mux)
+	mobile.register(mux)
 	hub.registerGameMonitor(mux)
 	hub.startGameMonitor(ctx)
 	if writer, ok := logWriter.(*dailyLogWriter); ok {
@@ -65,7 +69,12 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 		_ = json.NewEncoder(w).Encode(status)
 	})
 	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) { hub.websocket(ctx, w, r) })
-	mux.Handle("/", http.FileServer(assets))
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		http.FileServer(assets).ServeHTTP(w, r)
+	}))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := rand.Text()
 		r.Header.Set("X-Operation-ID", id)

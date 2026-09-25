@@ -12,6 +12,7 @@ type Props = {
   className?: string;
   onMount: (map: L.Map) => () => void;
   onError?: (error: string) => void;
+  onProgress?: (value: number) => void;
 };
 
 // The only owner of Leaflet and basemap lifetime. Feature layers attach via onMount.
@@ -36,6 +37,7 @@ export function MapViewport(props: Props) {
   useEffect(() => {
     const host = container.current!;
     const { data, preference, onMount } = current.current;
+    current.current.onProgress?.(30);
     const affine = data.tiles[0]?.transform;
     const crs = affine
       ? L.extend({}, L.CRS.Simple, {
@@ -82,11 +84,12 @@ export function MapViewport(props: Props) {
     const controller = new AbortController();
     setError('');
     if (data.svgUrl)
-      void fetch(data.svgUrl, { signal: controller.signal, cache: 'no-store' })
+      void fetch(data.svgUrl, { signal: controller.signal })
         .then(async (response) => {
           if (!response.ok) throw new Error('map.canvas.loadFailed');
           const text = await response.text();
           if (controller.signal.aborted) return;
+          current.current.onProgress?.(58);
           const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
           if (doc.querySelector('parsererror') || doc.documentElement.localName !== 'svg')
             throw new Error('map.canvas.svgInvalid');
@@ -100,7 +103,9 @@ export function MapViewport(props: Props) {
           const svg = document.importNode(doc.documentElement, true) as unknown as SVGElement;
           svgRef.current = svg;
           L.svgOverlay(svg, bounds, { pane: 'base', interactive: false }).addTo(map);
+          current.current.onProgress?.(70);
           setReady((n) => n + 1);
+          requestAnimationFrame(() => current.current.onProgress?.(95));
         })
         .catch((e) => {
           if (!controller.signal.aborted) {
@@ -117,7 +122,9 @@ export function MapViewport(props: Props) {
       map.setMinZoom(zoomRange(data, size.x, size.y).min);
     });
     observer.observe(host);
+    current.current.onProgress?.(40);
     setReady((n) => n + 1);
+    if (!data.svgUrl && !data.tiles.length) current.current.onProgress?.(95);
     return () => {
       controller.abort();
       observer.disconnect();
@@ -155,6 +162,7 @@ export function MapViewport(props: Props) {
     let tileErrorReported = false;
     for (const tile of [base, ...(active && active !== base ? [active] : [])]) {
       if (!tile) continue;
+      current.current.onProgress?.(76);
       L.tileLayer(tile.url, {
         pane: 'satellite',
         tileSize: tile.tileSize,
@@ -166,11 +174,15 @@ export function MapViewport(props: Props) {
         bounds: L.latLngBounds(tile.bounds.map(latLng)),
         opacity: tile === base && preference.floorId !== base.floorId ? 0.2 : 1,
       })
+        .on('tileloadstart', () => current.current.onProgress?.(78))
+        .on('tileload', () => current.current.onProgress?.(90))
         .on('tileerror', () => {
           if (tileErrorReported) return;
           tileErrorReported = true;
-          notices.push(t('map.canvas.tileFailed'));
+          current.current.onProgress?.(90);
+          notices.push(t('map.canvas.tileFailed'), undefined, 'warning');
         })
+        .on('load', () => requestAnimationFrame(() => current.current.onProgress?.(95)))
         .addTo(group);
     }
     return () => {

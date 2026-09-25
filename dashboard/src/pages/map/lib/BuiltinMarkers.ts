@@ -231,6 +231,11 @@ export class BuiltinMarkers extends L.Layer {
   activate(id: number) {
     const entry = this.entries[id];
     if (!entry?.visible) return;
+    if (this.pinned === id) {
+      this.pinned = null;
+      this.clearHover();
+      return;
+    }
     this.pinned = id;
     this.hovered = id;
     this.raise(id);
@@ -238,6 +243,10 @@ export class BuiltinMarkers extends L.Layer {
     this.updateOutlines();
     if (!entry.active && entry.marker.floorIds.length === 1)
       this.activateFloor(entry.marker.floorIds[0]);
+  }
+
+  getPosition(id: number) {
+    return this.entries[id]?.marker.position || null;
   }
 
   private dismissPinned = (event: MouseEvent) => {

@@ -30,6 +30,53 @@
         }
       }
     },
+    "MobileFiltersChanged": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mapId",
+        "hiddenCategories",
+        "collapsedGroups",
+        "showAnnotations",
+        "selectedTasks",
+        "taskFilterActive"
+      ],
+      "properties": {
+        "mapId": { "type": "string" },
+        "hiddenCategories": { "type": "array", "items": { "type": "string" } },
+        "collapsedGroups": { "type": "array", "items": { "type": "string" } },
+        "showAnnotations": { "type": "boolean" },
+        "selectedTasks": { "type": "array", "items": { "type": "string" } },
+        "taskFilterActive": { "type": "boolean" }
+      }
+    },
+    "MobileStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "connected"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "url": { "type": "string" },
+        "address": { "type": "string" },
+        "connected": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "MobileStartRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address"],
+      "properties": {
+        "address": { "type": "string" }
+      }
+    },
+    "MobileInterfaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["addresses"],
+      "properties": {
+        "addresses": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "ServerEvent": {
       "type": "object",
       "additionalProperties": false,
@@ -41,6 +88,10 @@
             "snapshot",
             "heartbeat",
             "map_changed",
+            "floor_changed",
+            "basemap_changed",
+            "center_changed",
+            "filters_changed",
             "mode_applied",
             "player_upsert",
             "player_remove",
@@ -53,7 +104,9 @@
             "overlay_status",
             "resources_changed",
             "game_monitor_changed",
-            "calibration_changed"
+            "calibration_changed",
+            "session_end",
+            "session_expired"
           ]
         },
         "sentAt": {
@@ -93,8 +146,14 @@
         "operationId": {
           "type": "string"
         },
+        "reason": {
+          "type": "string"
+        },
         "preferences": {
           "$ref": "#/$defs/Preferences"
+        },
+        "filtersChanged": {
+          "$ref": "#/$defs/MobileFiltersChanged"
         },
         "overlaySettings": {
           "$ref": "#/$defs/OverlaySettings"
@@ -702,8 +761,7 @@
         "selectedTasks",
         "center",
         "zoom",
-        "taskFilterActive",
-        "basemap"
+        "taskFilterActive"
       ],
       "properties": {
         "mapId": {
@@ -748,9 +806,6 @@
         },
         "taskFilterActive": {
           "type": "boolean"
-        },
-        "basemap": {
-          "type": "string"
         }
       }
     },

@@ -13,6 +13,30 @@ public sealed record ErrorBody {
   [JsonPropertyName("code")] public string Code { get; init; } = "";
 }
 
+public sealed record MobileFiltersChanged {
+  [JsonPropertyName("mapId")] public string MapId { get; init; } = "";
+  [JsonPropertyName("hiddenCategories")] public string[] HiddenCategories { get; init; } = [];
+  [JsonPropertyName("collapsedGroups")] public string[] CollapsedGroups { get; init; } = [];
+  [JsonPropertyName("showAnnotations")] public bool ShowAnnotations { get; init; } = default;
+  [JsonPropertyName("selectedTasks")] public string[] SelectedTasks { get; init; } = [];
+  [JsonPropertyName("taskFilterActive")] public bool TaskFilterActive { get; init; } = default;
+}
+
+public sealed record MobileStatus {
+  [JsonPropertyName("enabled")] public bool Enabled { get; init; } = default;
+  [JsonPropertyName("url")] public string? Url { get; init; } = null;
+  [JsonPropertyName("address")] public string? Address { get; init; } = null;
+  [JsonPropertyName("connected")] public int Connected { get; init; } = default;
+}
+
+public sealed record MobileStartRequest {
+  [JsonPropertyName("address")] public string Address { get; init; } = "";
+}
+
+public sealed record MobileInterfaces {
+  [JsonPropertyName("addresses")] public string[] Addresses { get; init; } = [];
+}
+
 public sealed record ServerEvent {
   [JsonPropertyName("type")] public string Type { get; init; } = "";
   [JsonPropertyName("sentAt")] public string SentAt { get; init; } = "";
@@ -25,7 +49,9 @@ public sealed record ServerEvent {
   [JsonPropertyName("annotationId")] public string? AnnotationId { get; init; } = null;
   [JsonPropertyName("annotations")] public SharedAnnotation[]? Annotations { get; init; } = null;
   [JsonPropertyName("operationId")] public string? OperationId { get; init; } = null;
+  [JsonPropertyName("reason")] public string? Reason { get; init; } = null;
   [JsonPropertyName("preferences")] public Preferences? Preferences { get; init; } = null;
+  [JsonPropertyName("filtersChanged")] public MobileFiltersChanged? FiltersChanged { get; init; } = null;
   [JsonPropertyName("overlaySettings")] public OverlaySettings? OverlaySettings { get; init; } = null;
   [JsonPropertyName("overlayView")] public OverlayView? OverlayView { get; init; } = null;
   [JsonPropertyName("overlayCommand")] public OverlayCommand? OverlayCommand { get; init; } = null;
@@ -425,6 +451,10 @@ public sealed record OverlayLog {
 }
 
 public readonly record struct NumericLimit(double Min, double Max, double Step, int Precision);
+
+public static class MobileStatusLimits {
+  public static readonly NumericLimit Connected = new(0, double.PositiveInfinity, 0, 0);
+}
 
 public static class MapPointLimits {
   public static readonly NumericLimit X = new(double.NegativeInfinity, double.PositiveInfinity, 0, 2);

@@ -1,0 +1,412 @@
+.cast-trigger {
+  position: absolute;
+  left: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 7;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  transition:
+    background var(--duration-fast) ease-out,
+    border-color var(--duration-fast) ease-out,
+    color var(--duration-fast) ease-out,
+    transform var(--duration-fast) ease-out;
+}
+
+.cast-trigger:hover:not(:disabled) {
+  background: var(--control-hover);
+  border-color: var(--border-hover);
+}
+
+.cast-trigger:active:not(:disabled) {
+  background: var(--panel-2);
+  border-color: var(--accent);
+  transform: translateY(1px);
+}
+
+.cast-trigger.connected {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.cast-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: max(var(--space-4), env(safe-area-inset-top))
+    max(var(--space-4), env(safe-area-inset-right)) max(var(--space-4), env(safe-area-inset-bottom))
+    max(var(--space-4), env(safe-area-inset-left));
+  background: rgb(10 12 11 / 0.78);
+  backdrop-filter: blur(3px);
+}
+
+.cast-dialog {
+  position: relative;
+  display: grid;
+  gap: var(--space-3);
+  width: min(360px, 100%);
+  max-height: min(
+    680px,
+    calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--space-4))
+  );
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.35);
+}
+
+.cast-dialog h2,
+.cast-dialog p {
+  margin: 0;
+}
+
+.cast-dialog label {
+  display: grid;
+  gap: var(--space-1);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.cast-dialog input,
+.cast-dialog select {
+  min-height: var(--control-height-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  padding: 0 var(--space-2);
+}
+
+.cast-dialog-close {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  transition:
+    background var(--duration-fast) ease-out,
+    color var(--duration-fast) ease-out,
+    transform var(--duration-fast) ease-out;
+}
+
+.cast-dialog-close:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.cast-dialog-close:active:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--accent);
+  transform: translateY(1px);
+}
+
+.cast-qr {
+  justify-self: center;
+  width: 192px;
+  height: 192px;
+  background: white;
+}
+
+.cast-address {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.cast-copy,
+.cast-primary,
+.cast-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  transition:
+    background var(--duration-fast) ease-out,
+    border-color var(--duration-fast) ease-out,
+    color var(--duration-fast) ease-out,
+    transform var(--duration-fast) ease-out;
+}
+
+.cast-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.cast-copy,
+.cast-actions button:not(.cast-danger) {
+  background: var(--panel-2);
+}
+
+.cast-primary:hover:not(:disabled),
+.cast-copy:hover:not(:disabled),
+.cast-actions button:not(.cast-danger):hover:not(:disabled) {
+  background: var(--control-hover);
+  border-color: var(--border-hover);
+  color: var(--text);
+}
+
+.cast-primary:active:not(:disabled),
+.cast-copy:active:not(:disabled),
+.cast-danger:active:not(:disabled),
+.cast-actions button:not(.cast-danger):active:not(:disabled) {
+  background: var(--panel);
+  transform: translateY(1px);
+}
+
+.cast-copy.copied:disabled {
+  border-color: var(--success);
+  color: var(--success);
+  opacity: 1;
+}
+
+.cast-danger {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--panel));
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+}
+
+.cast-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 20%, var(--panel));
+  border-color: var(--danger);
+}
+
+.cast-copy.copied:disabled {
+  background: color-mix(in srgb, var(--success) 12%, var(--panel));
+}
+
+.cast-actions {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.cast-actions > button {
+  flex: 1;
+}
+
+.cast-dialog input {
+  min-height: 44px;
+}
+
+.cast-dialog input:hover:not(:disabled) {
+  border-color: var(--border-hover);
+}
+
+.cast-dialog input:focus-visible {
+  border-color: var(--accent);
+}
+
+html:has(.cast-root),
+body:has(.cast-root),
+#root:has(.cast-root) {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.cast-root {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+.cast-root .map-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+.cast-controls {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.cast-control {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  color: var(--text);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.2);
+  backdrop-filter: blur(8px);
+  transition:
+    background var(--duration-fast) ease-out,
+    border-color var(--duration-fast) ease-out,
+    color var(--duration-fast) ease-out,
+    transform var(--duration-fast) ease-out;
+}
+
+.cast-control:hover:not(:disabled) {
+  background: var(--control-hover);
+  border-color: var(--border-hover);
+}
+
+.cast-control:active:not(:disabled) {
+  background: var(--panel-2);
+  transform: translateY(1px);
+}
+
+.cast-control.active {
+  background: var(--selected);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.cast-control.active:hover:not(:disabled) {
+  background: var(--selected-hover);
+  border-color: var(--accent);
+}
+
+.cast-layer-panel {
+  max-width: min(320px, calc(100vw - 24px));
+}
+
+.cast-loading,
+.cast-terminal {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  color: var(--text);
+  text-align: center;
+}
+
+.cast-loading-panel,
+.cast-terminal-panel {
+  display: grid;
+  gap: 10px;
+  width: min(360px, 100%);
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+}
+
+.cast-loading-panel button,
+.cast-terminal-panel button {
+  min-height: 44px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  transition:
+    background var(--duration-fast) ease-out,
+    border-color var(--duration-fast) ease-out,
+    color var(--duration-fast) ease-out,
+    transform var(--duration-fast) ease-out;
+}
+
+.cast-loading-panel button:hover:not(:disabled),
+.cast-terminal-panel button:hover:not(:disabled) {
+  background: var(--control-hover);
+  border-color: var(--border-hover);
+}
+
+.cast-loading-panel button:active:not(:disabled),
+.cast-terminal-panel button:active:not(:disabled) {
+  background: var(--panel);
+  transform: translateY(1px);
+}
+
+@media (max-width: 520px) {
+  .cast-dialog-backdrop {
+    align-items: end;
+    padding: max(var(--space-2), env(safe-area-inset-top))
+      max(var(--space-2), env(safe-area-inset-right))
+      max(var(--space-2), env(safe-area-inset-bottom))
+      max(var(--space-2), env(safe-area-inset-left));
+  }
+
+  .cast-dialog {
+    width: 100%;
+    max-height: calc(
+      100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--space-4)
+    );
+    padding: var(--space-4);
+  }
+}
+
+@media (max-height: 750px) and (min-width: 521px) {
+  .cast-controls {
+    max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - var(--space-4));
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cast-trigger,
+  .cast-dialog-close,
+  .cast-copy,
+  .cast-primary,
+  .cast-danger,
+  .cast-actions button,
+  .cast-control {
+    transition: none;
+  }
+
+  .cast-loading-panel button,
+  .cast-terminal-panel button {
+    transition: none;
+  }
+}
+
+.cast-loading-panel progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.cast-loading-panel strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.cast-error {
+  color: var(--danger);
+}

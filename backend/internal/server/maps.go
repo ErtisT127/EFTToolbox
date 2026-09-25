@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -283,6 +284,24 @@ func jsonResponse(w http.ResponseWriter, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
+func cachedJSONResponse(w http.ResponseWriter, r *http.Request, value any) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "json_encode_failed")
+		return
+	}
+	sum := sha256.Sum256(data)
+	etag := fmt.Sprintf(`"%x"`, sum)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+	w.Header().Set("ETag", etag)
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	_, _ = w.Write(append(data, '\n'))
+}
+
 func apiError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -439,7 +458,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			dataError(w, err)
 			return
 		}
-		jsonResponse(w, data)
+		cachedJSONResponse(w, r, data)
 	})
 	mux.HandleFunc("GET /api/maps", func(w http.ResponseWriter, r *http.Request) {
 		files, err := os.ReadDir(filepath.Join(s.activeUpstream(), "maps"))
@@ -472,7 +491,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			return len(order)
 		}
 		slices.SortStableFunc(summaries, func(a, b contracts.MapSummary) int { return rank(a.Id) - rank(b.Id) })
-		jsonResponse(w, summaries)
+		cachedJSONResponse(w, r, summaries)
 	})
 	mux.HandleFunc("GET /api/maps/{id}", func(w http.ResponseWriter, r *http.Request) {
 		m, err := s.load(r.PathValue("id"))
@@ -480,7 +499,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			dataError(w, err)
 			return
 		}
-		jsonResponse(w, m)
+		cachedJSONResponse(w, r, m)
 	})
 	mux.HandleFunc("GET /api/map-assets/{name}", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
@@ -494,7 +513,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		// The downloaded images are named after a hash of their own bytes, so a given name can
 		// never describe different content. Map SVGs are not: a refresh replaces them in place
 		// under a stable name, so those still have to be revalidated.
-		if hasContentHashName(name) {
+		if hasContentHashName(name) || ext == ".woff2" {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		} else {
 			w.Header().Set("Cache-Control", "no-cache")
@@ -517,7 +536,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			dataError(w, errors.New("invalid saved annotations"))
 			return
 		}
-		jsonResponse(w, data)
+		cachedJSONResponse(w, r, data)
 	})
 	mux.HandleFunc("GET /api/maps/{id}/calibration", func(w http.ResponseWriter, r *http.Request) {
 		basemap := r.URL.Query().Get("basemap")
@@ -540,7 +559,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			apiError(w, http.StatusInternalServerError, "calibration_invalid")
 			return
 		}
-		jsonResponse(w, data)
+		cachedJSONResponse(w, r, data)
 	})
 	mux.HandleFunc("PUT /api/maps/{id}/calibration", func(w http.ResponseWriter, r *http.Request) {
 		basemap := r.URL.Query().Get("basemap")
@@ -638,7 +657,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			return
 		}
 		normalizeMapPreferences(&data)
-		jsonResponse(w, data)
+		cachedJSONResponse(w, r, data)
 	})
 	mux.HandleFunc("PUT /api/map-preferences", func(w http.ResponseWriter, r *http.Request) {
 		var data contracts.Preferences

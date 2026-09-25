@@ -141,6 +141,13 @@ func (s *mapStore) tile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Cache-Control", "no-cache")
+	etagSum := sha256.Sum256(data)
+	etag := fmt.Sprintf(`"%x"`, etagSum)
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("ETag", etag)
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	_, _ = w.Write(data)
 }

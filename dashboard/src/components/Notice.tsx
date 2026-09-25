@@ -16,8 +16,8 @@ function NoticeItem({ notice }: { notice: NoticeMessage }) {
   }, [notice.id, paused]);
   return (
     <div
-      className="notice"
-      role="alert"
+      className={`notice notice-${notice.severity}`}
+      role={notice.severity === 'success' ? 'status' : 'alert'}
       onPointerEnter={() => setPaused(true)}
       onPointerLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}

@@ -419,6 +419,15 @@ summary {
   pointer-events: auto;
   max-height: 100%;
 }
+@media (max-height: 750px) {
+  .tool-group {
+    top: min(
+      max(264px, 50% - 125px),
+      max(var(--space-4), calc(100% - var(--space-4) - 44px - var(--space-2) - 160px))
+    );
+    bottom: calc(var(--space-4) + 52px);
+  }
+}
 .tool-options {
   width: 202px;
   overflow: auto;
@@ -1203,6 +1212,12 @@ output {
   font-size: var(--text-md);
   animation: notice-in var(--duration-normal) ease-out;
   pointer-events: auto;
+}
+.notice-warning {
+  border-color: var(--warning);
+}
+.notice-success {
+  border-color: var(--success);
 }
 .notice-action {
   border-color: var(--border);

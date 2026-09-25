@@ -5,6 +5,7 @@ import { AppShell as App } from './app/AppShell';
 import 'leaflet/dist/leaflet.css';
 import './styles/fonts.css';
 import './styles/app.css';
+import './styles/cast.css';
 import './styles/map-display.gen.css';
 import './styles/map.css';
 import './styles/calibrator.css';

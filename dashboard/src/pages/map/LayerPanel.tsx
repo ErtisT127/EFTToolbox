@@ -9,9 +9,17 @@ type Props = {
   preference: MapPreference;
   onPreference: (changes: Partial<MapPreference>) => void;
   onClose: () => void;
+  readOnly?: boolean;
 };
 
-export function LayerPanel({ data, items, preference, onPreference, onClose }: Props) {
+export function LayerPanel({
+  data,
+  items,
+  preference,
+  onPreference,
+  onClose,
+  readOnly = false,
+}: Props) {
   const { t } = useLocale();
   const toggleCategory = (categoryId: string) => {
     const hidden = preference.hiddenCategories;
@@ -46,8 +54,10 @@ export function LayerPanel({ data, items, preference, onPreference, onClose }: P
         {data.svgUrl && data.tiles.length > 0 && (
           <div className="basemap-section">
             {[
-              ...(data.svgUrl ? [{ id: 'svg', label: 'map.layers.abstract' }] : []),
-              ...(data.tiles.length ? [{ id: 'tiles', label: 'map.layers.satellite' }] : []),
+              ...(data.svgUrl ? [{ id: 'svg' as const, label: 'map.layers.abstract' }] : []),
+              ...(data.tiles.length
+                ? [{ id: 'tiles' as const, label: 'map.layers.satellite' }]
+                : []),
             ].map((mode) => (
               <label className="check-row" key={mode.id}>
                 <input
@@ -88,94 +98,99 @@ export function LayerPanel({ data, items, preference, onPreference, onClose }: P
             ))}
           </details>
         )}
-        <details
-          open={expanded('annotations')}
-          onToggle={(e) => toggleGroup('annotations', e.currentTarget.open)}
-        >
-          <summary>
-            <input
-              type="checkbox"
-              checked={preference.showAnnotations}
-              onClick={(e) => e.stopPropagation()}
-              onChange={(e) => onPreference({ showAnnotations: e.target.checked })}
-            />
-            <ChevronRight className="group-chevron" size={16} aria-hidden="true" />
-            {t('map.layers.annotations')}
-          </summary>
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={preference.showAnnotations}
-              onChange={(e) => onPreference({ showAnnotations: e.target.checked })}
-            />
-            {t('map.layers.myMarkers')}
-            <span className="count">
-              {items.filter((a) => a.floorId === preference.floorId).length}
-            </span>
-          </label>
-        </details>
-        {[...new Set(data.categories.map((c) => c.groupId))].map((groupId) => (
+        {!readOnly && (
           <details
-            key={groupId}
-            open={expanded(groupId)}
-            onToggle={(e) => toggleGroup(groupId, e.currentTarget.open)}
+            open={expanded('annotations')}
+            onToggle={(e) => toggleGroup('annotations', e.currentTarget.open)}
           >
             <summary>
               <input
                 type="checkbox"
-                aria-label={t('map.layers.toggleGroup', {
-                  group: t(`map.groups.${groupId}`),
-                })}
-                ref={(input) => {
-                  if (!input) return;
-                  const categories = data.categories.filter((c) => c.groupId === groupId);
-                  const visible = categories.filter(
-                    (c) => !preference.hiddenCategories.includes(c.id),
-                  ).length;
-                  input.indeterminate = visible > 0 && visible < categories.length;
-                }}
-                checked={data.categories
-                  .filter((c) => c.groupId === groupId)
-                  .every((c) => !preference.hiddenCategories.includes(c.id))}
+                checked={preference.showAnnotations}
                 onClick={(e) => e.stopPropagation()}
-                onChange={(e) => {
-                  const ids = data.categories.filter((c) => c.groupId === groupId).map((c) => c.id);
-                  onPreference({
-                    hiddenCategories: e.target.checked
-                      ? preference.hiddenCategories.filter((c) => !ids.includes(c))
-                      : [...new Set([...preference.hiddenCategories, ...ids])],
-                  });
-                }}
+                onChange={(e) => onPreference({ showAnnotations: e.target.checked })}
               />
               <ChevronRight className="group-chevron" size={16} aria-hidden="true" />
-              {t(`map.groups.${groupId}`)}
+              {t('map.layers.annotations')}
             </summary>
-            {data.categories
-              .filter((c) => c.groupId === groupId)
-              .map((category) => (
-                <label className="check-row" key={category.id}>
-                  <input
-                    type="checkbox"
-                    checked={!preference.hiddenCategories.includes(category.id)}
-                    onChange={() => toggleCategory(category.id)}
-                  />
-                  {category.iconUrl && (
-                    <img className="category-icon" src={category.iconUrl} alt="" />
-                  )}
-                  {category.name}
-                  <span className="count">
-                    {
-                      data.markers.filter(
-                        (m) =>
-                          m.categoryIds.includes(category.id) &&
-                          m.floorIds.includes(preference.floorId),
-                      ).length
-                    }
-                  </span>
-                </label>
-              ))}
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={preference.showAnnotations}
+                onChange={(e) => onPreference({ showAnnotations: e.target.checked })}
+              />
+              {t('map.layers.myMarkers')}
+              <span className="count">
+                {items.filter((a) => a.floorId === preference.floorId).length}
+              </span>
+            </label>
           </details>
-        ))}
+        )}
+        {!readOnly &&
+          [...new Set(data.categories.map((c) => c.groupId))].map((groupId) => (
+            <details
+              key={groupId}
+              open={expanded(groupId)}
+              onToggle={(e) => toggleGroup(groupId, e.currentTarget.open)}
+            >
+              <summary>
+                <input
+                  type="checkbox"
+                  aria-label={t('map.layers.toggleGroup', {
+                    group: t(`map.groups.${groupId}`),
+                  })}
+                  ref={(input) => {
+                    if (!input) return;
+                    const categories = data.categories.filter((c) => c.groupId === groupId);
+                    const visible = categories.filter(
+                      (c) => !preference.hiddenCategories.includes(c.id),
+                    ).length;
+                    input.indeterminate = visible > 0 && visible < categories.length;
+                  }}
+                  checked={data.categories
+                    .filter((c) => c.groupId === groupId)
+                    .every((c) => !preference.hiddenCategories.includes(c.id))}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => {
+                    const ids = data.categories
+                      .filter((c) => c.groupId === groupId)
+                      .map((c) => c.id);
+                    onPreference({
+                      hiddenCategories: e.target.checked
+                        ? preference.hiddenCategories.filter((c) => !ids.includes(c))
+                        : [...new Set([...preference.hiddenCategories, ...ids])],
+                    });
+                  }}
+                />
+                <ChevronRight className="group-chevron" size={16} aria-hidden="true" />
+                {t(`map.groups.${groupId}`)}
+              </summary>
+              {data.categories
+                .filter((c) => c.groupId === groupId)
+                .map((category) => (
+                  <label className="check-row" key={category.id}>
+                    <input
+                      type="checkbox"
+                      checked={!preference.hiddenCategories.includes(category.id)}
+                      onChange={() => toggleCategory(category.id)}
+                    />
+                    {category.iconUrl && (
+                      <img className="category-icon" src={category.iconUrl} alt="" />
+                    )}
+                    {category.name}
+                    <span className="count">
+                      {
+                        data.markers.filter(
+                          (m) =>
+                            m.categoryIds.includes(category.id) &&
+                            m.floorIds.includes(preference.floorId),
+                        ).length
+                      }
+                    </span>
+                  </label>
+                ))}
+            </details>
+          ))}
       </div>
     </>
   );

@@ -1,6 +1,7 @@
 import { mapDisplay } from '../../../../contracts/ts/map-display.gen';
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
+import { useTranslation } from 'react-i18next';
 import type {
   Annotation,
   MapData,
@@ -49,13 +50,16 @@ type Props = {
   onZoomChange: (state: { zoom: number; min: number; max: number }) => void;
   onReady: (map: L.Map | null) => void;
   onError?: (error: string) => void;
+  onProgress?: (value: number) => void;
   players: Map<string, PlayerState>;
   playerFollow?: boolean;
   playerAutoZoom?: { enabled: boolean; zoomLevel: number };
+  readOnly?: boolean;
 };
 const point = (value: L.LatLng): MapPoint => ({ x: value.lng, y: -value.lat });
 
 export function MapCanvas(props: Props) {
+  const { t } = useTranslation();
   const current = useRef(props);
   useEffect(() => {
     current.current = props;
@@ -190,6 +194,13 @@ export function MapCanvas(props: Props) {
       brushPreview = null;
     }
     let builtinClick = false;
+    const readOnlyTooltip = L.tooltip({ direction: 'top', offset: [0, -12] });
+    let pinnedAnnotationId: string | null = null;
+    let singleTouch: { started: number; x: number; y: number; moved: boolean } | null = null;
+    let suppressSyntheticClick: { x: number; y: number; until: number } | null = null;
+    let touchTap: { started: number; center: L.Point; distance: number; moved: boolean } | null =
+      null;
+    let lastTwoFingerTap = 0;
     const eventPixel = (event: PointerEvent) => map.mouseEventToContainerPoint(event);
     const toPoint = (pixel: L.Point) => point(map.containerPointToLatLng(pixel));
     function hit(a: Annotation, pixel: MapPoint, radius = 8) {
@@ -215,7 +226,9 @@ export function MapCanvas(props: Props) {
       if (gesture) return;
       const pixel = eventPixel(event),
         original = current.current.items;
-      const target = [...original].reverse().find((a) => hit(a, pixel));
+      const target = current.current.readOnly
+        ? undefined
+        : [...original].reverse().find((a) => hit(a, pixel));
       const mode = space ? 'edit' : current.current.tool;
       const tool =
         event.button === 1 ||
@@ -395,11 +408,12 @@ export function MapCanvas(props: Props) {
             selection.add(a.id);
         }
       }
-      if (g.draft !== g.original) p.onCommit(g.draft);
+      if (!p.readOnly && g.draft !== g.original) p.onCommit(g.draft);
       paint(g.draft);
       if (
         !g.moved &&
         g.builtin !== null &&
+        !p.readOnly &&
         ['select', 'edit'].includes(p.tool) &&
         !event.shiftKey &&
         !space &&
@@ -414,7 +428,7 @@ export function MapCanvas(props: Props) {
     function context(event: MouseEvent) {
       event.preventDefault();
       event.stopPropagation();
-      if (current.current.tool !== 'edit') return;
+      if (current.current.readOnly || current.current.tool !== 'edit') return;
       const pixel = map.mouseEventToContainerPoint(event),
         target = [...current.current.items].reverse().find((a) => hit(a, pixel));
       if (!target) return;
@@ -455,16 +469,29 @@ export function MapCanvas(props: Props) {
         paint(current.current.items);
         current.current.onSelectTool('select');
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+      if (
+        !current.current.readOnly &&
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLowerCase() === 'z'
+      ) {
         event.preventDefault();
         if (event.shiftKey) current.current.onRedo();
         else current.current.onUndo();
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
+      if (
+        !current.current.readOnly &&
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLowerCase() === 'y'
+      ) {
         event.preventDefault();
         current.current.onRedo();
       }
-      if (current.current.tool === 'edit' && event.key === 'Delete' && selection.size) {
+      if (
+        !current.current.readOnly &&
+        current.current.tool === 'edit' &&
+        event.key === 'Delete' &&
+        selection.size
+      ) {
         event.preventDefault();
         current.current.onCommit(
           current.current.items.filter((a) => !selection.has(a.id) || !isVisible(a)),
@@ -478,7 +505,7 @@ export function MapCanvas(props: Props) {
         event.preventDefault();
         const dx = event.key === 'ArrowLeft' ? -10 : event.key === 'ArrowRight' ? 10 : 0,
           dy = event.key === 'ArrowUp' ? -10 : event.key === 'ArrowDown' ? 10 : 0;
-        if (current.current.tool === 'edit' && selection.size) {
+        if (!current.current.readOnly && current.current.tool === 'edit' && selection.size) {
           current.current.onCommit(
             current.current.items.map((a) =>
               selection.has(a.id) && isVisible(a)
@@ -518,18 +545,155 @@ export function MapCanvas(props: Props) {
       event.preventDefault();
       event.stopPropagation();
     };
-    map.dragging.disable();
-    host.addEventListener('pointerdown', down, true);
-    host.addEventListener('pointermove', move, true);
-    host.addEventListener('pointerup', up, true);
-    host.addEventListener('pointercancel', cancel, true);
-    host.addEventListener('contextmenu', context, true);
-    host.addEventListener('pointerleave', leave);
-    host.addEventListener('dragstart', preventDrag);
-    host.addEventListener('click', consumeBuiltinClick, true);
-    window.addEventListener('keydown', keydown);
-    window.addEventListener('keyup', keyup);
-    window.addEventListener('blur', blur);
+    const handledReadOnlyEvents = new WeakSet<Event>();
+    const readOnlyClick = (
+      pixel: L.Point,
+      target: EventTarget | null,
+      originalEvent?: Event,
+    ): boolean => {
+      if (!current.current.readOnly) return false;
+      if (originalEvent) {
+        if (handledReadOnlyEvents.has(originalEvent)) return false;
+        handledReadOnlyEvents.add(originalEvent);
+      }
+      const builtin = builtins.current?.hit(pixel, target);
+      if (builtin !== null && builtin !== undefined) {
+        pinnedAnnotationId = null;
+        readOnlyTooltip.remove();
+        const position = builtins.current?.getPosition(builtin);
+        if (position)
+          map.setView(latLng(position), map.getZoom(), { animate: true, duration: 0.12 });
+        builtins.current?.activate(builtin);
+        return true;
+      }
+      const annotation = [...current.current.items].reverse().find((item) => hit(item, pixel));
+      if (annotation) {
+        if (pinnedAnnotationId === annotation.id) {
+          pinnedAnnotationId = null;
+          readOnlyTooltip.remove();
+          return true;
+        }
+        pinnedAnnotationId = annotation.id;
+        map.setView(latLng(annotation.points[0]), map.getZoom(), { animate: true, duration: 0.12 });
+        const content = annotation.text || annotation.emoji || t('map.canvas.annotation');
+        const label = document.createElement('span');
+        label.textContent = content;
+        readOnlyTooltip.setLatLng(latLng(annotation.points[0])).setContent(label).addTo(map);
+        return true;
+      }
+      pinnedAnnotationId = null;
+      readOnlyTooltip.remove();
+      return false;
+    };
+    const readOnlyDomClick = (event: MouseEvent) => {
+      if (suppressSyntheticClick && performance.now() < suppressSyntheticClick.until) {
+        const x = event.clientX - host.getBoundingClientRect().left;
+        const y = event.clientY - host.getBoundingClientRect().top;
+        if (L.point(x, y).distanceTo([suppressSyntheticClick.x, suppressSyntheticClick.y]) <= 24) {
+          suppressSyntheticClick = null;
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+      }
+      if (readOnlyClick(map.mouseEventToContainerPoint(event), event.target, event)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    const readOnlyMapClick = (event: L.LeafletMouseEvent) => {
+      readOnlyClick(event.containerPoint, event.originalEvent.target, event.originalEvent);
+    };
+    const touchStart = (event: TouchEvent) => {
+      if (!current.current.readOnly) return;
+      suppressSyntheticClick = null;
+      if (event.touches.length === 1) {
+        const touch = event.touches[0];
+        singleTouch = {
+          started: performance.now(),
+          x: touch.clientX,
+          y: touch.clientY,
+          moved: false,
+        };
+        touchTap = null;
+        return;
+      }
+      singleTouch = null;
+      if (event.touches.length !== 2) return;
+      const a = event.touches[0],
+        b = event.touches[1];
+      touchTap = {
+        started: performance.now(),
+        center: L.point((a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2),
+        distance: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+        moved: false,
+      };
+    };
+    const touchMove = (event: TouchEvent) => {
+      if (singleTouch && event.touches.length === 1) {
+        const touch = event.touches[0];
+        if (Math.hypot(touch.clientX - singleTouch.x, touch.clientY - singleTouch.y) > 12)
+          singleTouch.moved = true;
+      }
+      if (!touchTap || event.touches.length !== 2) return;
+      const a = event.touches[0],
+        b = event.touches[1];
+      const center = L.point((a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2);
+      const distance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      if (center.distanceTo(touchTap.center) > 12 || Math.abs(distance - touchTap.distance) > 12)
+        touchTap.moved = true;
+    };
+    const touchEnd = (event: TouchEvent) => {
+      if (event.touches.length === 0 && singleTouch) {
+        const tap = singleTouch;
+        singleTouch = null;
+        const touch = event.changedTouches[0];
+        const rect = host.getBoundingClientRect();
+        if (touch && !tap.moved && performance.now() - tap.started <= 300) {
+          const pixel = L.point(touch.clientX - rect.left, touch.clientY - rect.top);
+          if (readOnlyClick(pixel, event.target, event)) {
+            event.preventDefault();
+            event.stopPropagation();
+            suppressSyntheticClick = { x: pixel.x, y: pixel.y, until: performance.now() + 300 };
+          }
+        }
+      }
+      if (!touchTap || event.touches.length !== 0) return;
+      const tap = touchTap;
+      touchTap = null;
+      if (tap.moved || performance.now() - tap.started > 250) return;
+      const now = performance.now();
+      if (now - lastTwoFingerTap <= 350) {
+        event.preventDefault();
+        map.setZoom(Math.max(map.getMinZoom(), map.getZoom() - 1), {
+          animate: true,
+          duration: 0.12,
+        });
+        lastTwoFingerTap = 0;
+      } else lastTwoFingerTap = now;
+    };
+    if (current.current.readOnly) {
+      map.dragging.enable();
+      map.touchZoom.enable();
+      host.addEventListener('click', readOnlyDomClick, true);
+      map.on('click', readOnlyMapClick);
+      host.addEventListener('touchstart', touchStart, { passive: true });
+      host.addEventListener('touchmove', touchMove, { passive: true });
+      host.addEventListener('touchend', touchEnd, { passive: false });
+    } else {
+      map.dragging.disable();
+      host.addEventListener('pointerdown', down, true);
+      host.addEventListener('pointermove', move, true);
+      host.addEventListener('pointerup', up, true);
+      host.addEventListener('pointercancel', cancel, true);
+      host.addEventListener('contextmenu', context, true);
+      host.addEventListener('pointerleave', leave);
+      host.addEventListener('dragstart', preventDrag);
+      host.addEventListener('click', consumeBuiltinClick, true);
+      window.addEventListener('keydown', keydown);
+      window.addEventListener('keyup', keyup);
+      window.addEventListener('blur', blur);
+    }
     const onMove = () => {
       const center = map.getCenter();
       current.current.onView([center.lat, center.lng], map.getZoom());
@@ -551,18 +715,30 @@ export function MapCanvas(props: Props) {
       clearTimeout(zoomTimer);
       clearBrush();
       host.removeEventListener('wheel', wheelMarkers);
-      host.removeEventListener('dragstart', preventDrag);
-      host.removeEventListener('click', consumeBuiltinClick, true);
+      if (!current.current.readOnly) {
+        host.removeEventListener('dragstart', preventDrag);
+        host.removeEventListener('click', consumeBuiltinClick, true);
+      }
+      if (current.current.readOnly) {
+        host.removeEventListener('click', readOnlyDomClick, true);
+        map.off('click', readOnlyMapClick);
+        host.removeEventListener('touchstart', touchStart);
+        host.removeEventListener('touchmove', touchMove);
+        host.removeEventListener('touchend', touchEnd);
+        readOnlyTooltip.remove();
+      }
       host.classList.remove('markers-zooming');
-      window.removeEventListener('keydown', keydown);
-      window.removeEventListener('keyup', keyup);
-      window.removeEventListener('blur', blur);
-      host.removeEventListener('pointerdown', down, true);
-      host.removeEventListener('pointermove', move, true);
-      host.removeEventListener('pointerup', up, true);
-      host.removeEventListener('pointercancel', cancel, true);
-      host.removeEventListener('contextmenu', context, true);
-      host.removeEventListener('pointerleave', leave);
+      if (!current.current.readOnly) {
+        window.removeEventListener('keydown', keydown);
+        window.removeEventListener('keyup', keyup);
+        window.removeEventListener('blur', blur);
+        host.removeEventListener('pointerdown', down, true);
+        host.removeEventListener('pointermove', move, true);
+        host.removeEventListener('pointerup', up, true);
+        host.removeEventListener('pointercancel', cancel, true);
+        host.removeEventListener('contextmenu', context, true);
+        host.removeEventListener('pointerleave', leave);
+      }
       map.off('moveend', onMove);
       map.off('zoomend zoomlevelschange', publishZoom);
       current.current.onReady(null);
@@ -603,6 +779,7 @@ export function MapCanvas(props: Props) {
       className={`tool-${props.tool}`}
       onMount={mount}
       onError={props.onError}
+      onProgress={props.onProgress}
     />
   );
 }

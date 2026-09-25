@@ -38,6 +38,7 @@ import { notices } from '../../stores/noticeStore';
 import { ToolToolbar } from '../../components/ToolToolbar';
 import { MapUnavailableState } from '../../components/MapUnavailableState';
 import { AppPopover } from '../../components/AppPopover';
+import { CastControl } from '../../components/CastControl';
 
 function RaidTimes({ clock }: { clock: MapClock }) {
   const { t } = useLocale();
@@ -268,7 +269,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
       if (document.fullscreenElement) await document.exitFullscreen();
       else await workArea.current?.requestFullscreen();
     } catch {
-      notices.push(t('errors.fullscreen_unsupported'));
+      notices.push(t('errors.fullscreen_unsupported'), undefined, 'warning');
     }
   };
 
@@ -372,6 +373,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
               }}
               onError={setCanvasError}
             />
+            <CastControl />
             <div className="view-controls">
               <div className="zoom-buttons">
                 <button

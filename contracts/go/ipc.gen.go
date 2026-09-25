@@ -13,23 +13,49 @@ type ErrorBody struct {
 	Code string `json:"code"`
 }
 
+type MobileFiltersChanged struct {
+	MapId            string   `json:"mapId"`
+	HiddenCategories []string `json:"hiddenCategories"`
+	CollapsedGroups  []string `json:"collapsedGroups"`
+	ShowAnnotations  bool     `json:"showAnnotations"`
+	SelectedTasks    []string `json:"selectedTasks"`
+	TaskFilterActive bool     `json:"taskFilterActive"`
+}
+
+type MobileStatus struct {
+	Enabled   bool    `json:"enabled"`
+	Url       *string `json:"url,omitempty"`
+	Address   *string `json:"address,omitempty"`
+	Connected int     `json:"connected"`
+}
+
+type MobileStartRequest struct {
+	Address string `json:"address"`
+}
+
+type MobileInterfaces struct {
+	Addresses []string `json:"addresses"`
+}
+
 type ServerEvent struct {
-	Type              string              `json:"type"`
-	SentAt            string              `json:"sentAt"`
-	Status            Status              `json:"status"`
-	MapId             *string             `json:"mapId,omitempty"`
-	Player            *PlayerState        `json:"player,omitempty"`
-	PlayerId          *string             `json:"playerId,omitempty"`
-	Players           *[]PlayerState      `json:"players,omitempty"`
-	Annotation        *SharedAnnotation   `json:"annotation,omitempty"`
-	AnnotationId      *string             `json:"annotationId,omitempty"`
-	Annotations       *[]SharedAnnotation `json:"annotations,omitempty"`
-	OperationId       *string             `json:"operationId,omitempty"`
-	Preferences       *Preferences        `json:"preferences,omitempty"`
-	OverlaySettings   *OverlaySettings    `json:"overlaySettings,omitempty"`
-	OverlayView       *OverlayView        `json:"overlayView,omitempty"`
-	OverlayCommand    *OverlayCommand     `json:"overlayCommand,omitempty"`
-	GameMonitorStatus *GameMonitorStatus  `json:"gameMonitorStatus,omitempty"`
+	Type              string                `json:"type"`
+	SentAt            string                `json:"sentAt"`
+	Status            Status                `json:"status"`
+	MapId             *string               `json:"mapId,omitempty"`
+	Player            *PlayerState          `json:"player,omitempty"`
+	PlayerId          *string               `json:"playerId,omitempty"`
+	Players           *[]PlayerState        `json:"players,omitempty"`
+	Annotation        *SharedAnnotation     `json:"annotation,omitempty"`
+	AnnotationId      *string               `json:"annotationId,omitempty"`
+	Annotations       *[]SharedAnnotation   `json:"annotations,omitempty"`
+	OperationId       *string               `json:"operationId,omitempty"`
+	Reason            *string               `json:"reason,omitempty"`
+	Preferences       *Preferences          `json:"preferences,omitempty"`
+	FiltersChanged    *MobileFiltersChanged `json:"filtersChanged,omitempty"`
+	OverlaySettings   *OverlaySettings      `json:"overlaySettings,omitempty"`
+	OverlayView       *OverlayView          `json:"overlayView,omitempty"`
+	OverlayCommand    *OverlayCommand       `json:"overlayCommand,omitempty"`
+	GameMonitorStatus *GameMonitorStatus    `json:"gameMonitorStatus,omitempty"`
 }
 
 type GameMonitorSettings struct {
@@ -429,6 +455,12 @@ type NumericLimit struct {
 	Max       float64
 	Step      float64
 	Precision int
+}
+
+var MobileStatusLimits = struct {
+	Connected NumericLimit
+}{
+	Connected: NumericLimit{Min: 0, Max: math.Inf(1), Step: 0, Precision: 0},
 }
 
 var MapPointLimits = struct {
