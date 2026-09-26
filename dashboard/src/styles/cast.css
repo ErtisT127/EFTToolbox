@@ -1,12 +1,10 @@
 .cast-trigger {
-  position: absolute;
-  left: var(--space-4);
-  bottom: var(--space-4);
-  z-index: 7;
+  position: static;
+  flex: 0 0 45px;
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 45px;
+  height: 45px;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -98,8 +96,8 @@
   right: var(--space-2);
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 45px;
+  height: 45px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -144,7 +142,7 @@
   justify-content: center;
   gap: var(--space-2);
   width: 100%;
-  min-height: 44px;
+  min-height: 45px;
   border: 1px solid var(--border);
   transition:
     background var(--duration-fast) ease-out,
@@ -154,9 +152,9 @@
 }
 
 .cast-primary {
-  background: var(--accent);
+  background: color-mix(in srgb, var(--accent) 48%, var(--bg));
   border-color: var(--accent);
-  color: var(--bg);
+  color: var(--text);
 }
 
 .cast-copy,
@@ -164,7 +162,12 @@
   background: var(--panel-2);
 }
 
-.cast-primary:hover:not(:disabled),
+.cast-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 52%, var(--bg));
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 .cast-copy:hover:not(:disabled),
 .cast-actions button:not(.cast-danger):hover:not(:disabled) {
   background: var(--control-hover);
@@ -176,8 +179,17 @@
 .cast-copy:active:not(:disabled),
 .cast-danger:active:not(:disabled),
 .cast-actions button:not(.cast-danger):active:not(:disabled) {
-  background: var(--panel);
   transform: translateY(1px);
+}
+
+.cast-primary:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 36%, var(--bg));
+}
+
+.cast-copy:active:not(:disabled),
+.cast-danger:active:not(:disabled),
+.cast-actions button:not(.cast-danger):active:not(:disabled) {
+  background: var(--panel);
 }
 
 .cast-copy.copied:disabled {
@@ -212,7 +224,7 @@
 }
 
 .cast-dialog input {
-  min-height: 44px;
+  min-height: 45px;
 }
 
 .cast-dialog input:hover:not(:disabled) {
@@ -266,8 +278,8 @@ body:has(.cast-root),
 .cast-control {
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 45px;
+  height: 45px;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -333,7 +345,7 @@ body:has(.cast-root),
 
 .cast-loading-panel button,
 .cast-terminal-panel button {
-  min-height: 44px;
+  min-height: 45px;
   border: 1px solid var(--border);
   background: var(--panel-2);
   transition:

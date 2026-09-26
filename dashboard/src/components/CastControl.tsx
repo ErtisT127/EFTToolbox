@@ -55,7 +55,10 @@ export function CastControl() {
   useEffect(() => {
     load();
     void fetch('/api/cast/interfaces')
-      .then((response) => response.json() as Promise<MobileInterfaces>)
+      .then((response) => {
+        if (!response.ok) throw new Error('interfaces');
+        return response.json() as Promise<MobileInterfaces>;
+      })
       .then((values) => {
         if (values.addresses[0]) setAddress(values.addresses[0]);
       })
@@ -171,7 +174,7 @@ export function CastControl() {
         <div
           className="cast-dialog-backdrop"
           role="presentation"
-          onMouseDown={(event) => {
+          onPointerDown={(event) => {
             if (event.target === event.currentTarget) close();
           }}
         >

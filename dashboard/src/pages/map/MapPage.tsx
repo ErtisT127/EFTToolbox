@@ -373,7 +373,6 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
               }}
               onError={setCanvasError}
             />
-            <CastControl />
             <div className="view-controls">
               <div className="zoom-buttons">
                 <button
@@ -687,6 +686,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                     </AppPopover>
                   )}
                 </div>
+                <CastControl />
               </div>
             </div>
             {cursor && (
