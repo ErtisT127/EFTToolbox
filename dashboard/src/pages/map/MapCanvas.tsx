@@ -18,6 +18,7 @@ import {
   isAnnotationVisible,
   paintAnnotations,
   hitAnnotation,
+  type OwnerVisibility,
 } from './lib/annotations';
 import { BuiltinMarkers } from './lib/BuiltinMarkers';
 import { MapViewport } from './MapViewport';
@@ -55,6 +56,10 @@ type Props = {
   playerFollow?: boolean;
   playerAutoZoom?: { enabled: boolean; zoomLevel: number };
   readOnly?: boolean;
+  /** The local player's id, stamped onto every annotation this client creates. */
+  ownerId: string;
+  /** Teammate visibility context; absent in read-only mirrors and tests (no owner filtering). */
+  ownerVisibility?: OwnerVisibility;
 };
 const point = (value: L.LatLng): MapPoint => ({ x: value.lng, y: -value.lat });
 
@@ -108,7 +113,12 @@ export function MapCanvas(props: Props) {
     ).addTo(map);
     const preview = L.layerGroup().addTo(map);
     const selection = new Set<string>();
-    const isVisible = (a: Annotation) => isAnnotationVisible(a, current.current.preference);
+    const isVisible = (a: Annotation) =>
+      isAnnotationVisible(a, current.current.preference, current.current.ownerVisibility);
+    // Only the local player's markers are editable; teammates' synced markers render but never
+    // move, delete or get erased here.
+    const canModify = (a: Annotation) =>
+      !current.current.ownerVisibility || a.ownerId === current.current.ownerVisibility.selfId;
     function paint(items: Annotation[]) {
       paintAnnotations(
         userLayer.current!,
@@ -116,6 +126,7 @@ export function MapCanvas(props: Props) {
         current.current.preference,
         current.current.stickers,
         selection,
+        current.current.ownerVisibility,
       );
     }
     renderUsers.current = paint;
@@ -149,6 +160,8 @@ export function MapCanvas(props: Props) {
         if (player.mapId !== p.data.id) continue;
         const element = document.createElement('div');
         element.className = 'player-marker';
+        // Teammates tint their own arrow; the local player keeps the accent colour.
+        if (!player.isSelf && player.color) element.style.background = player.color;
         // The arrow tip points up at zero degrees; rotate it to the player's heading.
         element.style.transform = `rotate(${player.heading}deg)`;
         element.style.opacity = player.resolution.floorId === p.preference.floorId ? '1' : '0.35';
@@ -204,11 +217,18 @@ export function MapCanvas(props: Props) {
     const eventPixel = (event: PointerEvent) => map.mouseEventToContainerPoint(event);
     const toPoint = (pixel: L.Point) => point(map.containerPointToLatLng(pixel));
     function hit(a: Annotation, pixel: MapPoint, radius = 8) {
-      return hitAnnotation(map, a, pixel, current.current.preference, radius);
+      return hitAnnotation(
+        map,
+        a,
+        pixel,
+        current.current.preference,
+        radius,
+        current.current.ownerVisibility,
+      );
     }
     function erase(g: Gesture, pixel: MapPoint) {
       const o = current.current.options;
-      g.draft = g.draft.filter((a) => !hit(a, pixel, o.eraserSize / 2));
+      g.draft = g.draft.filter((a) => !canModify(a) || !hit(a, pixel, o.eraserSize / 2));
       paint(g.draft);
     }
     function down(event: PointerEvent) {
@@ -228,7 +248,7 @@ export function MapCanvas(props: Props) {
         original = current.current.items;
       const target = current.current.readOnly
         ? undefined
-        : [...original].reverse().find((a) => hit(a, pixel));
+        : [...original].reverse().find((a) => hit(a, pixel) && canModify(a));
       const mode = space ? 'edit' : current.current.tool;
       const tool =
         event.button === 1 ||
@@ -248,7 +268,8 @@ export function MapCanvas(props: Props) {
           else selection.add(target.id);
           if (tool === 'edit')
             selection.forEach((id) => {
-              if (original.some((a) => a.id === id && isVisible(a))) dragIds.add(id);
+              if (original.some((a) => a.id === id && isVisible(a) && canModify(a)))
+                dragIds.add(id);
             });
         } else if (!event.shiftKey) selection.clear();
       }
@@ -360,6 +381,7 @@ export function MapCanvas(props: Props) {
           ...g.original,
           {
             id: crypto.randomUUID(),
+            ownerId: current.current.ownerId,
             floorId: p.preference.floorId,
             kind: 'marker',
             points: [g.startPoint],
@@ -377,6 +399,7 @@ export function MapCanvas(props: Props) {
           ...g.original,
           {
             id: crypto.randomUUID(),
+            ownerId: current.current.ownerId,
             floorId: p.preference.floorId,
             kind: 'stroke',
             points: g.points.length > 1 ? g.points : [...g.points, g.points[0]],
@@ -390,12 +413,12 @@ export function MapCanvas(props: Props) {
         ];
       if (g.kind === 'pan' && !g.moved && p.tool === 'select' && !space && event.button === 0) {
         selection.clear();
-        const target = [...g.original].reverse().find((a) => hit(a, g.start));
+        const target = [...g.original].reverse().find((a) => hit(a, g.start) && canModify(a));
         if (target) selection.add(target.id);
       }
       if ((g.kind === 'edit' || g.kind === 'box') && !g.dragIds.size && g.moved) {
         const end = toPoint(eventPixel(event));
-        for (const a of g.original.filter(isVisible)) {
+        for (const a of g.original.filter((a) => isVisible(a) && canModify(a))) {
           if (
             a.points.some(
               (v) =>
@@ -434,7 +457,7 @@ export function MapCanvas(props: Props) {
       if (!target) return;
       const ids = selection.has(target.id) ? selection : new Set([target.id]);
       current.current.onCommit(
-        current.current.items.filter((a) => !ids.has(a.id) || !isVisible(a)),
+        current.current.items.filter((a) => !ids.has(a.id) || !isVisible(a) || !canModify(a)),
       );
       selection.clear();
     }
@@ -494,7 +517,9 @@ export function MapCanvas(props: Props) {
       ) {
         event.preventDefault();
         current.current.onCommit(
-          current.current.items.filter((a) => !selection.has(a.id) || !isVisible(a)),
+          current.current.items.filter(
+            (a) => !selection.has(a.id) || !isVisible(a) || !canModify(a),
+          ),
         );
         selection.clear();
       }
@@ -508,7 +533,7 @@ export function MapCanvas(props: Props) {
         if (!current.current.readOnly && current.current.tool === 'edit' && selection.size) {
           current.current.onCommit(
             current.current.items.map((a) =>
-              selection.has(a.id) && isVisible(a)
+              selection.has(a.id) && isVisible(a) && canModify(a)
                 ? {
                     ...a,
                     points: a.points.map((p) =>
@@ -764,7 +789,7 @@ export function MapCanvas(props: Props) {
   ]);
   useEffect(() => {
     renderUsers.current(items);
-  }, [items, preference.floorId, preference.showAnnotations, ready]);
+  }, [items, preference.floorId, preference.showAnnotations, props.ownerVisibility, ready]);
   useEffect(() => {
     renderPlayers.current(props.players);
   }, [props.players, preference.floorId, props.playerFollow, props.playerAutoZoom, ready]);

@@ -1,7 +1,8 @@
-import { Check } from 'lucide-react';
+import { Check, Plus } from 'lucide-react';
+import { useRef } from 'react';
 import { useLocale } from '../hooks/useLocale';
 
-const palette = ['#5FD3C4', '#E0B84C', '#7FB2E5', '#D98CCB', '#D4D8D5', '#C4554B'];
+const palette = ['#FF6B35', '#00B4D8', '#FF4D6D', '#8AC926', '#9B5DE5', '#FFD166', '#F8F9FA'];
 
 type Props = {
   color: string;
@@ -11,12 +12,15 @@ type Props = {
 export function ColorPicker({ color, onChange }: Props) {
   const { t } = useLocale();
   const normalized = color.toUpperCase();
+  const customActive = !palette.includes(normalized);
+  const picker = useRef<HTMLInputElement>(null);
   return (
     <div className="color-picker">
       <div className="swatches">
         {palette.map((swatch) => (
           <button
             key={swatch}
+            type="button"
             title={swatch}
             aria-label={t('map.toolSettings.swatch', { color: swatch })}
             aria-pressed={normalized === swatch}
@@ -26,16 +30,25 @@ export function ColorPicker({ color, onChange }: Props) {
             {normalized === swatch && <Check size={12} />}
           </button>
         ))}
-      </div>
-      <label className={`custom-color ${palette.includes(normalized) ? '' : 'selected'}`}>
-        {t('map.toolSettings.custom')}
-        <input
+        <button
+          type="button"
+          className={`custom-color ${customActive ? 'selected' : ''}`}
           aria-label={t('map.toolSettings.customColor')}
-          type="color"
-          value={normalized}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      </label>
+          title={t('map.toolSettings.customColor')}
+          style={customActive ? { backgroundColor: color } : undefined}
+          onClick={() => picker.current?.showPicker?.()}
+        >
+          {customActive ? <Check size={12} /> : <Plus size={12} />}
+        </button>
+      </div>
+      <input
+        ref={picker}
+        className="color-input"
+        aria-label={t('map.toolSettings.customColor')}
+        type="color"
+        value={normalized}
+        onChange={(e) => onChange(e.target.value)}
+      />
     </div>
   );
 }

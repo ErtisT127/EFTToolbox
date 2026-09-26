@@ -17,6 +17,7 @@ export function AppPopover({
   placement,
   className = '',
   boundaryRef,
+  matchReferenceWidth = false,
 }: {
   open: boolean;
   reference: RefObject<HTMLElement | null>;
@@ -24,6 +25,7 @@ export function AppPopover({
   placement: Placement;
   className?: string;
   boundaryRef?: RefObject<HTMLElement | null>;
+  matchReferenceWidth?: boolean;
 }) {
   const floating = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
@@ -44,11 +46,14 @@ export function AppPopover({
           size({
             padding: 8,
             boundary,
-            apply({ availableHeight, elements }) {
+            apply({ availableHeight, elements, rects }) {
               elements.floating.style.setProperty(
                 '--popover-available-height',
                 `${availableHeight}px`,
               );
+              if (matchReferenceWidth) {
+                elements.floating.style.width = `${rects.reference.width}px`;
+              }
             },
           }),
         ],
@@ -66,7 +71,7 @@ export function AppPopover({
       cancelled = true;
       cleanup();
     };
-  }, [boundaryRef, open, placement, reference]);
+  }, [boundaryRef, matchReferenceWidth, open, placement, reference]);
 
   if (!open || typeof document === 'undefined') return null;
   return createPortal(

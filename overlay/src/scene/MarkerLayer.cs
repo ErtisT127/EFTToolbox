@@ -147,7 +147,8 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
         foreach (var player in scene.Players.Values.Where(p => p.MapId == map.Id)) {
             var p = scene.Screen(player.MapPosition); if (!InView(p, new Vector2(14 * dpi))) continue;
             var angle = (float)(player.Heading * Math.PI / 180); var c = MathF.Cos(angle); var s = MathF.Sin(angle);
-            var color = Color(MapDisplay.Accent, player.Resolution.FloorId == scene.Floor ? 1 : MapDisplay.OtherFloorPlayerOpacity);
+            var tint = string.IsNullOrEmpty(player.Color) ? MapDisplay.Accent : player.Color;
+            var color = Color(tint, player.Resolution.FloorId == scene.Floor ? 1 : MapDisplay.OtherFloorPlayerOpacity);
             var point = (float x, float y) => p + new Vector2((x * c - y * s) * dpi, (x * s + y * c) * dpi);
             draw.PathClear();
             draw.PathLineTo(point(0, -13));

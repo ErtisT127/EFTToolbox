@@ -260,6 +260,7 @@ export function CastControl() {
                     reference={addressField}
                     placement="bottom-start"
                     className="cast-address-popover"
+                    matchReferenceWidth
                   >
                     <div
                       className="cast-address-list"

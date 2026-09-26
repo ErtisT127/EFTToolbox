@@ -12,8 +12,10 @@ import {
   request,
   reportClientLog,
   updateUserSettings,
+  workspace,
 } from './workspaceStore';
 import { gameMonitor } from './gameMonitorStore';
+import { multiplayer } from './multiplayerStore';
 
 class OverlayStore {
   settings?: OverlaySettings;
@@ -150,6 +152,7 @@ class OverlayStore {
           const protocolVersion = String(e.status?.protocolVersion || '');
           if (protocolVersion !== '1') throw new Error('Unsupported protocol');
           gameMonitor.handleEvent(e);
+          if (e.multiplayerStatus) multiplayer.handleStatus(e.multiplayerStatus);
           this.connected = true;
           clearTimeout(stale);
           stale = setTimeout(reconnect, 7000);
@@ -158,6 +161,11 @@ class OverlayStore {
           if (e.type === 'calibration_changed' && e.mapId) {
             this.calibrationMapId = e.mapId;
             this.calibrationEpoch++;
+          }
+          // Teammates' marker updates land in the shared annotations file; the dashboard picks
+          // them up here (cast refetches the same way).
+          if (e.type === 'annotations_changed' && e.mapId) {
+            void workspace.refetchAnnotations(e.mapId);
           }
           if (e.player) this.players = new Map(this.players).set(e.player.playerId, e.player);
           if (e.type === 'player_remove' && e.playerId) {

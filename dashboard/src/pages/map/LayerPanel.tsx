@@ -3,6 +3,22 @@ import type { Annotation, MapData, MapPreference } from '../../../../contracts/t
 import { selectableFloors } from '../../stores/workspaceStore';
 import { useLocale } from '../../hooks/useLocale';
 
+type OwnerRow = {
+  ownerId: string;
+  name: string;
+  color: string;
+  /** Live roster member (default visible) versus departed teammate (default hidden). */
+  active: boolean;
+};
+
+type OwnerVisibilityProps = {
+  selfId: string;
+  rows: OwnerRow[];
+  hiddenOwners: string[];
+  shownOwners: string[];
+  onToggle: (ownerId: string, visible: boolean) => void;
+};
+
 type Props = {
   data: MapData;
   items: Annotation[];
@@ -10,6 +26,8 @@ type Props = {
   onPreference: (changes: Partial<MapPreference>) => void;
   onClose: () => void;
   readOnly?: boolean;
+  /** Teammate marker sub-rows; absent in read-only mirrors, which show no owner controls. */
+  owners?: OwnerVisibilityProps;
 };
 
 export function LayerPanel({
@@ -19,8 +37,18 @@ export function LayerPanel({
   onPreference,
   onClose,
   readOnly = false,
+  owners,
 }: Props) {
   const { t } = useLocale();
+  const ownerToggle = (ownerId: string, checked: boolean) => {
+    owners?.onToggle(ownerId, checked);
+  };
+  const floorItems = items.filter((a) => a.floorId === preference.floorId);
+  const ownerRows = (owners?.rows || []).map((row) => ({
+    ...row,
+    count: floorItems.filter((a) => a.ownerId === row.ownerId).length,
+  }));
+  const selfCount = floorItems.filter((a) => a.ownerId === owners?.selfId).length;
   const toggleCategory = (categoryId: string) => {
     const hidden = preference.hiddenCategories;
     onPreference({
@@ -113,17 +141,53 @@ export function LayerPanel({
               <ChevronRight className="group-chevron" size={16} aria-hidden="true" />
               {t('map.layers.annotations')}
             </summary>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={preference.showAnnotations}
-                onChange={(e) => onPreference({ showAnnotations: e.target.checked })}
-              />
-              {t('map.layers.myMarkers')}
-              <span className="count">
-                {items.filter((a) => a.floorId === preference.floorId).length}
-              </span>
-            </label>
+            {owners ? (
+              <>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={!owners.hiddenOwners.includes(owners.selfId)}
+                    onChange={(e) => ownerToggle(owners.selfId, e.target.checked)}
+                  />
+                  {t('map.layers.myMarkers')}
+                  <span className="count">{selfCount}</span>
+                </label>
+                {ownerRows.map((row) => (
+                  <label className="check-row" key={row.ownerId}>
+                    <input
+                      type="checkbox"
+                      checked={
+                        row.active
+                          ? !owners.hiddenOwners.includes(row.ownerId)
+                          : owners.shownOwners.includes(row.ownerId)
+                      }
+                      onChange={(e) => ownerToggle(row.ownerId, e.target.checked)}
+                    />
+                    {row.color && (
+                      <i
+                        className="owner-dot"
+                        style={{ background: row.color }}
+                        aria-hidden="true"
+                      />
+                    )}
+                    {row.name || t('multiplayer.layers.unknownOwner')}
+                    <span className="count">{row.count}</span>
+                  </label>
+                ))}
+              </>
+            ) : (
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={preference.showAnnotations}
+                  onChange={(e) => onPreference({ showAnnotations: e.target.checked })}
+                />
+                {t('map.layers.myMarkers')}
+                <span className="count">
+                  {items.filter((a) => a.floorId === preference.floorId).length}
+                </span>
+              </label>
+            )}
           </details>
         )}
         {!readOnly &&

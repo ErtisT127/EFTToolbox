@@ -11,6 +11,13 @@ import { rimmedArtwork } from './artwork';
 
 export const latLng = (MapPoint: MapPoint): L.LatLngTuple => [-MapPoint.y, MapPoint.x];
 
+/** Per-owner visibility context: hidden/shown are user preferences, active is the live roster. */
+export type OwnerVisibility = {
+  selfId: string;
+  active: Set<string>;
+  visible: (ownerId: string) => boolean;
+};
+
 // Leaflet paints every vector layer onto a canvas (`preferCanvas`), so CSS never reaches these
 // colours and the design token has to be read into JS. Cached because paint() also runs from
 // pointer handlers, and each getComputedStyle would otherwise force a style recalculation.
@@ -33,8 +40,15 @@ function placeholderSticker() {
 // The sticker slot, matching .annotation-sticker's width in map.css.
 const StickerSize = mapDisplay.stickerSize;
 
-export const isAnnotationVisible = (a: Annotation, preference: MapPreference) =>
-  a.floorId === preference.floorId && preference.showAnnotations;
+export const isAnnotationVisible = (
+  a: Annotation,
+  preference: MapPreference,
+  owners?: OwnerVisibility,
+) => {
+  if (a.floorId !== preference.floorId || !preference.showAnnotations) return false;
+  if (owners && !owners.visible(a.ownerId)) return false;
+  return true;
+};
 
 export function paintAnnotations(
   layer: L.LayerGroup,
@@ -42,9 +56,10 @@ export function paintAnnotations(
   preference: MapPreference,
   stickers: Map<string, Sticker>,
   selection: Set<string>,
+  owners?: OwnerVisibility,
 ) {
   layer.clearLayers();
-  for (const a of items.filter((a) => isAnnotationVisible(a, preference))) {
+  for (const a of items.filter((a) => isAnnotationVisible(a, preference, owners))) {
     const selected = selection.has(a.id);
     if (a.kind === 'stroke') {
       if (selected)
@@ -140,13 +155,14 @@ export function hitAnnotation(
   pixel: MapPoint,
   preference: MapPreference,
   radius = 8,
+  owners?: OwnerVisibility,
 ) {
   const screen = (p: MapPoint) => {
     const v = map.latLngToContainerPoint(latLng(p));
     return { x: v.x, y: v.y };
   };
 
-  if (!isAnnotationVisible(a, preference)) return false;
+  if (!isAnnotationVisible(a, preference, owners)) return false;
   if (a.kind === 'marker')
     return (
       Math.hypot(screen(a.points[0]).x - pixel.x, screen(a.points[0]).y - pixel.y) <= 18 + radius

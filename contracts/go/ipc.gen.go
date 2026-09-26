@@ -10,7 +10,8 @@ type Status struct {
 }
 
 type ErrorBody struct {
-	Code string `json:"code"`
+	Code   string  `json:"code"`
+	Detail *string `json:"detail,omitempty"`
 }
 
 type MobileFiltersChanged struct {
@@ -56,6 +57,7 @@ type ServerEvent struct {
 	OverlayView       *OverlayView          `json:"overlayView,omitempty"`
 	OverlayCommand    *OverlayCommand       `json:"overlayCommand,omitempty"`
 	GameMonitorStatus *GameMonitorStatus    `json:"gameMonitorStatus,omitempty"`
+	MultiplayerStatus *MultiplayerStatus    `json:"multiplayerStatus,omitempty"`
 }
 
 type GameMonitorSettings struct {
@@ -80,6 +82,7 @@ type GameMonitorStatus struct {
 type PlayerState struct {
 	PlayerId      string             `json:"playerId"`
 	DisplayName   string             `json:"displayName"`
+	Color         string             `json:"color"`
 	IsSelf        bool               `json:"isSelf"`
 	MapId         string             `json:"mapId"`
 	WorldPosition WorldPosition      `json:"worldPosition"`
@@ -234,6 +237,7 @@ type MapData struct {
 
 type Annotation struct {
 	Id       string     `json:"id"`
+	OwnerId  string     `json:"ownerId"`
 	FloorId  string     `json:"floorId"`
 	Kind     string     `json:"kind"`
 	Points   []MapPoint `json:"points"`
@@ -449,6 +453,88 @@ type OverlayLog struct {
 	Generation  *int             `json:"generation,omitempty"`
 	Resolution  *int             `json:"resolution,omitempty"`
 	Timing      *OperationTiming `json:"timing,omitempty"`
+}
+
+type MarkerPreferences struct {
+	SchemaVersion int      `json:"schemaVersion"`
+	HiddenOwners  []string `json:"hiddenOwners"`
+	ShownOwners   []string `json:"shownOwners"`
+}
+
+type MultiplayerMember struct {
+	PeerId    string `json:"peerId"`
+	Name      string `json:"name"`
+	Color     string `json:"color"`
+	Role      string `json:"role"`
+	LatencyMs *int   `json:"latencyMs,omitempty"`
+	State     string `json:"state"`
+}
+
+type MultiplayerStatus struct {
+	Enabled   bool                 `json:"enabled"`
+	Role      *string              `json:"role,omitempty"`
+	Mode      *string              `json:"mode,omitempty"`
+	ShareText *string              `json:"shareText,omitempty"`
+	Port      *int                 `json:"port,omitempty"`
+	Self      *MultiplayerMember   `json:"self,omitempty"`
+	Members   *[]MultiplayerMember `json:"members,omitempty"`
+	Known     *[]MultiplayerMember `json:"known,omitempty"`
+	Error     *string              `json:"error,omitempty"`
+}
+
+type MultiplayerSettings struct {
+	SchemaVersion    int     `json:"schemaVersion"`
+	PlayerId         string  `json:"playerId"`
+	PlayerName       string  `json:"playerName"`
+	PlayerColor      string  `json:"playerColor"`
+	ShowMembersPanel *bool   `json:"showMembersPanel,omitempty"`
+	LastMode         *string `json:"lastMode,omitempty"`
+	LastAddress      *string `json:"lastAddress,omitempty"`
+	LastPort         *string `json:"lastPort,omitempty"`
+	LastKey          *string `json:"lastKey,omitempty"`
+	LastStun         *string `json:"lastStun,omitempty"`
+}
+
+type MultiplayerHostRequest struct {
+	Mode       string  `json:"mode"`
+	Address    *string `json:"address,omitempty"`
+	Port       string  `json:"port"`
+	Key        *string `json:"key,omitempty"`
+	StunServer *string `json:"stunServer,omitempty"`
+}
+
+type MultiplayerKickRequest struct {
+	PeerId string `json:"peerId"`
+}
+
+type MultiplayerJoinRequest struct {
+	Mode       string  `json:"mode"`
+	Address    *string `json:"address,omitempty"`
+	Port       *string `json:"port,omitempty"`
+	StunServer *string `json:"stunServer,omitempty"`
+	Key        string  `json:"key"`
+}
+
+type StunServerList struct {
+	Servers []string `json:"servers"`
+}
+
+type StunProbeRequest struct {
+	Servers []string `json:"servers"`
+}
+
+type StunProbeResult struct {
+	Server    string `json:"server"`
+	LatencyMs *int   `json:"latencyMs,omitempty"`
+}
+
+type StunProbeResults struct {
+	Results []StunProbeResult `json:"results"`
+}
+
+type NatCheckResult struct {
+	Kind    string  `json:"kind"`
+	Message *string `json:"message,omitempty"`
 }
 
 type NumericLimit struct {

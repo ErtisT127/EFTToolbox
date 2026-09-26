@@ -30,6 +30,9 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 	mobile := newMobileManager(ctx, assets, hub)
 	hub.mobile = mobile
 	hub.mobileBase = mux
+	multiplayer := newMultiplayerManager(ctx, hub)
+	hub.multiplayer = multiplayer
+	store.multiplayer = multiplayer
 	store.changed = hub.changed
 	store.calibrationReset = hub.invalidateCalibrationIndexes
 	if writer, ok := logWriter.(*dailyLogWriter); ok {
@@ -39,6 +42,7 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 	store.register(mux)
 	hub.register(mux)
 	mobile.register(mux)
+	multiplayer.register(mux)
 	hub.registerGameMonitor(mux)
 	hub.startGameMonitor(ctx)
 	if writer, ok := logWriter.(*dailyLogWriter); ok {

@@ -11,6 +11,7 @@ public sealed record Status {
 
 public sealed record ErrorBody {
   [JsonPropertyName("code")] public string Code { get; init; } = "";
+  [JsonPropertyName("detail")] public string? Detail { get; init; } = null;
 }
 
 public sealed record MobileFiltersChanged {
@@ -56,6 +57,7 @@ public sealed record ServerEvent {
   [JsonPropertyName("overlayView")] public OverlayView? OverlayView { get; init; } = null;
   [JsonPropertyName("overlayCommand")] public OverlayCommand? OverlayCommand { get; init; } = null;
   [JsonPropertyName("gameMonitorStatus")] public GameMonitorStatus? GameMonitorStatus { get; init; } = null;
+  [JsonPropertyName("multiplayerStatus")] public MultiplayerStatus? MultiplayerStatus { get; init; } = null;
 }
 
 public sealed record GameMonitorSettings {
@@ -80,6 +82,7 @@ public sealed record GameMonitorStatus {
 public sealed record PlayerState {
   [JsonPropertyName("playerId")] public string PlayerId { get; init; } = "";
   [JsonPropertyName("displayName")] public string DisplayName { get; init; } = "";
+  [JsonPropertyName("color")] public string Color { get; init; } = "";
   [JsonPropertyName("isSelf")] public bool IsSelf { get; init; } = default;
   [JsonPropertyName("mapId")] public string MapId { get; init; } = "";
   [JsonPropertyName("worldPosition")] public WorldPosition WorldPosition { get; init; } = new();
@@ -234,6 +237,7 @@ public sealed record MapData {
 
 public sealed record Annotation {
   [JsonPropertyName("id")] public string Id { get; init; } = "";
+  [JsonPropertyName("ownerId")] public string OwnerId { get; init; } = "";
   [JsonPropertyName("floorId")] public string FloorId { get; init; } = "";
   [JsonPropertyName("kind")] public string Kind { get; init; } = "";
   [JsonPropertyName("points")] public MapPoint[] Points { get; init; } = [];
@@ -449,6 +453,88 @@ public sealed record OverlayLog {
   [JsonPropertyName("generation")] public int? Generation { get; init; } = null;
   [JsonPropertyName("resolution")] public int? Resolution { get; init; } = null;
   [JsonPropertyName("timing")] public OperationTiming? Timing { get; init; } = null;
+}
+
+public sealed record MarkerPreferences {
+  [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; init; } = default;
+  [JsonPropertyName("hiddenOwners")] public string[] HiddenOwners { get; init; } = [];
+  [JsonPropertyName("shownOwners")] public string[] ShownOwners { get; init; } = [];
+}
+
+public sealed record MultiplayerMember {
+  [JsonPropertyName("peerId")] public string PeerId { get; init; } = "";
+  [JsonPropertyName("name")] public string Name { get; init; } = "";
+  [JsonPropertyName("color")] public string Color { get; init; } = "";
+  [JsonPropertyName("role")] public string Role { get; init; } = "";
+  [JsonPropertyName("latencyMs")] public int? LatencyMs { get; init; } = null;
+  [JsonPropertyName("state")] public string State { get; init; } = "";
+}
+
+public sealed record MultiplayerStatus {
+  [JsonPropertyName("enabled")] public bool Enabled { get; init; } = default;
+  [JsonPropertyName("role")] public string? Role { get; init; } = null;
+  [JsonPropertyName("mode")] public string? Mode { get; init; } = null;
+  [JsonPropertyName("shareText")] public string? ShareText { get; init; } = null;
+  [JsonPropertyName("port")] public int? Port { get; init; } = null;
+  [JsonPropertyName("self")] public MultiplayerMember? Self { get; init; } = null;
+  [JsonPropertyName("members")] public MultiplayerMember[]? Members { get; init; } = null;
+  [JsonPropertyName("known")] public MultiplayerMember[]? Known { get; init; } = null;
+  [JsonPropertyName("error")] public string? Error { get; init; } = null;
+}
+
+public sealed record MultiplayerSettings {
+  [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; init; } = default;
+  [JsonPropertyName("playerId")] public string PlayerId { get; init; } = "";
+  [JsonPropertyName("playerName")] public string PlayerName { get; init; } = "";
+  [JsonPropertyName("playerColor")] public string PlayerColor { get; init; } = "";
+  [JsonPropertyName("showMembersPanel")] public bool? ShowMembersPanel { get; init; } = null;
+  [JsonPropertyName("lastMode")] public string? LastMode { get; init; } = null;
+  [JsonPropertyName("lastAddress")] public string? LastAddress { get; init; } = null;
+  [JsonPropertyName("lastPort")] public string? LastPort { get; init; } = null;
+  [JsonPropertyName("lastKey")] public string? LastKey { get; init; } = null;
+  [JsonPropertyName("lastStun")] public string? LastStun { get; init; } = null;
+}
+
+public sealed record MultiplayerHostRequest {
+  [JsonPropertyName("mode")] public string Mode { get; init; } = "";
+  [JsonPropertyName("address")] public string? Address { get; init; } = null;
+  [JsonPropertyName("port")] public string Port { get; init; } = "";
+  [JsonPropertyName("key")] public string? Key { get; init; } = null;
+  [JsonPropertyName("stunServer")] public string? StunServer { get; init; } = null;
+}
+
+public sealed record MultiplayerKickRequest {
+  [JsonPropertyName("peerId")] public string PeerId { get; init; } = "";
+}
+
+public sealed record MultiplayerJoinRequest {
+  [JsonPropertyName("mode")] public string Mode { get; init; } = "";
+  [JsonPropertyName("address")] public string? Address { get; init; } = null;
+  [JsonPropertyName("port")] public string? Port { get; init; } = null;
+  [JsonPropertyName("stunServer")] public string? StunServer { get; init; } = null;
+  [JsonPropertyName("key")] public string Key { get; init; } = "";
+}
+
+public sealed record StunServerList {
+  [JsonPropertyName("servers")] public string[] Servers { get; init; } = [];
+}
+
+public sealed record StunProbeRequest {
+  [JsonPropertyName("servers")] public string[] Servers { get; init; } = [];
+}
+
+public sealed record StunProbeResult {
+  [JsonPropertyName("server")] public string Server { get; init; } = "";
+  [JsonPropertyName("latencyMs")] public int? LatencyMs { get; init; } = null;
+}
+
+public sealed record StunProbeResults {
+  [JsonPropertyName("results")] public StunProbeResult[] Results { get; init; } = [];
+}
+
+public sealed record NatCheckResult {
+  [JsonPropertyName("kind")] public string Kind { get; init; } = "";
+  [JsonPropertyName("message")] public string? Message { get; init; } = null;
 }
 
 public readonly record struct NumericLimit(double Min, double Max, double Step, int Precision);

@@ -228,6 +228,8 @@ export type Session = {
   savedRevision: number;
   saving: boolean;
   error: string;
+  /** A remote markers update landed while this session had unsaved edits; refetch once clean. */
+  pendingSync: boolean;
 };
 
 export class Workspace {
@@ -372,6 +374,7 @@ export class Workspace {
             savedRevision: 0,
             saving: false,
             error: '',
+            pendingSync: false,
           });
       }
       if (sequence !== this.sequence) return;
@@ -573,6 +576,34 @@ export class Workspace {
     } finally {
       s.saving = false;
       this.changed();
+    }
+    if (s.savedRevision >= s.revision && s.pendingSync) {
+      s.pendingSync = false;
+      await this.refetchAnnotations(id);
+    }
+  }
+  /** Teammates' marker updates land in the shared file; pick them up once this session is clean. */
+  async refetchAnnotations(id: string) {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    if (s.revision !== s.savedRevision || s.saving) {
+      s.pendingSync = true;
+      return;
+    }
+    try {
+      const annotations = await request<Annotations>(`/api/maps/${id}/annotations`);
+      const current = this.sessions.get(id);
+      if (!current) return;
+      // A local edit may have raced the fetch; it wins and the refetch is retried after it saves.
+      if (current.revision !== current.savedRevision || current.saving) {
+        current.pendingSync = true;
+        return;
+      }
+      if (annotations.schemaVersion !== 1 || !Array.isArray(annotations.items)) return;
+      current.items = annotations.items;
+      this.changed();
+    } catch {
+      // Keep the local state; the next remote change retries.
     }
   }
   get unsaved() {

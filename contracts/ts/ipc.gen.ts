@@ -8,6 +8,7 @@ export interface Status {
 
 export interface ErrorBody {
   code: string;
+  detail?: string;
 }
 
 export interface MobileFiltersChanged {
@@ -35,7 +36,7 @@ export interface MobileInterfaces {
 }
 
 export interface ServerEvent {
-  type: "snapshot" | "heartbeat" | "map_changed" | "floor_changed" | "basemap_changed" | "center_changed" | "filters_changed" | "mode_applied" | "player_upsert" | "player_remove" | "annotation_upsert" | "annotation_remove" | "preferences_changed" | "annotations_changed" | "overlay_settings" | "overlay_command" | "overlay_status" | "resources_changed" | "game_monitor_changed" | "calibration_changed" | "session_end" | "session_expired";
+  type: "snapshot" | "heartbeat" | "map_changed" | "floor_changed" | "basemap_changed" | "center_changed" | "filters_changed" | "mode_applied" | "player_upsert" | "player_remove" | "annotation_upsert" | "annotation_remove" | "preferences_changed" | "annotations_changed" | "overlay_settings" | "overlay_command" | "overlay_status" | "resources_changed" | "game_monitor_changed" | "calibration_changed" | "multiplayer_changed" | "session_end" | "session_expired";
   sentAt: string;
   status: Status;
   mapId?: string;
@@ -53,6 +54,7 @@ export interface ServerEvent {
   overlayView?: OverlayView;
   overlayCommand?: OverlayCommand;
   gameMonitorStatus?: GameMonitorStatus;
+  multiplayerStatus?: MultiplayerStatus;
 }
 
 export interface GameMonitorSettings {
@@ -77,6 +79,7 @@ export interface GameMonitorStatus {
 export interface PlayerState {
   playerId: string;
   displayName: string;
+  color: string;
   isSelf: boolean;
   mapId: string;
   worldPosition: WorldPosition;
@@ -231,6 +234,7 @@ export interface MapData {
 
 export interface Annotation {
   id: string;
+  ownerId: string;
   floorId: string;
   kind: "marker" | "stroke";
   points: Array<MapPoint>;
@@ -446,6 +450,88 @@ export interface OverlayLog {
   generation?: number;
   resolution?: number;
   timing?: OperationTiming;
+}
+
+export interface MarkerPreferences {
+  schemaVersion: number;
+  hiddenOwners: Array<string>;
+  shownOwners: Array<string>;
+}
+
+export interface MultiplayerMember {
+  peerId: string;
+  name: string;
+  color: string;
+  role: "host" | "guest";
+  latencyMs?: number;
+  state: "connected" | "unstable" | "lost";
+}
+
+export interface MultiplayerStatus {
+  enabled: boolean;
+  role?: "host" | "guest";
+  mode?: "custom" | "stun";
+  shareText?: string;
+  port?: number;
+  self?: MultiplayerMember;
+  members?: Array<MultiplayerMember>;
+  known?: Array<MultiplayerMember>;
+  error?: string;
+}
+
+export interface MultiplayerSettings {
+  schemaVersion: number;
+  playerId: string;
+  playerName: string;
+  playerColor: string;
+  showMembersPanel?: boolean;
+  lastMode?: "custom" | "stun";
+  lastAddress?: string;
+  lastPort?: string;
+  lastKey?: string;
+  lastStun?: string;
+}
+
+export interface MultiplayerHostRequest {
+  mode: "custom" | "stun";
+  address?: string;
+  port: string;
+  key?: string;
+  stunServer?: string;
+}
+
+export interface MultiplayerKickRequest {
+  peerId: string;
+}
+
+export interface MultiplayerJoinRequest {
+  mode: "custom" | "stun";
+  address?: string;
+  port?: string;
+  stunServer?: string;
+  key: string;
+}
+
+export interface StunServerList {
+  servers: Array<string>;
+}
+
+export interface StunProbeRequest {
+  servers: Array<string>;
+}
+
+export interface StunProbeResult {
+  server: string;
+  latencyMs?: number;
+}
+
+export interface StunProbeResults {
+  results: Array<StunProbeResult>;
+}
+
+export interface NatCheckResult {
+  kind: "cone" | "symmetric" | "unknown";
+  message?: string;
 }
 
 export interface NumericLimit {

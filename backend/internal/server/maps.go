@@ -51,6 +51,7 @@ type mapStore struct {
 	repo             *modeRepository
 	changed          func(string, string, string)
 	calibrationReset func()
+	multiplayer      *multiplayerManager
 }
 
 type modeRepository struct {
@@ -170,6 +171,23 @@ func (s *mapStore) calibrationDocumentsPath() string {
 }
 
 func validBasemap(value string) bool { return value == "svg" || value == "tiles" }
+
+// validMarkerPreferences gates the user-level owner visibility arrays: bounded length, deduped.
+func validMarkerPreferences(data contracts.MarkerPreferences) bool {
+	if data.SchemaVersion != 1 || data.HiddenOwners == nil || data.ShownOwners == nil || len(data.HiddenOwners) > 1000 || len(data.ShownOwners) > 1000 {
+		return false
+	}
+	for _, list := range [][]string{data.HiddenOwners, data.ShownOwners} {
+		seen := map[string]bool{}
+		for _, owner := range list {
+			if owner == "" || len(owner) > 100 || seen[owner] {
+				return false
+			}
+			seen[owner] = true
+		}
+	}
+	return true
+}
 
 func emptyCalibrationDocument(mapID, basemap string) contracts.CalibrationDocument {
 	return contracts.CalibrationDocument{
@@ -398,6 +416,11 @@ func validAnnotations(data contracts.Annotations, m contracts.MapData) bool {
 		if !safeID.MatchString(a.Id) || len(a.Id) > 100 || ids[a.Id] || !slices.ContainsFunc(m.Floors, func(f contracts.Floor) bool { return f.Id == a.FloorId }) {
 			return false
 		}
+		// Annotations are per-owner documents at heart: multiplayer sync merges foreign owners
+		// into the local file, so every item must carry a well-formed owner id.
+		if a.OwnerId == "" || len(a.OwnerId) > 100 || !safeID.MatchString(a.OwnerId) {
+			return false
+		}
 		ids[a.Id] = true
 		if (a.Kind != "marker" && a.Kind != "stroke") || len(a.Points) == 0 || len(a.Points) > 20000 || (a.Kind == "marker" && len(a.Points) != 1) || !hexColor.MatchString(a.Color) || !finite(a.Width) || a.Width < 1 || a.Width > 20 || !finite(a.TextSize) || a.TextSize < 12 || a.TextSize > 48 || len(a.Text) > 2000 || len(a.Emoji) > 80 || (a.ImageId != "" && !stickerID.MatchString(a.ImageId)) {
 			return false
@@ -557,8 +580,10 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			return
 		}
 		if !validAnnotations(data, m) {
-			dataError(w, errors.New("invalid saved annotations"))
-			return
+			// ownerId is part of the annotation contract now; a pre-multiplayer file validates as
+			// empty rather than failing the whole map.
+			log.Printf("annotations treated as empty: map=%s", m.Id)
+			data = contracts.Annotations{SchemaVersion: 1, Items: []contracts.Annotation{}}
 		}
 		cachedJSONResponse(w, r, data)
 	})
@@ -655,14 +680,29 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		if !decodeUpdate(w, r, &data) {
 			return
 		}
-		if !validAnnotations(data, m) {
-			apiError(w, http.StatusBadRequest, "annotations_invalid")
-			return
-		}
-		if err = s.save(filepath.Join("maps", m.Id+".annotations.json"), data); err != nil {
-			log.Printf("save annotations: %v", err)
-			apiError(w, http.StatusInternalServerError, "annotations_save_failed")
-			return
+		if s.multiplayer != nil {
+			// The multiplayer manager owns the merge (and the save): incoming items are
+			// authoritative for the local owner only, foreign owners always come from the cache.
+			merged, mergeErr := s.multiplayer.applyLocalAnnotations(m.Id, m, data)
+			if mergeErr != nil {
+				status := http.StatusBadRequest
+				if mergeErr.Error() == "annotations_save_failed" {
+					status = http.StatusInternalServerError
+				}
+				apiError(w, status, mergeErr.Error())
+				return
+			}
+			data = merged
+		} else {
+			if !validAnnotations(data, m) {
+				apiError(w, http.StatusBadRequest, "annotations_invalid")
+				return
+			}
+			if err = s.save(filepath.Join("maps", m.Id+".annotations.json"), data); err != nil {
+				log.Printf("save annotations: %v", err)
+				apiError(w, http.StatusInternalServerError, "annotations_save_failed")
+				return
+			}
 		}
 		if s.changed != nil {
 			s.changed("annotations_changed", m.Id, r.Header.Get("X-Operation-ID"))
@@ -717,6 +757,41 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		}
 		if s.changed != nil {
 			s.changed("preferences_changed", data.SelectedMap, r.Header.Get("X-Operation-ID"))
+		}
+		jsonResponse(w, data)
+	})
+	mux.HandleFunc("GET /api/marker-preferences", func(w http.ResponseWriter, r *http.Request) {
+		if !localRequest(w, r) {
+			return
+		}
+		data := contracts.MarkerPreferences{SchemaVersion: 1, HiddenOwners: []string{}, ShownOwners: []string{}}
+		path := filepath.Join(s.root, "user", "marker-preferences.json")
+		err := readJSON(path, &data)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			apiError(w, http.StatusInternalServerError, "marker_preferences_invalid")
+			return
+		}
+		if !validMarkerPreferences(data) {
+			data = contracts.MarkerPreferences{SchemaVersion: 1, HiddenOwners: []string{}, ShownOwners: []string{}}
+		}
+		jsonResponse(w, data)
+	})
+	mux.HandleFunc("PUT /api/marker-preferences", func(w http.ResponseWriter, r *http.Request) {
+		if !localRequest(w, r) {
+			return
+		}
+		var data contracts.MarkerPreferences
+		if !decodeUpdate(w, r, &data) {
+			return
+		}
+		if !validMarkerPreferences(data) {
+			apiError(w, http.StatusBadRequest, "preferences_invalid")
+			return
+		}
+		if err := s.saveGlobal("marker-preferences.json", data); err != nil {
+			log.Printf("save marker preferences: %v", err)
+			apiError(w, http.StatusInternalServerError, "preferences_save_failed")
+			return
 		}
 		jsonResponse(w, data)
 	})

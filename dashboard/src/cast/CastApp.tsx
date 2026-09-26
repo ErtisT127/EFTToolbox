@@ -426,6 +426,7 @@ export function CastApp() {
             players={model.players}
             tool="select"
             options={emptyOptions}
+            ownerId=""
             readOnly
             playerFollow={false}
             onCommit={() => {}}

@@ -457,7 +457,7 @@ summary {
 }
 .swatches {
   display: grid;
-  grid-template-columns: repeat(3, 32px);
+  grid-template-columns: repeat(4, 32px);
   justify-content: space-between;
   gap: var(--space-1);
 }
@@ -481,37 +481,8 @@ summary {
   outline: 1px solid var(--text);
   outline-offset: 2px;
 }
-.custom-color {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: var(--text-xs);
-  color: var(--muted);
-}
-input[type='color'] {
-  appearance: none;
-  width: 32px;
-  height: 32px;
-  border: 4px solid transparent;
-  border-radius: 50%;
-  padding: 0;
-  background: transparent;
-  cursor: pointer;
-}
-input[type='color']::-webkit-color-swatch-wrapper {
-  padding: 0;
-}
-input[type='color']::-webkit-color-swatch {
-  border: 0;
-  border-radius: 50%;
-}
-input[type='color']::-moz-color-swatch {
-  border: 0;
-  border-radius: 50%;
-}
-.custom-color.selected input,
 .swatches button:focus-visible,
-.custom-color input:focus-visible {
+.color-picker .custom-color:focus-visible {
   outline: 1px solid var(--text);
   outline-offset: 2px;
 }
@@ -920,9 +891,11 @@ output {
 }
 /* Lit buttons breathe on one shared clock: the glow ring animates on every trigger from mount
    and visibility merely gates it, so lights switched on at different moments stay in phase.
-   Buttons anchor the ring themselves (.task-trigger / .cast-trigger are position: relative). */
+   Buttons anchor the ring themselves (.task-trigger / .cast-trigger / .mp-trigger are position:
+   relative). */
 .cast-trigger::after,
-.minimap-trigger::after {
+.minimap-trigger::after,
+.mp-trigger::after {
   content: '';
   position: absolute;
   inset: -1px;
@@ -937,7 +910,8 @@ output {
 }
 .cast-trigger.connected::after,
 .minimap-trigger[aria-pressed='true']::after,
-.minimap-trigger.minimap-editing::after {
+.minimap-trigger.minimap-editing::after,
+.mp-trigger.connected::after {
   visibility: visible;
 }
 @keyframes glow-breathe {
@@ -948,6 +922,13 @@ output {
   40%,
   60% {
     opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cast-trigger::after,
+  .minimap-trigger::after,
+  .mp-trigger::after {
+    animation: none;
   }
 }
 /* The pulsing halo pairs with a lit icon but no filled chrome: the gold glyph marks the state,

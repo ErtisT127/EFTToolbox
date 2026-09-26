@@ -27,6 +27,9 @@
       "properties": {
         "code": {
           "type": "string"
+        },
+        "detail": {
+          "type": "string"
         }
       }
     },
@@ -105,6 +108,7 @@
             "resources_changed",
             "game_monitor_changed",
             "calibration_changed",
+            "multiplayer_changed",
             "session_end",
             "session_expired"
           ]
@@ -166,6 +170,9 @@
         },
         "gameMonitorStatus": {
           "$ref": "#/$defs/GameMonitorStatus"
+        },
+        "multiplayerStatus": {
+          "$ref": "#/$defs/MultiplayerStatus"
         }
       }
     },
@@ -217,6 +224,7 @@
       "required": [
         "playerId",
         "displayName",
+        "color",
         "isSelf",
         "mapId",
         "worldPosition",
@@ -229,6 +237,9 @@
           "type": "string"
         },
         "displayName": {
+          "type": "string"
+        },
+        "color": {
           "type": "string"
         },
         "isSelf": {
@@ -685,6 +696,7 @@
       "additionalProperties": false,
       "required": [
         "id",
+        "ownerId",
         "floorId",
         "kind",
         "points",
@@ -697,6 +709,9 @@
       ],
       "properties": {
         "id": {
+          "type": "string"
+        },
+        "ownerId": {
           "type": "string"
         },
         "floorId": {
@@ -1479,6 +1494,136 @@
         "timing": {
           "$ref": "#/$defs/OperationTiming"
         }
+      }
+    },
+    "MarkerPreferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "hiddenOwners", "shownOwners"],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "hiddenOwners": { "type": "array", "items": { "type": "string" } },
+        "shownOwners": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "MultiplayerMember": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["peerId", "name", "color", "role", "state"],
+      "properties": {
+        "peerId": { "type": "string" },
+        "name": { "type": "string" },
+        "color": { "type": "string" },
+        "role": { "type": "string", "enum": ["host", "guest"] },
+        "latencyMs": { "type": "integer" },
+        "state": { "type": "string", "enum": ["connected", "unstable", "lost"] }
+      }
+    },
+    "MultiplayerStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "role": { "type": "string", "enum": ["host", "guest"] },
+        "mode": { "type": "string", "enum": ["custom", "stun"] },
+        "shareText": { "type": "string" },
+        "port": { "type": "integer" },
+        "self": { "$ref": "#/$defs/MultiplayerMember" },
+        "members": { "type": "array", "items": { "$ref": "#/$defs/MultiplayerMember" } },
+        "known": { "type": "array", "items": { "$ref": "#/$defs/MultiplayerMember" } },
+        "error": { "type": "string" }
+      }
+    },
+    "MultiplayerSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "playerId", "playerName", "playerColor"],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "playerId": { "type": "string" },
+        "playerName": { "type": "string" },
+        "playerColor": { "type": "string" },
+        "showMembersPanel": { "type": "boolean" },
+        "lastMode": { "type": "string", "enum": ["custom", "stun"] },
+        "lastAddress": { "type": "string" },
+        "lastPort": { "type": "string" },
+        "lastKey": { "type": "string" },
+        "lastStun": { "type": "string" }
+      }
+    },
+    "MultiplayerHostRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "port"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["custom", "stun"] },
+        "address": { "type": "string" },
+        "port": { "type": "string" },
+        "key": { "type": "string" },
+        "stunServer": { "type": "string" }
+      }
+    },
+    "MultiplayerKickRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["peerId"],
+      "properties": {
+        "peerId": { "type": "string" }
+      }
+    },
+    "MultiplayerJoinRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "key"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["custom", "stun"] },
+        "address": { "type": "string" },
+        "port": { "type": "string" },
+        "stunServer": { "type": "string" },
+        "key": { "type": "string" }
+      }
+    },
+    "StunServerList": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["servers"],
+      "properties": {
+        "servers": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "StunProbeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["servers"],
+      "properties": {
+        "servers": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "StunProbeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["server"],
+      "properties": {
+        "server": { "type": "string" },
+        "latencyMs": { "type": "integer" }
+      }
+    },
+    "StunProbeResults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["results"],
+      "properties": {
+        "results": { "type": "array", "items": { "$ref": "#/$defs/StunProbeResult" } }
+      }
+    },
+    "NatCheckResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["cone", "symmetric", "unknown"] },
+        "message": { "type": "string" }
       }
     }
   }

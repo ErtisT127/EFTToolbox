@@ -29,6 +29,7 @@ import { TaskPanel } from './TaskPanel';
 import { MinimapSettingsPanel } from './MinimapSettingsPanel';
 import { ToolOptionsPanel } from './ToolOptionsPanel';
 import { workspace, useWorkspace } from '../../stores/workspaceStore';
+import { multiplayer, useMultiplayer } from '../../stores/multiplayerStore';
 import { mapTimes, timePhase } from './lib/time';
 import { ZOOM_BOUND_EPSILON } from './lib/zoom';
 import type { MapClock } from '../../../../contracts/ts/ipc.gen';
@@ -39,6 +40,8 @@ import { ToolToolbar } from '../../components/ToolToolbar';
 import { MapUnavailableState } from '../../components/MapUnavailableState';
 import { AppPopover } from '../../components/AppPopover';
 import { CastControl } from '../../components/CastControl';
+import { MultiplayerControl } from '../../components/MultiplayerControl';
+import { MembersPanel } from './MembersPanel';
 
 function RaidTimes({ clock }: { clock: MapClock }) {
   const { t } = useLocale();
@@ -81,6 +84,8 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { t } = useLocale();
   const w = useWorkspace(workspace);
   const overlay = useOverlay();
+  const mp = useMultiplayer();
+  const mpVersion = multiplayer.snapshot();
   const [selectedTool, setTool] = useState<Tool>('select');
   const [temporaryHand, setTemporaryHand] = useState(false);
   const tool = temporaryHand ? 'edit' : selectedTool;
@@ -226,6 +231,42 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const session = w.sessions.get(w.activeId);
   const preference = session ? w.preferenceFor(w.activeId) : undefined;
   const id = w.activeId;
+  // Teammate visibility: active members default visible, departed owners default hidden, and a
+  // manual hide always wins. Rebuilt whenever the multiplayer store or the map session changes.
+  const ownerVisibility = useMemo(() => {
+    if (!mp.selfId) return undefined;
+    const active = new Set((mp.status.members || []).map((member) => member.peerId));
+    return {
+      selfId: mp.selfId,
+      active,
+      visible: (ownerId: string) => multiplayer.ownerVisible(ownerId),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mpVersion, mp.selfId, mp.status.members]);
+  const layerOwners = useMemo(() => {
+    if (!mp.selfId || !session) return undefined;
+    const memberIds = new Set((mp.status.members || []).map((member) => member.peerId));
+    const ids = new Set<string>([
+      ...memberIds,
+      ...(mp.status.known || []).map((member) => member.peerId),
+      ...session.items.map((a) => a.ownerId),
+    ]);
+    ids.delete(mp.selfId);
+    const rows = [...ids].map((ownerId) => ({
+      ownerId,
+      name: multiplayer.ownerName(ownerId),
+      color: multiplayer.ownerColor(ownerId),
+      active: memberIds.has(ownerId),
+    }));
+    return {
+      selfId: mp.selfId,
+      rows,
+      hiddenOwners: mp.markerPreferences.hiddenOwners,
+      shownOwners: mp.markerPreferences.shownOwners,
+      onToggle: (ownerId: string, visible: boolean) => multiplayer.toggleOwner(ownerId, visible),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mpVersion, mp.selfId, mp.status.members, mp.status.known, mp.markerPreferences, session]);
   useEffect(() => {
     setCanvasError('');
     setCanvasRetry(0);
@@ -372,6 +413,8 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                 map.current = value;
               }}
               onError={setCanvasError}
+              ownerId={mp.selfId}
+              ownerVisibility={ownerVisibility}
             />
             <div className="view-controls">
               <div className="zoom-buttons">
@@ -467,6 +510,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                     preference={preference}
                     onPreference={(changes) => w.updatePreference(id, changes)}
                     onClose={() => closePanel('layers')}
+                    owners={layerOwners}
                   />
                 </div>
               </AppPopover>
@@ -576,6 +620,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                   </div>
                 </dl>
               </aside>
+              <MembersPanel />
               <div className="task-control">
                 {/* One trigger per row, its panel right after it in the DOM so Tab reaches the
                     panel controls; the panel itself opens to the left of its own button. */}
@@ -687,6 +732,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                   )}
                 </div>
                 <CastControl />
+                <MultiplayerControl />
               </div>
             </div>
             {cursor && (

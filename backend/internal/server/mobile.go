@@ -65,6 +65,12 @@ func (m *mobileManager) status() contracts.MobileStatus {
 }
 
 func (m *mobileManager) interfaces() []string {
+	return localInterfaces()
+}
+
+// localInterfaces lists the machine's non-loopback IPv4 addresses, shared by the cast and
+// multiplayer panels for their address pickers.
+func localInterfaces() []string {
 	values := []string{}
 	if interfaces, err := net.Interfaces(); err == nil {
 		for _, item := range interfaces {

@@ -14,6 +14,25 @@ import (
 	contracts "efttoolbox/contracts"
 )
 
+// mapFixtureWithBlockedUser blocks the user directory by writing a FILE over its path before the
+// handler starts, simulating an unwritable data root for save-failure paths.
+func mapFixtureWithBlockedUser(t *testing.T) (string, http.Handler) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "upstream", "modes", "pvp", "maps"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := contracts.MapData{SchemaVersion: 1, Id: "fixture", Name: "Fixture", DefaultFloor: "ground", Projection: contracts.Projection{ViewBox: []float64{0, 0, 100, 100}, Bounds: []contracts.WorldXZ{{X: 0, Z: 0}, {X: 100, Z: 100}}}, Floors: []contracts.Floor{{Id: "ground", Name: "Ground", SvgGroups: []string{"ground"}}}, Categories: []contracts.Category{}, Markers: []contracts.BuiltinMarker{}, Tasks: []contracts.MapTask{}, Warnings: []string{}}
+	data, _ := json.Marshal(m)
+	if err := os.WriteFile(filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "user"), []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root, New(context.Background(), "test", http.FS(fstest.MapFS{}), root)
+}
+
 func mapFixture(t *testing.T) (string, http.Handler) {
 	t.Helper()
 	root := t.TempDir()
@@ -45,8 +64,28 @@ func callJSON(t *testing.T, handler http.Handler, method, path string, value any
 	return response
 }
 
+// multiplayerOwnerID returns the derived peer id the annotations PUT path treats as the local
+// owner; items stamped with it survive the merge, everything else comes from the sync cache.
+func multiplayerOwnerID(t *testing.T, handler http.Handler) string {
+	t.Helper()
+	request := httptest.NewRequest("GET", "/api/multiplayer/settings", nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	request.Host = "localhost"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != 200 {
+		t.Fatalf("multiplayer settings: %s", response.Body.String())
+	}
+	var settings contracts.MultiplayerSettings
+	if err := json.Unmarshal(response.Body.Bytes(), &settings); err != nil || settings.PlayerId == "" {
+		t.Fatalf("multiplayer settings: %s", response.Body.String())
+	}
+	return settings.PlayerId
+}
+
 func TestMapDiscoveryAndPersistence(t *testing.T) {
 	root, handler := mapFixture(t)
+	owner := multiplayerOwnerID(t, handler)
 	response := callJSON(t, handler, "GET", "/api/maps", nil)
 	var maps []contracts.MapSummary
 	if err := json.Unmarshal(response.Body.Bytes(), &maps); err != nil || len(maps) != 1 || maps[0].Id != "fixture" {
@@ -56,7 +95,7 @@ func TestMapDiscoveryAndPersistence(t *testing.T) {
 	if initial.Code != 200 || !bytes.Contains(initial.Body.Bytes(), []byte(`"items":[]`)) {
 		t.Fatal(initial.Body.String())
 	}
-	saved := contracts.Annotations{SchemaVersion: 1, Items: []contracts.Annotation{{Id: "user-mark", FloorId: "ground", Kind: "marker", Points: []contracts.MapPoint{{X: 25, Y: 35}}, Color: "#5FD3C4", Width: 3, TextSize: 15, Text: "淇濈暀鎴戠殑鏍囪", Emoji: "馃搷"}}}
+	saved := contracts.Annotations{SchemaVersion: 1, Items: []contracts.Annotation{{Id: "user-mark", OwnerId: owner, FloorId: "ground", Kind: "marker", Points: []contracts.MapPoint{{X: 25, Y: 35}}, Color: "#5FD3C4", Width: 3, TextSize: 15, Text: "淇濈暀鎴戠殑鏍囪", Emoji: "馃搷"}}}
 	if response := callJSON(t, handler, "PUT", "/api/maps/fixture/annotations", saved); response.Code != 200 {
 		t.Fatal(response.Body.String())
 	}
@@ -297,10 +336,8 @@ func TestCalibrationResetPreservesOtherUserData(t *testing.T) {
 }
 
 func TestCorruptDataAndSaveFailure(t *testing.T) {
-	root, handler := mapFixture(t)
-	if err := os.WriteFile(filepath.Join(root, "user"), []byte("not a directory"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	root, handler := mapFixtureWithBlockedUser(t)
+
 	if response := callJSON(t, handler, "PUT", "/api/maps/fixture/annotations", contracts.Annotations{SchemaVersion: 1, Items: []contracts.Annotation{}}); response.Code != 500 {
 		t.Fatalf("save failure hidden: %d", response.Code)
 	}

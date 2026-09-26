@@ -25,6 +25,14 @@ const copyDirectory = (source, destination) => {
   if (result.status === null || result.status > 7)
     throw new Error(`robocopy failed with exit code ${result.status ?? 'unknown'}`);
 };
+const copyIfPresent = async (source, destination) => {
+  try {
+    await access(source);
+    await copyFile(source, destination);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+};
 const simplifyMaps = async (modes) => {
   const tileMaps = new Set(['lab', 'the-labyrinth', 'icebreaker']);
   for (const mode of await readdir(modes, { withFileTypes: true })) {
@@ -125,6 +133,14 @@ copyDirectory(path.join(upstream, 'modes'), path.join(data, 'modes'));
 copyDirectory(path.join(upstream, 'assets'), path.join(data, 'assets'));
 copyDirectory(path.join(upstream, 'items'), path.join(data, 'items'));
 await copyFile(path.join(upstream, 'stickers.json'), path.join(data, 'stickers.json'));
+await copyIfPresent(
+  path.join(upstream, 'stun-valid-hosts.txt'),
+  path.join(data, 'stun-valid-hosts.txt'),
+);
+await copyIfPresent(
+  path.join(upstream, 'stun-nat-hosts.txt'),
+  path.join(data, 'stun-nat-hosts.txt'),
+);
 if (lite) {
   await simplifyMaps(path.join(data, 'modes'));
   await mkdir(path.join(data, 'tiles'), { recursive: true });

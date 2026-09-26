@@ -50,6 +50,7 @@ type overlayHub struct {
 	overlapDedup      *overlapDedup
 	mobile            *mobileManager
 	mobileBase        http.Handler
+	multiplayer       *multiplayerManager
 }
 
 type regionIndexSnapshot struct {
@@ -323,6 +324,9 @@ func (h *overlayHub) publish(e contracts.ServerEvent) {
 	}
 	if h.mobile != nil {
 		h.mobile.publish(e)
+	}
+	if h.multiplayer != nil {
+		h.multiplayer.onEvent(e)
 	}
 }
 
@@ -677,6 +681,41 @@ func (h *overlayHub) upsertPlayer(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, player)
 }
 
+// applyRemotePlayer projects a teammate's world position with the LOCAL calibration and feeds it
+// into the same player fan-out the dashboard, overlay and cast already consume. Players on maps
+// this machine does not have are still stored (raw world coordinates); rendering filters by map.
+// Projection runs OUTSIDE hub.mu: projectPlayerOnMap re-enters it via currentBasemap.
+func (h *overlayHub) applyRemotePlayer(playerID, displayName, color, mapID string, world contracts.WorldPosition, heading float64) {
+	if !safeID.MatchString(playerID) || len(playerID) > 100 {
+		return
+	}
+	dev := contracts.DevPlayer{PlayerId: playerID, DisplayName: displayName, IsSelf: false, MapId: mapID, WorldPosition: world, Heading: heading}
+	player, err := h.projectPlayer(dev)
+	if err != nil {
+		player = contracts.PlayerState{
+			PlayerId: playerID, DisplayName: displayName, Color: color, IsSelf: false,
+			MapId: mapID, WorldPosition: world, Heading: heading,
+			Resolution: contracts.LocationResolution{Status: "unresolved", Candidates: []string{}},
+		}
+	} else {
+		player.Color = color
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.players[playerID] = player
+	h.publish(contracts.ServerEvent{Type: "player_upsert", Player: &player})
+}
+
+func (h *overlayHub) removeRemotePlayer(playerID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, ok := h.players[playerID]; !ok {
+		return
+	}
+	delete(h.players, playerID)
+	h.publish(contracts.ServerEvent{Type: "player_remove", PlayerId: &playerID})
+}
+
 func operationID(r *http.Request) *string { id := r.Header.Get("X-Operation-ID"); return &id }
 
 // projectPlayer is shared by the development injection endpoint and the production screenshot
@@ -726,7 +765,18 @@ func (h *overlayHub) projectPlayerOnMap(m contracts.MapData, v contracts.DevPlay
 			}
 		}
 	}
-	return contracts.PlayerState{PlayerId: v.PlayerId, DisplayName: v.DisplayName, IsSelf: v.IsSelf, MapId: v.MapId, WorldPosition: v.WorldPosition, MapPosition: p, Resolution: resolution, Heading: heading}, nil
+	return contracts.PlayerState{PlayerId: v.PlayerId, DisplayName: v.DisplayName, Color: h.selfColor(), IsSelf: v.IsSelf, MapId: v.MapId, WorldPosition: v.WorldPosition, MapPosition: p, Resolution: resolution, Heading: heading}, nil
+}
+
+// selfColor is the identity color every locally produced player state carries; the multiplayer
+// manager owns the persisted choice.
+func (h *overlayHub) selfColor() string {
+	if h.multiplayer != nil {
+		if color := h.multiplayer.selfColor(); color != "" {
+			return color
+		}
+	}
+	return defaultPlayerColor
 }
 
 func (h *overlayHub) currentBasemap(m contracts.MapData) string {
