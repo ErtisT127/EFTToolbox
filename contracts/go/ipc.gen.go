@@ -380,6 +380,7 @@ type OverlayBootstrap struct {
 	PreferencesFile      string `json:"preferencesFile"`
 	AnnotationsDirectory string `json:"annotationsDirectory"`
 	OverlaySettingsFile  string `json:"overlaySettingsFile"`
+	StickersFile         string `json:"stickersFile"`
 	WebsocketPath        string `json:"websocketPath"`
 	LogPipeName          string `json:"logPipeName"`
 }

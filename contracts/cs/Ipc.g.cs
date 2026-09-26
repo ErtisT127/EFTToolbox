@@ -380,6 +380,7 @@ public sealed record OverlayBootstrap {
   [JsonPropertyName("preferencesFile")] public string PreferencesFile { get; init; } = "";
   [JsonPropertyName("annotationsDirectory")] public string AnnotationsDirectory { get; init; } = "";
   [JsonPropertyName("overlaySettingsFile")] public string OverlaySettingsFile { get; init; } = "";
+  [JsonPropertyName("stickersFile")] public string StickersFile { get; init; } = "";
   [JsonPropertyName("websocketPath")] public string WebsocketPath { get; init; } = "";
   [JsonPropertyName("logPipeName")] public string LogPipeName { get; init; } = "";
 }

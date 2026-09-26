@@ -488,12 +488,15 @@ input[type='range'] {
   letter-spacing: 0.05em;
   border: 1px solid transparent;
   border-radius: 4px;
-  padding: 1px 8px;
-  height: 28px;
-  font-size: 12px;
+  padding: 2px 9px;
+  height: 22px;
+  font-size: 11px;
   font-weight: 800;
   background: transparent;
-  transition: 0.2s;
+  transition:
+    background var(--duration-normal) ease-out,
+    border-color var(--duration-normal) ease-out,
+    color var(--duration-normal) ease-out;
 }
 
 .mode-tip {
@@ -526,9 +529,19 @@ input[type='range'] {
   transition-delay: 120ms, 0s;
 }
 
-.game-mode-toggle:hover:not(:disabled) {
-  background: rgba(46, 125, 50, 0.3);
-  border-color: #81c784;
+@keyframes mode-swap {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.game-mode-toggle .mode-label {
+  animation: mode-swap var(--duration-normal) ease-out;
 }
 
 .game-mode-toggle:focus-visible {
@@ -542,6 +555,12 @@ input[type='range'] {
   border-color: rgba(125, 93, 46, 0.3);
 }
 
+.game-mode-toggle.regular:hover:not(:disabled) {
+  background: rgba(125, 88, 46, 0.3);
+  border-color: #c7a981;
+  color: #c7a981;
+}
+
 .game-mode-toggle.pve {
   color: #4fc3f7;
   background: rgba(2, 136, 209, 0.2);
@@ -551,6 +570,7 @@ input[type='range'] {
 .game-mode-toggle.pve:hover:not(:disabled) {
   background: rgba(2, 136, 209, 0.3);
   border-color: #4fc3f7;
+  color: #4fc3f7;
 }
 
 .game-mode-toggle.pvp-season {
@@ -562,4 +582,5 @@ input[type='range'] {
 .game-mode-toggle.pvp-season:hover:not(:disabled) {
   background: rgba(46, 125, 50, 0.3);
   border-color: #81c784;
+  color: #81c784;
 }

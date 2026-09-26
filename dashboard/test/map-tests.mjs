@@ -8,6 +8,7 @@ import { mapTimes, timePhase } from '../src/pages/map/lib/time.ts';
 import { SVG_MAX_ZOOM, zoomRange } from '../src/pages/map/lib/zoom.ts';
 
 const root = new URL('../../data/upstream/', import.meta.url);
+const assetsRoot = new URL('assets/', root);
 const dataRoot = new URL('modes/pvp/', root);
 const load = async (name) => JSON.parse(await readFile(new URL(name, dataRoot), 'utf8'));
 const catalog = await load('catalog.json');
@@ -103,7 +104,7 @@ test('all shipped maps reference real SVG groups and coordinates round-trip', as
   for (const summary of catalog) {
     const map = await load(`maps/${summary.id}.json`);
     const svg = map.svgUrl
-      ? await readFile(new URL(`assets/${map.svgUrl.split('/').at(-1)}`, root), 'utf8')
+      ? await readFile(new URL(map.svgUrl.slice('/api/assets/'.length), assetsRoot), 'utf8')
       : '<svg/>';
     const document = new DOMParser().parseFromString(svg, 'image/svg+xml');
     const groups = new Set(
@@ -151,7 +152,9 @@ test('all shipped maps reference real SVG groups and coordinates round-trip', as
     for (const category of map.categories) {
       if (category.symbol === 'label') continue;
       assert.ok(category.iconUrl, `${map.id}: no upstream icon for ${category.id}`);
-      const image = await readFile(new URL(`assets/${category.iconUrl.split('/').at(-1)}`, root));
+      const image = await readFile(
+        new URL(category.iconUrl.slice('/api/assets/'.length), assetsRoot),
+      );
       assert.ok(
         image.subarray(1, 4).toString() === 'PNG' ||
           (image.subarray(0, 4).toString() === 'RIFF' &&
@@ -159,13 +162,13 @@ test('all shipped maps reference real SVG groups and coordinates round-trip', as
       );
       if (category.id.startsWith('loose/'))
         assert.ok(
-          category.iconUrl.includes('/item-'),
+          category.iconUrl.includes('/category-'),
           `${map.id}: category still uses generic loot icon`,
         );
     }
     for (const url of new Set(map.markers.map((m) => m.iconUrl).filter(Boolean))) {
-      assert.ok(url.startsWith('/api/map-assets/'));
-      assert.ok((await readFile(new URL(`assets/${url.split('/').at(-1)}`, root))).length > 0);
+      assert.ok(url.startsWith('/api/assets/'));
+      assert.ok((await readFile(new URL(url.slice('/api/assets/'.length), assetsRoot))).length > 0);
     }
   }
 });

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -32,10 +33,15 @@ var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 // entry upstream must not make a map's saved annotations unsavable.
 var stickerID = regexp.MustCompile(`^[a-z]+:[A-Za-z0-9_/-]{1,120}$`)
 
-// PREFIX + 24 hex characters of content hash, as written by scripts/commands/data/item-images.mjs.
-var contentHashed = regexp.MustCompile(`^(item|trader|mob)-[0-9a-f]{24}\.[a-z]+$`)
+// PREFIX + 24 hex characters of content hash, as written by scripts/lib/item-pull.mjs.
+var contentHashed = regexp.MustCompile(`^(item|trader|mob|category)-[0-9a-f]{24}\.[a-z]+$`)
 
 func hasContentHashName(name string) bool { return contentHashed.MatchString(name) }
+
+// Top-level asset namespaces and extensions served by /api/assets; kept in step with the
+// directory layout written by scripts/commands/data.
+var assetNamespaces = map[string]bool{"display": true, "maps": true, "items": true, "portraits": true}
+var assetExtensions = map[string]bool{".svg": true, ".png": true, ".webp": true, ".jpg": true, ".woff2": true}
 
 type mapStore struct {
 	root             string
@@ -453,7 +459,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/map-tiles/{map}/{layer}/{z}/{x}/{y}", s.tile)
 	mux.HandleFunc("GET /api/stickers", func(w http.ResponseWriter, r *http.Request) {
 		data := []contracts.Sticker{}
-		err := readJSON(filepath.Join(s.activeUpstream(), "stickers.json"), &data)
+		err := readJSON(filepath.Join(s.root, "upstream", "stickers.json"), &data)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			dataError(w, err)
 			return
@@ -501,10 +507,22 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		}
 		cachedJSONResponse(w, r, m)
 	})
-	mux.HandleFunc("GET /api/map-assets/{name}", func(w http.ResponseWriter, r *http.Request) {
-		name := r.PathValue("name")
-		ext := filepath.Ext(name)
-		if filepath.Base(name) != name || !safeID.MatchString(strings.TrimSuffix(name, ext)) || (ext != ".svg" && ext != ".png" && ext != ".webp" && ext != ".jpg" && ext != ".woff2") {
+	mux.HandleFunc("GET /api/assets/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		rel := r.PathValue("path")
+		ext := strings.ToLower(path.Ext(rel))
+		segments := strings.Split(rel, "/")
+		// Every segment must be a plain id, so `..`, dots and separators can never reach the
+		// filesystem; ServeFile would resolve them, which makes the checks below the boundary.
+		valid := len(segments) >= 2 && !strings.Contains(rel, "\\") &&
+			assetNamespaces[segments[0]] && assetExtensions[ext]
+		for i, segment := range segments {
+			if i == len(segments)-1 {
+				valid = valid && safeID.MatchString(strings.TrimSuffix(segment, ext))
+			} else {
+				valid = valid && safeID.MatchString(segment)
+			}
+		}
+		if !valid {
 			http.NotFound(w, r)
 			return
 		}
@@ -513,12 +531,18 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		// The downloaded images are named after a hash of their own bytes, so a given name can
 		// never describe different content. Map SVGs are not: a refresh replaces them in place
 		// under a stable name, so those still have to be revalidated.
-		if hasContentHashName(name) || ext == ".woff2" {
+		if hasContentHashName(segments[len(segments)-1]) || ext == ".woff2" {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		} else {
 			w.Header().Set("Cache-Control", "no-cache")
 		}
-		http.ServeFile(w, r, filepath.Join(s.root, "upstream", "assets", name))
+		root := filepath.Join(s.root, "upstream", "assets")
+		local := filepath.Join(root, filepath.FromSlash(rel))
+		if !strings.HasPrefix(local, root+string(filepath.Separator)) {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeFile(w, r, local)
 	})
 	mux.HandleFunc("GET /api/maps/{id}/annotations", func(w http.ResponseWriter, r *http.Request) {
 		m, err := s.load(r.PathValue("id"))

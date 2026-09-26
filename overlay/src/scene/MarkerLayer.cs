@@ -18,14 +18,13 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
     private string assetRoot = "";
     private int generation, catalogGeneration;
     internal void CancelPending() { Interlocked.Increment(ref generation); requested.Clear(); ready.Clear(); failed.Clear(); }
-    internal void SetAssets(string root)
+    internal void SetAssets(string root, string stickersFile)
     {
         assetRoot = root; CancelPending(); stickers = new();
         var version = ++catalogGeneration;
         _ = Task.Run(() => {
             try {
-                var file = Path.Combine(Path.GetDirectoryName(root)!, "stickers.json");
-                var entries = File.Exists(file) ? (OverlayStateClient.Read<Sticker[]>(file) ?? []).ToDictionary(s => s.Id) : new();
+                var entries = File.Exists(stickersFile) ? (OverlayStateClient.Read<Sticker[]>(stickersFile) ?? []).ToDictionary(s => s.Id) : new();
                 catalogs.Enqueue((version, entries)); wake();
             } catch (Exception e) { OverlayDiagnostics.Log("warn", "sticker_catalog_failed", e.Message); }
         });
@@ -98,7 +97,7 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
                 draw.AddImage(texture.NativePointer, p - half, p + half, Vector2.Zero, Vector2.One, Color("ffffff", opacity));
             } else {
                 Request(key, false, root => {
-                    var path = Path.Combine(root, Path.GetFileName(url));
+                    var path = Assets.LocalPath(root, url) ?? throw new InvalidOperationException($"Unsafe asset url: {url}");
                     RasterizedSvg image;
                     if (path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase)) { using var raster = new SvgRasterizer(); image = raster.Rasterize(path, Math.Max(64, (int)Math.Ceiling(size * dpi))); }
                     else image = SvgRasterizer.Decode(File.ReadAllBytes(path));
@@ -140,7 +139,7 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
             foreground.Add((p.Y / dpi, () => {
                 var glyph = a.ImageId != "" || a.Emoji != "";
                 if (a.ImageId != "") { stickers.TryGetValue(a.ImageId, out var sticker); Icon(sticker?.IconUrl ?? "", p, MapDisplay.StickerSize, 1, sticker is not null && sticker.Group is not ("extract" or "container"), true, sticker?.Group is not ("boss" or "trader")); }
-                else if (a.Emoji != "") Icon(MapDisplay.Emoji.TryGetValue(a.Emoji, out var code) ? $"emoji-{code}.png" : "", p, MapDisplay.EmojiSize, 1, placeholder: true);
+                else if (a.Emoji != "") Icon(MapDisplay.Emoji.TryGetValue(a.Emoji, out var code) ? $"/api/assets/display/emoji/emoji-{code}.png" : "", p, MapDisplay.EmojiSize, 1, placeholder: true);
                 Text(a.Text, "annotation", (float)a.TextSize, 0, a.Color, p - new Vector2(0, glyph ? MapDisplay.StickerSize / 2 * dpi : 0), bottom: glyph);
             }));
         }

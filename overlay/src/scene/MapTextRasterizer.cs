@@ -17,7 +17,7 @@ internal sealed class MapTextRasterizer : IDisposable
         {
             SKTypeface Face(string name)
             {
-                var path = Path.Combine(root, "fonts", name + ".ttf");
+                var path = Path.Combine(root, "display", "fonts", name + ".ttf");
                 var stamp = File.GetLastWriteTimeUtc(path);
                 if (!faces.TryGetValue(path, out var cached) || cached.Stamp != stamp) {
                     var face = SKTypeface.FromFile(path) ?? throw new InvalidDataException($"Missing map font: {name}");

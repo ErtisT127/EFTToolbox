@@ -887,6 +887,7 @@ output {
   font-size: var(--text-xs);
 }
 .task-trigger {
+  position: relative;
   width: 44px;
   height: 44px;
   background: var(--panel);
@@ -913,6 +914,53 @@ output {
 .view-controls > button[aria-pressed='true']:hover,
 .task-trigger[aria-expanded='true']:hover,
 .task-trigger[aria-pressed='true']:hover {
+  background: var(--control-hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* Lit buttons breathe on one shared clock: the glow ring animates on every trigger from mount
+   and visibility merely gates it, so lights switched on at different moments stay in phase.
+   Buttons anchor the ring themselves (.task-trigger / .cast-trigger are position: relative). */
+.cast-trigger::after,
+.minimap-trigger::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  box-shadow:
+    0 0 5px 0 rgba(200, 162, 74, 0.42),
+    0 0 18px 3px rgba(200, 162, 74, 0.18);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  animation: glow-breathe 3.6s ease-in-out infinite;
+}
+.cast-trigger.connected::after,
+.minimap-trigger[aria-pressed='true']::after,
+.minimap-trigger.minimap-editing::after {
+  visibility: visible;
+}
+@keyframes glow-breathe {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  40%,
+  60% {
+    opacity: 1;
+  }
+}
+/* The pulsing halo pairs with a lit icon but no filled chrome: the gold glyph marks the state,
+   the border and background stay at their idle look so the button never shouts. The panel-open
+   highlight (aria-expanded) and every other lit style stay as they are. */
+.minimap-trigger[aria-pressed='true']:not([aria-expanded='true']),
+.minimap-trigger.minimap-editing:not([aria-expanded='true']) {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--accent);
+}
+.minimap-trigger[aria-pressed='true']:not([aria-expanded='true']):hover:not(:disabled),
+.minimap-trigger.minimap-editing:not([aria-expanded='true']):hover:not(:disabled) {
   background: var(--control-hover);
   border-color: var(--accent);
   color: var(--accent);

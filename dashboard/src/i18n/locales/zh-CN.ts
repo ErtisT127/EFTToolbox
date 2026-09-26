@@ -350,6 +350,8 @@ export default {
     close: '关闭手机投屏',
     configTitle: '手机投屏',
     address: '网络地址',
+    pickAddress: '选择网络地址',
+    addressInvalid: '网络地址无效，请输入本机 IPv4 地址',
     start: '开始投屏',
     starting: '正在开始…',
     runningTitle: '扫码打开地图',

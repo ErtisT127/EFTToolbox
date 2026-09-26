@@ -377,6 +377,7 @@ export interface OverlayBootstrap {
   preferencesFile: string;
   annotationsDirectory: string;
   overlaySettingsFile: string;
+  stickersFile: string;
   websocketPath: string;
   logPipeName: string;
 }

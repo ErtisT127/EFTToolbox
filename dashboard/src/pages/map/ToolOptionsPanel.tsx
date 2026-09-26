@@ -92,7 +92,7 @@ export function ToolOptionsPanel({
               ) : (
                 <img
                   alt=""
-                  src={`/api/map-assets/emoji-${mapDisplay.emoji[options.emoji as keyof typeof mapDisplay.emoji]}.png`}
+                  src={`/api/assets/display/emoji/emoji-${mapDisplay.emoji[options.emoji as keyof typeof mapDisplay.emoji]}.png`}
                 />
               )}
             </span>
@@ -136,7 +136,7 @@ export function ToolOptionsPanel({
                         <img
                           className="recent-sticker-emoji"
                           alt=""
-                          src={`/api/map-assets/emoji-${mapDisplay.emoji[pick.emoji as keyof typeof mapDisplay.emoji]}.png`}
+                          src={`/api/assets/display/emoji/emoji-${mapDisplay.emoji[pick.emoji as keyof typeof mapDisplay.emoji]}.png`}
                         />
                       )}
                     </button>

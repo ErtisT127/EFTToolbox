@@ -1,4 +1,4 @@
-import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { access, copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -123,6 +123,8 @@ copyDirectory(path.join(root, 'build/dashboard'), path.join(output, 'dashboard')
 const data = path.join(output, 'data/upstream');
 copyDirectory(path.join(upstream, 'modes'), path.join(data, 'modes'));
 copyDirectory(path.join(upstream, 'assets'), path.join(data, 'assets'));
+copyDirectory(path.join(upstream, 'items'), path.join(data, 'items'));
+await copyFile(path.join(upstream, 'stickers.json'), path.join(data, 'stickers.json'));
 if (lite) {
   await simplifyMaps(path.join(data, 'modes'));
   await mkdir(path.join(data, 'tiles'), { recursive: true });

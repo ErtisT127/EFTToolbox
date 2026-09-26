@@ -38,7 +38,7 @@ const start = source.indexOf('{'),
   end = source.lastIndexOf('}');
 const mapping = JSON.parse(source.slice(start, end + 1).replace(/,\s*}/g, '}'));
 await writeFile(path.join(target, 'mapping.json'), JSON.stringify(mapping, null, 2) + '\n');
-const assets = path.join(root, 'data/upstream/assets');
+const assets = path.join(root, 'data/upstream/assets', 'maps', 'icons');
 await mkdir(assets, { recursive: true });
 const mapSource = await download('src/features/maps/index.js', 'maps-index.js');
 const mapIconBlock = mapSource.match(/export const mapIcons = \{([\s\S]*?)\};/);
@@ -50,11 +50,11 @@ for (const [, id, symbol] of mapIconBlock[1].matchAll(/"([a-z0-9-]+)":\s*(mdi\w+
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="${mdi[symbol]}"/></svg>`;
   await writeFile(path.join(assets, file), svg);
   sources.push({
-    file: `../../assets/${file}`,
+    file: `../../assets/maps/icons/${file}`,
     source: `https://www.npmjs.com/package/@mdi/js/v/7.4.47#${symbol}`,
     sha256: createHash('sha256').update(svg).digest('hex'),
   });
-  mapIcons[id] = `/api/map-assets/${file}`;
+  mapIcons[id] = `/api/assets/maps/icons/${file}`;
 }
 await writeFile(path.join(target, 'map-icons.json'), JSON.stringify(mapIcons, null, 2) + '\n');
 await copyFile(path.join(root, 'node_modules/@mdi/js/LICENSE'), path.join(target, 'MDI-LICENSE'));

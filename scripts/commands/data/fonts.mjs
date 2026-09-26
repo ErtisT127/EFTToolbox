@@ -15,10 +15,11 @@ if (process.argv.includes('--check')) {
   console.log(`Verified ${manifest.files.length} licensed display resources`);
   process.exit(0);
 }
-const fonts = path.join(assets, 'fonts');
+const fonts = path.join(assets, 'display', 'fonts');
+const emoji = path.join(assets, 'display', 'emoji');
 const licenses = path.join(assets, 'licenses');
 const cache = path.join(root, 'build/tools/font-sources');
-await Promise.all([fonts, licenses, cache].map((dir) => mkdir(dir, { recursive: true })));
+await Promise.all([fonts, emoji, licenses, cache].map((dir) => mkdir(dir, { recursive: true })));
 const revision = 'f2bd09badbc763d8757951d52deec29da27e85fb';
 const base = `https://raw.githubusercontent.com/google/fonts/${revision}/ofl/`;
 const records = [];
@@ -78,9 +79,9 @@ for (const [family, filename, name, weights] of [
       { stdio: 'inherit', windowsHide: true },
     );
     const ttf = await readFile(target);
-    await save(`fonts/${file}.ttf`, ttf, url, license, hash(bytes));
+    await save(`display/fonts/${file}.ttf`, ttf, url, license, hash(bytes));
     await save(
-      `${file}.woff2`,
+      `display/fonts/${file}.woff2`,
       Buffer.from(await wawoff2.compress(ttf)),
       url,
       license,
@@ -99,15 +100,36 @@ await save(
 const display = JSON.parse(await readFile(path.join(root, 'contracts/map-display.json'), 'utf8'));
 for (const code of new Set(Object.values(display.emoji))) {
   const url = twemoji + `assets/72x72/${code}.png`;
-  await save(`emoji-${code}.png`, await source(url), url, 'licenses/twemoji-LICENSE-GRAPHICS');
+  await save(
+    `display/emoji/emoji-${code}.png`,
+    await source(url),
+    url,
+    'licenses/twemoji-LICENSE-GRAPHICS',
+  );
 }
-// Obsolete generated files with no verified distribution provenance must not ship.
+// Obsolete generated files with no verified distribution provenance must not ship. The first
+// group predates the display/ namespace: their contents now live under display/fonts/, and the
+// verify walker rejects any font file the manifest does not list, so the stale copies go.
 for (const file of [
   'bender-bold.woff2',
   'fonts/bender-bold.ttf',
   'fonts/NotoSansSC.ttf',
   'barlow-condensed-700.woff2',
   'fonts/barlow-condensed-700.ttf',
+  'noto-sans-sc-400.woff2',
+  'noto-sans-sc-700.woff2',
+  'noto-sans-700.woff2',
+  'barlow-condensed-400.woff2',
+  'barlow-condensed-500.woff2',
+  'barlow-condensed-600.woff2',
+  'jetbrains-mono-400.woff2',
+  'fonts/noto-sans-sc-400.ttf',
+  'fonts/noto-sans-sc-700.ttf',
+  'fonts/noto-sans-700.ttf',
+  'fonts/barlow-condensed-400.ttf',
+  'fonts/barlow-condensed-500.ttf',
+  'fonts/barlow-condensed-600.ttf',
+  'fonts/jetbrains-mono-400.ttf',
 ])
   await rm(path.join(assets, file), { force: true });
 await writeFile(

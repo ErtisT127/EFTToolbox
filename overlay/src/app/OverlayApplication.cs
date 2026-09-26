@@ -372,7 +372,7 @@ internal sealed class OverlayApplication : IDisposable
         if (map.SvgUrl == "" || (raster && map.Tiles.Any(t => t.FloorId == floor))) { loadingScene = false; return; }
         var region = settings.SvgQualityMode == "auto" ? SvgRegion.Around(scene) : null;
         observedSvgZoom = scene.Zoom; observedSvgDpi = scene.Dpi; svgQualityDue = 0;
-        loadingScene = true; var path = Path.Combine(bootstrap.AssetDirectory, Path.GetFileName(map.SvgUrl)); var resolution = settings.SvgResolution; var op = operation; var queued = Stopwatch.GetTimestamp();
+        loadingScene = true; var path = Assets.LocalPath(bootstrap.AssetDirectory, map.SvgUrl) ?? ""; var resolution = settings.SvgResolution; var op = operation; var queued = Stopwatch.GetTimestamp();
         _ = Task.Run(async () =>
         {
             var entered = false;
@@ -461,7 +461,7 @@ internal sealed class OverlayApplication : IDisposable
         if (client.Bootstrap is { } b && b != bootstrap)
         {
             var previous = bootstrap;
-            bootstrap = b; markers.SetAssets(b.AssetDirectory); renderer.SetAssetDirectory(b.AssetDirectory); renderer.Images.Clear(); renderer.Texts.Clear();
+            bootstrap = b; markers.SetAssets(b.AssetDirectory, b.StickersFile); renderer.SetAssetDirectory(b.AssetDirectory); renderer.Images.Clear(); renderer.Texts.Clear();
             dirty = true;
             // Tells the tile layer which tiles are already on disk; it asks the backend for the rest.
             _ = Task.Run(() => { try { tiles.SetManifest(b.TileManifestFile); } catch (Exception e) { OverlayDiagnostics.Log("warn", "tile_manifest_failed", e.Message); } Wake(); });
@@ -497,7 +497,7 @@ internal sealed class OverlayApplication : IDisposable
                             if (scene.Map?.Id == currentId) scene.Annotations = annotations;
                             if (reloadResources)
                             {
-                                markers.SetAssets(b2.AssetDirectory); renderer.Images.Clear(); renderer.Texts.Clear();
+                                markers.SetAssets(b2.AssetDirectory, b2.StickersFile); renderer.Images.Clear(); renderer.Texts.Clear();
                                 if (scene.Map is { } map) LoadMap(map.Id, scene.Preference, preserveView: true);
                             }
                         }); Wake();

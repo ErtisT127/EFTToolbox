@@ -1,8 +1,9 @@
-import { Check, Copy, Smartphone, X } from 'lucide-react';
+import { Check, ChevronDown, Copy, Smartphone, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useEffect, useRef, useState } from 'react';
 import { useLocale } from '../hooks/useLocale';
 import { notices } from '../stores/noticeStore';
+import { AppPopover } from './AppPopover';
 import type {
   MobileInterfaces,
   MobileStartRequest,
@@ -23,11 +24,15 @@ export function CastControl() {
     connected: 0,
   });
   const [address, setAddress] = useState('');
+  const [interfaces, setInterfaces] = useState<string[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
   const [copyState, setCopyState] = useState<CopyState>('idle');
   const [requesting, setRequesting] = useState<'start' | 'stop' | null>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const triggerButton = useRef<HTMLButtonElement>(null);
   const dialog = useRef<HTMLElement>(null);
+  const addressField = useRef<HTMLSpanElement>(null);
+  const addressToggle = useRef<HTMLButtonElement>(null);
   const copyLocked = useRef(false);
   const copyTimer = useRef<number | undefined>(undefined);
 
@@ -35,6 +40,9 @@ export function CastControl() {
 
   const close = () => {
     setOpen(false);
+    // Abandoning the stop confirmation always lands back on the running panel; the next status
+    // load reconciles the stage with reality.
+    setStage((current) => (current === 'confirm' ? 'running' : current));
     triggerButton.current?.focus();
   };
 
@@ -60,6 +68,7 @@ export function CastControl() {
         return response.json() as Promise<MobileInterfaces>;
       })
       .then((values) => {
+        setInterfaces(values.addresses ?? []);
         if (values.addresses[0]) setAddress(values.addresses[0]);
       })
       .catch(() => {});
@@ -77,6 +86,11 @@ export function CastControl() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
+        if (suggestOpen) {
+          setSuggestOpen(false);
+          addressToggle.current?.focus();
+          return;
+        }
         close();
         return;
       }
@@ -97,7 +111,20 @@ export function CastControl() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open]);
+  }, [open, suggestOpen]);
+
+  useEffect(() => {
+    if (!suggestOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (addressToggle.current?.contains(target)) return;
+      if (document.querySelector('.cast-address-popover')?.contains(target)) return;
+      setSuggestOpen(false);
+    };
+    window.addEventListener('pointerdown', onPointerDown, true);
+    return () => window.removeEventListener('pointerdown', onPointerDown, true);
+  }, [suggestOpen]);
 
   const start = async () => {
     if (requesting) return;
@@ -108,7 +135,13 @@ export function CastControl() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ address: address.trim() } satisfies MobileStartRequest),
       });
-      if (!response.ok) throw new Error('start');
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { code?: string } | null;
+        notices.push(
+          t(body?.code === 'mobile_address_invalid' ? 'cast.addressInvalid' : 'cast.startFailed'),
+        );
+        return;
+      }
       const next = (await response.json()) as MobileStatus;
       setStatus(next);
       setStage('running');
@@ -200,12 +233,57 @@ export function CastControl() {
                 <h2>{t('cast.configTitle')}</h2>
                 <label htmlFor="cast-address">
                   {t('cast.address')}
-                  <input
-                    id="cast-address"
-                    value={address}
-                    onChange={(event) => setAddress(event.target.value)}
-                  />
+                  <span className="cast-address-field" ref={addressField}>
+                    <input
+                      id="cast-address"
+                      value={address}
+                      onChange={(event) => setAddress(event.target.value)}
+                    />
+                    {interfaces.length > 0 && (
+                      <button
+                        className="cast-address-toggle"
+                        type="button"
+                        aria-label={t('cast.pickAddress')}
+                        title={t('cast.pickAddress')}
+                        aria-expanded={suggestOpen}
+                        ref={addressToggle}
+                        onClick={() => setSuggestOpen((current) => !current)}
+                      >
+                        <ChevronDown size={14} />
+                      </button>
+                    )}
+                  </span>
                 </label>
+                {suggestOpen && (
+                  <AppPopover
+                    open={suggestOpen}
+                    reference={addressField}
+                    placement="bottom-start"
+                    className="cast-address-popover"
+                  >
+                    <div
+                      className="cast-address-list"
+                      role="listbox"
+                      aria-label={t('cast.pickAddress')}
+                    >
+                      {interfaces.map((value) => (
+                        <button
+                          key={value}
+                          type="button"
+                          role="option"
+                          aria-selected={value === address}
+                          className={value === address ? 'selected' : ''}
+                          onClick={() => {
+                            setAddress(value);
+                            setSuggestOpen(false);
+                          }}
+                        >
+                          {value}
+                        </button>
+                      ))}
+                    </div>
+                  </AppPopover>
+                )}
                 <button
                   className="cast-primary"
                   type="button"

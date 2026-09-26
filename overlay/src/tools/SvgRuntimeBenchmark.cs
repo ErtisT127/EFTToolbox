@@ -12,7 +12,7 @@ internal static class SvgRuntimeBenchmark
         D3D11.D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport, [FeatureLevel.Level_11_0], out ID3D11Device device, out ID3D11DeviceContext context).CheckError();
         using (device) using (context) using (var textures = new TextureCache(device, 1, 512L << 20)) using (var rasterizer = new SvgRasterizer())
         {
-            var assets = Path.Combine(root, "data", "upstream", "assets");
+            var assets = Path.Combine(root, "data", "upstream", "assets", "maps", "svg");
             foreach (var file in Directory.EnumerateFiles(assets, "*.svg").Where(p => new FileInfo(p).Length > 10000).Order())
             {
                 var image = Task.Run(() => rasterizer.Rasterize(file, resolution)).GetAwaiter().GetResult();

@@ -470,7 +470,7 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 			dataError(w, err)
 			return
 		}
-		jsonResponse(w, contracts.OverlayBootstrap{SchemaVersion: 1, MapDirectory: filepath.Join(mapRoot, "maps"), AssetDirectory: filepath.Join(root, "upstream", "assets"), TileDirectory: filepath.Join(root, "upstream", "tiles"), TileManifestFile: filepath.Join(root, "upstream", "tiles", "manifest.json"), PreferencesFile: h.store.userPath("map-preferences.json"), AnnotationsDirectory: filepath.Join(h.store.userRoot(), "maps"), OverlaySettingsFile: filepath.Join(root, "user", "user-settings.json"), WebsocketPath: "/ws", LogPipeName: h.pipe})
+		jsonResponse(w, contracts.OverlayBootstrap{SchemaVersion: 1, MapDirectory: filepath.Join(mapRoot, "maps"), AssetDirectory: filepath.Join(root, "upstream", "assets"), TileDirectory: filepath.Join(root, "upstream", "tiles"), TileManifestFile: filepath.Join(root, "upstream", "tiles", "manifest.json"), PreferencesFile: h.store.userPath("map-preferences.json"), AnnotationsDirectory: filepath.Join(h.store.userRoot(), "maps"), OverlaySettingsFile: filepath.Join(root, "user", "user-settings.json"), StickersFile: filepath.Join(root, "upstream", "stickers.json"), WebsocketPath: "/ws", LogPipeName: h.pipe})
 	})
 	mux.HandleFunc("GET /api/user-settings", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {

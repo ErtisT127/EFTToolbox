@@ -6,7 +6,7 @@ await import('./sources.mjs');
 await import('./icons.mjs');
 await import('./fonts.mjs');
 await import('./svgs.mjs');
-await import('./item-images.mjs');
+await import('./items.mjs');
 for (const mode of ['pvp', 'pve', 'pvp-season'])
   execFileSync(process.execPath, [fileURLToPath(new URL('./prepare.mjs', import.meta.url)), mode], {
     stdio: 'inherit',

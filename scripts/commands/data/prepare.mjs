@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, copyFile, readdir, unlink } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, copyFile, readdir, rm, unlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -32,7 +32,9 @@ const tasksData = (await read('tasks.json')).data;
 const tasks = Object.values(tasksData.tasks);
 const itemsData = (await read('items.json')).data;
 const itemImages = new Map(
-  (await read('item-images.json')).sources.map((s) => [s.source, `/api/map-assets/${s.file}`]),
+  JSON.parse(await readFile(path.join(upstream, 'items', 'manifest.json'), 'utf8')).sources.map(
+    (s) => [s.source, `/api/assets/${s.file}`],
+  ),
 );
 const staticMarkers = await read('maps-static.json');
 // `translations` below merges zh over en, so English map names need their own table. The older
@@ -73,6 +75,17 @@ const adaptationData = JSON.parse(
 );
 const adaptations = adaptationData.maps;
 const text = (value) => translations[value] || value || '';
+// Every file under assets, as paths relative to it; sticker references are validated against this.
+async function walkFiles(directory, prefix = '') {
+  const files = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory())
+      files.push(...(await walkFiles(path.join(directory, entry.name), relative)));
+    else files.push(relative);
+  }
+  return files;
+}
 const report = { mode, maps: [], omittedMaps: [], unsupportedMaps: [], sources: [] };
 const baseline = {};
 for (const group of rules) {
@@ -189,11 +202,12 @@ const mapRanks = new Map(mapOrder.map((id, index) => [id, index]));
 // many maps carry it.
 const catalogCategories = new Map();
 await mkdir(path.join(output, 'maps'), { recursive: true });
-await mkdir(path.join(upstream, 'assets'), { recursive: true });
+await mkdir(path.join(upstream, 'assets', 'maps', 'icons'), { recursive: true });
+await mkdir(path.join(upstream, 'assets', 'maps', 'svg'), { recursive: true });
 for (const icon of new Set(Object.values(iconMapping)))
   await copyFile(
     path.join(source, 'tarkov-dev-icons', `${icon}.png`),
-    path.join(upstream, 'assets', `${icon}.png`),
+    path.join(upstream, 'assets', 'maps', 'icons', `${icon}.png`),
   );
 
 export function inExtent(position, extent) {
@@ -390,7 +404,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
           groupId,
           color,
           symbol,
-          iconUrl: icon ? `/api/map-assets/${icon}.png` : '',
+          iconUrl: icon ? `/api/assets/maps/icons/${icon}.png` : '',
         });
       return key;
     };
@@ -620,7 +634,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
           ...e,
           categoryIds,
           iconUrl: collection
-            ? `/api/map-assets/${collection}.png`
+            ? `/api/assets/maps/icons/${collection}.png`
             : itemImages.get(single ? single.baseImageLink : only?.imageLink) || '',
         },
         // The primary only steers symbol, colour and the popup label; membership is the whole list.
@@ -753,7 +767,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
       iconUrl: mapIcons[meta.ruleMap] || '',
       defaultFloor: meta.svg.defaultFloor,
       baseFloor: meta.svg.baseFloor,
-      svgUrl: meta.svg.file ? `/api/map-assets/${meta.svg.file}` : '',
+      svgUrl: meta.svg.file ? `/api/assets/maps/svg/${meta.svg.file}` : '',
       tiles,
       projection,
       floors,
@@ -779,7 +793,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
     if (meta.svg.file)
       await copyFile(
         path.join(source, 'current-svg', meta.svg.file),
-        path.join(upstream, 'assets', meta.svg.file),
+        path.join(upstream, 'assets', 'maps', 'svg', meta.svg.file),
       );
     await writeFile(path.join(output, 'maps', `${id}.json`), JSON.stringify(map));
     summaries.push({
@@ -841,17 +855,19 @@ for (const [id, meta] of Object.entries(baseline)) {
   }
 }
 await writeFile(path.join(output, 'locations.json'), JSON.stringify(locations));
-// The sticker picker's built-in images. An entry is only listed when the item-images step cached
-// its file, so an image upstream stops shipping drops out of the picker instead of rendering as a
-// broken tile. Stored annotations reference the id, never the file, so a rename cannot strand them.
+// The sticker picker's built-in images. An entry is only listed when the item pull cached its
+// file, so an image upstream stops shipping drops out of the picker instead of rendering as a
+// broken tile. Stored annotations reference the id, never the file, so a rename cannot strand
+// them. The catalogue is shared by all three modes: each prepare merges its mode's entries into
+// data/upstream/stickers.json, keeping ids it has not seen before.
 const stickers = [];
-const cachedAssets = new Set(await readdir(path.join(upstream, 'assets')));
-// Entity images arrive as an upstream URL that item-images mapped to a file; map category icons
+const cachedAssets = new Set(await walkFiles(path.join(upstream, 'assets')));
+// Entity images arrive as an upstream URL that the item pull mapped to a file; map category icons
 // are already a served path, because prepare copies those from the icon mapping itself. Both are
 // checked against what is actually on disk.
 const sticker = (id, name, group, source) => {
-  const iconUrl = source?.startsWith('/api/map-assets/') ? source : itemImages.get(source);
-  if (iconUrl && cachedAssets.has(iconUrl.slice('/api/map-assets/'.length)))
+  const iconUrl = source?.startsWith('/api/assets/') ? source : itemImages.get(source);
+  if (iconUrl && cachedAssets.has(iconUrl.slice('/api/assets/'.length)))
     stickers.push({ id, name: text(name).trim(), group, iconUrl });
 };
 const mobsData = (await read('maps.json')).data.mobs;
@@ -883,18 +899,37 @@ for (const category of catalogCategories.values())
 // Group order is the picker's category order, so the "all" list and the rail agree without the
 // dashboard having to re-sort anything.
 const stickerGroupOrder = ['extract', 'trader', 'boss', 'container', 'key', 'battlepass'];
-stickers.sort(
-  (a, b) =>
-    stickerGroupOrder.indexOf(a.group) - stickerGroupOrder.indexOf(b.group) ||
-    a.name.localeCompare(b.name),
-);
 // A normalizedName is not unique on its own: upstream ships `vsRF` and `vsRFSniper` as the same
 // `af`, sharing one portrait, so without this the picker would show that tile three times.
 const byStickerId = new Map();
 for (const entry of stickers) if (!byStickerId.has(entry.id)) byStickerId.set(entry.id, entry);
-await writeFile(path.join(output, 'stickers.json'), JSON.stringify([...byStickerId.values()]));
+// Merged into the shared catalogue: an id already present from an earlier mode wins, so the
+// refresh order (pvp, pve, pvp-season) decides conflicts deterministically and reruns are
+// idempotent. Entries the current mode no longer produces stay listed with their cached files.
+const shared = new Map();
+try {
+  for (const entry of JSON.parse(await readFile(path.join(upstream, 'stickers.json'), 'utf8')))
+    // A prior entry survives only while its cached file still exists: a cache purge or an
+    // upstream removal must not leave picker tiles pointing at images that are gone.
+    if (
+      entry.iconUrl?.startsWith('/api/assets/') &&
+      cachedAssets.has(entry.iconUrl.slice('/api/assets/'.length))
+    )
+      shared.set(entry.id, entry);
+} catch (error) {
+  if (error.code !== 'ENOENT') throw error;
+}
+for (const entry of byStickerId.values()) if (!shared.has(entry.id)) shared.set(entry.id, entry);
+const merged = [...shared.values()].sort(
+  (a, b) =>
+    stickerGroupOrder.indexOf(a.group) - stickerGroupOrder.indexOf(b.group) ||
+    a.name.localeCompare(b.name),
+);
+await writeFile(path.join(upstream, 'stickers.json'), JSON.stringify(merged));
+// The per-mode catalogue files this script used to write are superseded by the shared one.
+await rm(path.join(output, 'stickers.json'), { force: true });
 console.log(
-  `Prepared ${byStickerId.size} stickers across ${new Set(stickers.map((s) => s.group)).size} groups.`,
+  `Prepared ${byStickerId.size} stickers for ${mode}; shared catalogue now has ${merged.length}.`,
 );
 for (const name of [
   'tarkovdata/maps.json',
@@ -945,7 +980,7 @@ await writeFile(
       hashes: report.sources,
       svgAssets: await read('current-svg/versions.json'),
       iconAssets: await read('tarkov-dev-icons/versions.json'),
-      itemAssets: await read('item-images.json'),
+      itemAssets: JSON.parse(await readFile(path.join(upstream, 'items', 'manifest.json'), 'utf8')),
     },
     null,
     2,

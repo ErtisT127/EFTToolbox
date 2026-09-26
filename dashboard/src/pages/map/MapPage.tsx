@@ -581,7 +581,58 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                     panel controls; the panel itself opens to the left of its own button. */}
                 <div className="task-item">
                   <button
-                    className="task-trigger minimap-trigger"
+                    className="task-trigger"
+                    aria-label={t('map.tasks.trigger')}
+                    aria-controls="map-task-panel"
+                    title={t('map.tasks.trigger')}
+                    ref={taskButton}
+                    aria-expanded={panel === 'tasks'}
+                    onPointerEnter={() => openPanel('tasks')}
+                    onPointerLeave={leavePanel}
+                    onFocus={() => openPanel('tasks')}
+                    onBlur={(e) => blurPanel(e.relatedTarget)}
+                    onClick={() => togglePanel('tasks')}
+                  >
+                    <Search size={24} />
+                  </button>
+                  {panel === 'tasks' && (
+                    <AppPopover
+                      open={panel === 'tasks'}
+                      reference={taskButton}
+                      placement="left-start"
+                      boundaryRef={workArea}
+                    >
+                      <div
+                        id="map-task-panel"
+                        className="task-panel floating"
+                        ref={popup}
+                        role="dialog"
+                        aria-modal="false"
+                        aria-label={t('map.tasks.trigger')}
+                        onPointerDown={() => {
+                          markPanelUsed();
+                          panelPinned.current = true;
+                        }}
+                        onPointerEnter={cancelClose}
+                        onPointerLeave={leavePanel}
+                        onFocus={cancelClose}
+                        onBlur={(e) => blurPanel(e.relatedTarget)}
+                      >
+                        <TaskPanel
+                          tasks={session.data.tasks}
+                          preference={preference}
+                          taskQuery={taskQuery}
+                          setTaskQuery={setTaskQuery}
+                          onPreference={(changes) => w.updatePreference(id, changes)}
+                          onClose={() => closePanel('tasks')}
+                        />
+                      </div>
+                    </AppPopover>
+                  )}
+                </div>
+                <div className="task-item">
+                  <button
+                    className={`task-trigger minimap-trigger ${overlay.view?.editing ? 'minimap-editing' : ''}`}
                     aria-label={t('map.minimap.trigger')}
                     aria-controls="map-minimap-panel"
                     title={t('map.minimap.trigger')}
@@ -630,57 +681,6 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                           command={(command) => void overlay.command(command)}
                           onOpenSettings={onOpenSettings}
                           onClose={() => closePanel('minimap')}
-                        />
-                      </div>
-                    </AppPopover>
-                  )}
-                </div>
-                <div className="task-item">
-                  <button
-                    className="task-trigger"
-                    aria-label={t('map.tasks.trigger')}
-                    aria-controls="map-task-panel"
-                    title={t('map.tasks.trigger')}
-                    ref={taskButton}
-                    aria-expanded={panel === 'tasks'}
-                    onPointerEnter={() => openPanel('tasks')}
-                    onPointerLeave={leavePanel}
-                    onFocus={() => openPanel('tasks')}
-                    onBlur={(e) => blurPanel(e.relatedTarget)}
-                    onClick={() => togglePanel('tasks')}
-                  >
-                    <Search size={24} />
-                  </button>
-                  {panel === 'tasks' && (
-                    <AppPopover
-                      open={panel === 'tasks'}
-                      reference={taskButton}
-                      placement="left-start"
-                      boundaryRef={workArea}
-                    >
-                      <div
-                        id="map-task-panel"
-                        className="task-panel floating"
-                        ref={popup}
-                        role="dialog"
-                        aria-modal="false"
-                        aria-label={t('map.tasks.trigger')}
-                        onPointerDown={() => {
-                          markPanelUsed();
-                          panelPinned.current = true;
-                        }}
-                        onPointerEnter={cancelClose}
-                        onPointerLeave={leavePanel}
-                        onFocus={cancelClose}
-                        onBlur={(e) => blurPanel(e.relatedTarget)}
-                      >
-                        <TaskPanel
-                          tasks={session.data.tasks}
-                          preference={preference}
-                          taskQuery={taskQuery}
-                          setTaskQuery={setTaskQuery}
-                          onPreference={(changes) => w.updatePreference(id, changes)}
-                          onClose={() => closePanel('tasks')}
                         />
                       </div>
                     </AppPopover>

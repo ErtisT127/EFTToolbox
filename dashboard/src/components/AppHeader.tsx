@@ -42,12 +42,13 @@ export function AppHeader({
       <button
         className={`game-mode-toggle ${mode === 'pvp' ? 'regular' : mode}`}
         aria-label={t('mode.select')}
-        aria-pressed="true"
         onClick={() =>
           onModeChange(({ pvp: 'pve', pve: 'pvp-season', 'pvp-season': 'pvp' } as const)[mode])
         }
       >
-        <span>{t(`mode.${modeMeta.label}`)}</span>
+        <span key={mode} className="mode-label">
+          {t(`mode.${modeMeta.label}`)}
+        </span>
         <span className="mode-tip" role="tooltip">
           {t('mode.select')}
         </span>

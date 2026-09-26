@@ -33,7 +33,7 @@ internal sealed class OverlayStateClient : IDisposable
     internal async Task RefreshBootstrapAsync()
     {
         var b = await http.GetFromJsonAsync<OverlayBootstrap>("api/overlay/bootstrap", stop.Token) ?? throw new InvalidDataException("Empty bootstrap");
-        foreach (var p in new[] { b.MapDirectory, b.AssetDirectory, b.TileDirectory, b.PreferencesFile, b.AnnotationsDirectory, b.OverlaySettingsFile })
+        foreach (var p in new[] { b.MapDirectory, b.AssetDirectory, b.TileDirectory, b.PreferencesFile, b.AnnotationsDirectory, b.OverlaySettingsFile, b.StickersFile })
             if (!Path.IsPathFullyQualified(p)) throw new InvalidDataException("Bootstrap path is not absolute");
         Bootstrap = b; Watch(b); Interlocked.Exchange(ref resourcesChanged, 1); wake();
     }
@@ -66,7 +66,7 @@ internal sealed class OverlayStateClient : IDisposable
             try
             {
                 var b = await http.GetFromJsonAsync<OverlayBootstrap>("api/overlay/bootstrap", stop.Token) ?? throw new InvalidDataException("Empty bootstrap");
-                foreach (var p in new[] { b.MapDirectory, b.AssetDirectory, b.TileDirectory, b.PreferencesFile, b.AnnotationsDirectory, b.OverlaySettingsFile })
+                foreach (var p in new[] { b.MapDirectory, b.AssetDirectory, b.TileDirectory, b.PreferencesFile, b.AnnotationsDirectory, b.OverlaySettingsFile, b.StickersFile })
                     if (!Path.IsPathFullyQualified(p)) throw new InvalidDataException("Bootstrap path is not absolute");
                 Bootstrap = b; Watch(b); OverlayDiagnostics.Connect(b.LogPipeName);
                 using var socket = new ClientWebSocket();

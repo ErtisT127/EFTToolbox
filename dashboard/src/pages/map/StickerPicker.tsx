@@ -232,7 +232,7 @@ export function StickerPicker({ stickers, recent, onPick, onClose }: Props) {
                         width="26"
                         height="26"
                         alt=""
-                        src={`/api/map-assets/emoji-${mapDisplay.emoji[item.emoji as keyof typeof mapDisplay.emoji]}.png`}
+                        src={`/api/assets/display/emoji/emoji-${mapDisplay.emoji[item.emoji as keyof typeof mapDisplay.emoji]}.png`}
                       />
                     </button>
                   ) : (

@@ -5,7 +5,7 @@ const commands = {
   'data:sources': ['commands/data/sources.mjs', []],
   'data:icons': ['commands/data/icons.mjs', args],
   'data:svgs': ['commands/data/svgs.mjs', []],
-  'data:item-images': ['commands/data/item-images.mjs', []],
+  'data:items': ['commands/data/items.mjs', args],
   'data:fonts': ['commands/data/fonts.mjs', args],
   package: ['commands/package.mjs', [command, ...args].filter((arg) => arg !== undefined)],
   'data:prepare': ['commands/data/prepare.mjs', args],
@@ -23,7 +23,7 @@ Commands:
   data sources       Download upstream source snapshots
   data icons         Download upstream map icons
   data svgs          Download current map SVGs
-  data item-images   Download referenced item images
+  data items [mode]  Pull item images (cache-skip) and the item catalog (overwrite) for one or all modes
   data fonts         Prepare licensed static fonts and emoji (uv); --check verifies hashes
   package            Build a portable package with verified display assets (--lite keeps only pure-tile maps)
   data prepare       Generate runtime map data

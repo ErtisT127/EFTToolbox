@@ -351,6 +351,8 @@ export default {
     close: 'Close phone sharing',
     configTitle: 'Phone map',
     address: 'Network address',
+    pickAddress: 'Pick an address',
+    addressInvalid: 'Invalid network address. Use an IPv4 address of this machine',
     start: 'Start sharing',
     starting: 'Starting…',
     runningTitle: 'Scan to open the map',

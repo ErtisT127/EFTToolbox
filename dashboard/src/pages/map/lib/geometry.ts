@@ -47,9 +47,16 @@ export function pixelToWorld(point: MapPoint, projection: Projection): { x: numb
 
 // Affine mapping from our stable SVG/map coordinates to the upstream tile grid at zoom 0.
 export function tileTransform(projection: Projection, transform: number[]): number[] {
+  // The upstream transform reads the rotated map frame (the frame the tile grid is drawn in),
+  // so the round-trip has to land back in it before applying the rule's coefficients.
+  // pixelToWorld speaks world axes ({x, z}); rotate() takes SVG-style {x, y}.
   const project = (p: MapPoint) => {
     const world = pixelToWorld(p, projection);
-    return { x: transform[0] * world.x + transform[1], y: -transform[2] * world.z + transform[3] };
+    const rotated = rotate({ x: world.x, y: world.z }, projection.rotation);
+    return {
+      x: transform[0] * rotated.x + transform[1],
+      y: -transform[2] * rotated.y + transform[3],
+    };
   };
   const origin = project({ x: 0, y: 0 }),
     right = project({ x: 1, y: 0 }),

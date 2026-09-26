@@ -1,5 +1,6 @@
 .cast-trigger {
-  position: static;
+  /* position: relative anchors the ::after breathe glow to the button itself */
+  position: relative;
   flex: 0 0 45px;
   display: grid;
   place-items: center;
@@ -28,8 +29,9 @@
   transform: translateY(1px);
 }
 
+/* Connected keeps the idle border and background; the gold glyph plus the shared breathing
+   ring in map.css mark the active cast. */
 .cast-trigger.connected {
-  border-color: var(--accent);
   color: var(--accent);
 }
 
@@ -233,6 +235,73 @@
 
 .cast-dialog input:focus-visible {
   border-color: var(--accent);
+}
+
+/* Address combobox: an idle-looking field with an inset dropdown toggle; the suggestion list
+   is an AppPopover, so it carries its own chrome here. */
+.cast-address-field {
+  position: relative;
+  display: block;
+}
+
+.cast-address-field input {
+  width: 100%;
+  padding-right: 30px;
+}
+
+.cast-address-toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: calc(100% - 8px);
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.cast-address-toggle:hover:not(:disabled) {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.cast-address-popover {
+  z-index: 40;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+}
+
+.cast-address-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 320px;
+  max-width: calc(100dvw - 24px);
+  padding: var(--space-1);
+  overflow-y: auto;
+}
+
+.cast-address-list button {
+  justify-content: flex-start;
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
+.cast-address-list button:hover:not(:disabled) {
+  background: var(--control-hover);
+}
+
+.cast-address-list button.selected {
+  background: var(--selected);
+  color: var(--accent);
 }
 
 html:has(.cast-root),

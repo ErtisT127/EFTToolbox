@@ -110,7 +110,7 @@ export function paintAnnotations(
         if (code) {
           const emoji = document.createElement('img');
           emoji.className = 'annotation-emoji';
-          emoji.src = `/api/map-assets/emoji-${code}.png`;
+          emoji.src = `/api/assets/display/emoji/emoji-${code}.png`;
           emoji.alt = a.emoji;
           element.append(emoji);
         } else if (a.emoji) {
