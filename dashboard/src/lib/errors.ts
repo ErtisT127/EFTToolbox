@@ -1,4 +1,4 @@
-export type DataLoadModule = 'map' | 'calibrator' | 'settings';
+export type DataLoadModule = 'map' | 'calibrator' | 'items' | 'settings';
 
 export class DataLoadError extends Error {
   readonly errorKey: string;

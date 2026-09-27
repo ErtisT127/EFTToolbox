@@ -19,6 +19,18 @@ import (
 
 var version = "0.0.0-dev"
 
+// Startup failures happen before any UI exists, so they are written to the log pipeline and echoed
+// on the launcher's terminal — one line, then exit.
+func fatal(message string, err error) {
+	text := message
+	if err != nil {
+		text = fmt.Sprintf("%s: %v", message, err)
+	}
+	log.Print(text)
+	_, _ = fmt.Fprintln(os.Stderr, text)
+	os.Exit(1)
+}
+
 func main() {
 	setProcessDPIAwareness()
 	exe, err := os.Executable()
@@ -31,12 +43,17 @@ func main() {
 	devStdin := flag.Bool("dev-stdin", false, "stop when the development launcher's stdin pipe closes")
 	overlayExe := flag.String("overlay", filepath.Join(filepath.Dir(exe), "overlay", "overlay.exe"), "native overlay executable")
 	flag.Parse()
+	// Install the log pipeline before the startup checks: a missing dashboard or a busy port is
+	// exactly the kind of failure that has to leave a record.
+	if err := server.InstallLogging(filepath.Join(*dataRoot, "..", "logs")); err != nil {
+		log.Printf("initialize daily log writer: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(*assets, "index.html")); err != nil {
-		log.Fatalf("dashboard unavailable; run scripts/platform/dev.ps1: %v", err)
+		fatal("dashboard unavailable; run scripts/platform/dev.ps1", err)
 	}
 	listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", *port))
 	if err != nil {
-		log.Fatal(err)
+		fatal("listen failed", err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()

@@ -19,6 +19,10 @@ func TestParseScreenshotName(t *testing.T) {
 	if value.Heading < 89 || value.Heading > 91 {
 		t.Fatalf("value = %#v, want heading about 90 degrees", value)
 	}
+	value, ok = ParseScreenshotName("4.85, 5.16, 36.42_0.08595, -0.66457, 0.07868, 0.73808")
+	if !ok || value.X != 4.85 || value.Y != 5.16 || value.Z != 36.42 {
+		t.Fatalf("coordinate fragment = %#v, %v", value, ok)
+	}
 }
 
 func TestParseModeAndLogLine(t *testing.T) {

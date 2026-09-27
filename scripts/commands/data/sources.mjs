@@ -33,6 +33,7 @@ const modeSnapshots = new Set([
   'tasks',
   'tasks_zh',
   'tasks_en',
+  'barters',
   'items',
 ]);
 const sharedSnapshots = recipe.snapshots.filter((name) => !modeSnapshots.has(name));

@@ -50,6 +50,7 @@ type mapStore struct {
 	modeMu           sync.RWMutex
 	repo             *modeRepository
 	changed          func(string, string, string)
+	modeChanged      func()
 	calibrationReset func()
 	multiplayer      *multiplayerManager
 }
@@ -69,6 +70,9 @@ func (s *mapStore) setRepository(repo *modeRepository) {
 	s.modeMu.Lock()
 	s.repo = repo
 	s.modeMu.Unlock()
+	if s.modeChanged != nil {
+		s.modeChanged()
+	}
 }
 
 func newModeRepository(root, mode string) (*modeRepository, error) {
@@ -327,6 +331,11 @@ func cachedJSONResponse(w http.ResponseWriter, r *http.Request, value any) {
 }
 
 func apiError(w http.ResponseWriter, status int, code string) {
+	// 5xx means the app failed rather than the request, so it belongs in the log pipeline; 4xx is a
+	// normal rejection and would only add noise.
+	if status >= http.StatusInternalServerError {
+		log.Printf("api error %d: %s", status, code)
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)

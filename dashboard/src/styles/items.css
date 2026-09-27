@@ -1,0 +1,684 @@
+.items-page {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: clamp(24px, 3.4vh, 40px) clamp(28px, 5vw, 96px) 32px;
+  color: #d8dfda;
+  font-family: 'Map CJK', 'Segoe UI', sans-serif;
+}
+
+.items-toolbar,
+.items-categories {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.items-toolbar {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) auto auto auto minmax(120px, 136px) auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.items-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: var(--panel);
+}
+.items-search:focus-within {
+  border-color: var(--accent);
+  outline: 2px solid rgba(200, 162, 74, 0.32);
+  outline-offset: 1px;
+}
+
+.items-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+}
+.items-search button {
+  min-height: 20px;
+  padding: 0;
+}
+.items-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #aeb8b1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--duration-fast) ease-out;
+}
+/* Matches the settings and map checkbox rows: the row itself is the hover target. */
+.items-check:hover {
+  color: var(--accent);
+}
+.items-check input {
+  accent-color: var(--accent);
+}
+.items-toolbar select {
+  height: 40px;
+  width: 100%;
+  min-width: 120px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+/* The recognition entry is the page's own feature, so it reads as an accent control instead of
+   another toolbar button. */
+.items-recognition {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 40px;
+  padding: 0 var(--space-3) 0 6px;
+  border: 1px solid rgba(200, 162, 74, 0.55);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, rgba(200, 162, 74, 0.22), rgba(200, 162, 74, 0.06));
+  color: #f0e2c2;
+}
+.items-recognition:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: linear-gradient(90deg, rgba(200, 162, 74, 0.32), rgba(200, 162, 74, 0.12));
+}
+.items-recognition-badge {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: rgba(200, 162, 74, 0.9);
+  color: #1b1a15;
+}
+.items-recognition-badge.is-large {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-md);
+}
+.items-recognition-label {
+  display: grid;
+  gap: 1px;
+  text-align: left;
+}
+.items-recognition-label b {
+  font-size: 15px;
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.01em;
+}
+.items-recognition-label small {
+  color: #c9b48a;
+  font-size: 11px;
+}
+
+.items-categories {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+  overscroll-behavior-inline: contain;
+}
+.items-categories::-webkit-scrollbar {
+  display: none;
+}
+.items-categories button {
+  flex: 0 0 auto;
+  border-color: var(--border);
+  color: var(--muted);
+}
+.items-categories button[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--selected);
+}
+
+.items-table-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow: auto;
+  border: 1px solid #303834;
+  border-radius: var(--radius-md);
+  background: rgba(18, 22, 20, 0.92);
+}
+/* The table scrolls constantly, so it gets the same quiet treatment as the panels instead of the
+   platform default bar. */
+.items-table-wrap {
+  scrollbar-width: thin;
+  scrollbar-color: #39423c transparent;
+}
+.items-table {
+  min-width: 880px;
+}
+.items-row {
+  display: grid;
+  /* The image and the three price columns keep a fixed, comfortable width; only the name column
+     grows with the window so the price columns never get squeezed. */
+  grid-template-columns: 96px minmax(240px, 1fr) 190px 172px 268px;
+  align-items: center;
+  height: 91px;
+  min-height: 91px;
+  column-gap: 16px;
+  border-bottom: 1px solid rgba(42, 48, 45, 0.7);
+  padding: 0 20px;
+  font-size: 16px;
+}
+
+/* The sticky header keeps one 64px row for every column. The label is the only grid item, so it
+   sits at the exact vertical centre; the sort slot is positioned below it and never moves it. */
+.items-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 64px;
+  min-height: 64px;
+  border-bottom-color: var(--border);
+  color: #c3ccc5;
+  background: #171c1a;
+}
+.items-head button {
+  justify-content: center;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  color: inherit;
+  font-size: 16px;
+  font-weight: var(--weight-bold);
+  text-align: center;
+}
+.items-sort-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-color: transparent !important;
+  background: transparent !important;
+}
+.items-sort-label {
+  display: grid;
+  align-items: center;
+  height: 19px;
+  line-height: 1;
+}
+.items-sort-slot {
+  position: absolute;
+  top: calc(50% + 11px);
+  left: 50%;
+  display: grid;
+  place-items: center;
+  height: 14px;
+  color: #c3ccc5;
+  transform: translateX(-50%);
+}
+.items-sort-slot svg {
+  display: block;
+  margin-top: -1px;
+}
+.items-sort-button:hover:not(:disabled) {
+  border-color: transparent;
+  background: transparent;
+  color: #e6ece8;
+}
+.items-sort-button::before,
+.items-sort-button::after {
+  display: none !important;
+  content: none;
+}
+.items-head button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -4px;
+}
+.items-row > span:not(.item-name) {
+  font-family: var(--font-mono);
+  font-size: 16px;
+}
+.items-price-cell {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  line-height: 1.35;
+}
+.trader-offer {
+  display: inline-flex;
+  /* Left aligned inside a block that stays centred in its column, so every avatar lines up on the
+     same vertical axis instead of drifting with the price width. */
+  min-width: 148px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+.trader-price {
+  min-width: 7ch;
+  text-align: left;
+}
+.trader-avatar {
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  object-fit: cover;
+}
+.items-status-icon {
+  display: inline-flex;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  color: #c2ccc5;
+}
+.items-status-icon:hover {
+  color: var(--text);
+}
+.items-lowest-cell {
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.item-price-source-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* A condition icon wraps to its own line instead of squeezing the source name. */
+  flex-wrap: wrap;
+  gap: 5px;
+  min-height: 18px;
+}
+/* The source name is plain text; only the attached icon is interactive. */
+.item-price-source {
+  min-height: 18px;
+  padding: 0;
+  border: 0;
+  color: #aeb8b1;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  text-decoration: none;
+}
+.item-price-info {
+  display: inline-flex;
+  min-width: 20px;
+  min-height: 18px;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  color: #9aa69f;
+  cursor: help;
+}
+/* Icons keep their size; the group wraps instead of shrinking. */
+.item-price-info svg {
+  flex: 0 0 auto;
+}
+/* A task and an exchange condition together get their own line under the source name. */
+.item-price-info.is-multi {
+  flex: 0 0 100%;
+  justify-content: center;
+}
+.item-price-info:hover,
+.item-price-info:focus-visible {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  outline: 0;
+}
+
+.items-price-popover {
+  display: grid;
+  gap: 10px;
+  width: min(360px, calc(100vw - 32px));
+  min-width: 264px;
+  max-height: var(--popover-available-height, 60vh);
+  overflow-y: auto;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 6px;
+  background: #242a27;
+  color: #d7ded9;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
+  font-size: 15px;
+  line-height: 1.45;
+}
+.items-popover-section {
+  display: grid;
+  gap: 8px;
+}
+.items-popover-section strong {
+  color: #eef2ef;
+  font-weight: var(--weight-medium);
+}
+.items-price-formula {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.items-price-formula > span:last-child {
+  display: grid;
+  gap: 2px;
+  color: #d7ded9;
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+.items-price-formula small {
+  color: #aab5ad;
+  font-size: 13px;
+}
+.items-formula-image {
+  position: relative;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  place-items: center;
+  border: 1px solid #4b554e;
+  border-radius: 0;
+  background: rgba(10, 13, 12, 0.56);
+  color: #b8c3bb;
+}
+.items-formula-image img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+.items-formula-image b {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  min-width: 16px;
+  padding: 0 3px;
+  background: #202722;
+  color: #f0f4f1;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: var(--weight-medium);
+  line-height: 1.4;
+  text-align: center;
+}
+.hint-tip.items-status-tooltip {
+  white-space: pre-line;
+  max-width: 260px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: #242a27;
+  color: #d7ded9;
+  font-size: 14px;
+}
+
+.item-image {
+  display: grid;
+  place-items: center;
+  width: 80px;
+  height: 80px;
+  border: 1px solid #59645d;
+  border-radius: 0;
+  background: rgba(10, 13, 12, 0.56);
+  color: #8f9992;
+}
+.item-image img {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+}
+.item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #e1e7e3;
+  font-family: var(--font-ui);
+  font-size: 17px;
+}
+.items-rows {
+  will-change: transform;
+}
+
+/* Mode switches and manual reloads reuse the same table, so the refresh reads as an overlay
+   instead of a remount. */
+.items-refresh {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  color: var(--accent);
+  font-size: 15px;
+  background: rgba(12, 15, 14, 0.55);
+  backdrop-filter: blur(1px);
+}
+.items-table-wrap.is-refreshing .items-rows,
+.items-table-wrap.is-refreshing .items-head {
+  opacity: 0.35;
+}
+
+.items-loading {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  color: var(--muted);
+}
+.items-spin {
+  animation: items-spin 1s linear infinite;
+}
+@keyframes items-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.items-dialog {
+  width: min(620px, calc(100vw - 32px));
+}
+.items-dialog-body {
+  display: grid;
+  justify-items: stretch;
+  gap: 20px;
+  padding: 22px 26px 20px;
+  color: var(--muted);
+  text-align: left;
+}
+.items-recognition-body {
+  justify-items: center;
+  gap: 14px;
+  padding: 28px 32px 24px;
+  text-align: center;
+}
+.items-recognition-body > strong {
+  color: var(--text);
+  font-size: 19px;
+}
+.items-recognition-body > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.items-dialog-status {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  align-items: center;
+  gap: 10px;
+}
+.items-dialog-glyph {
+  color: var(--accent);
+}
+.items-dialog-glyph.is-success {
+  color: var(--success);
+}
+.items-dialog-glyph.is-error {
+  color: var(--danger);
+}
+.items-dialog-headline {
+  display: grid;
+  gap: 3px;
+}
+.items-dialog-headline strong {
+  color: var(--text);
+  font-size: 19px;
+  font-weight: var(--weight-bold);
+}
+.items-dialog-headline small {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.items-update-stages {
+  display: grid;
+  gap: 2px;
+  padding: 14px 0 4px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.items-stage {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  align-items: start;
+  gap: 10px;
+  padding: 5px 0;
+}
+.items-stage-mark {
+  display: grid;
+  width: 26px;
+  height: 20px;
+  place-items: center;
+  color: var(--success);
+}
+.items-stage.is-active .items-stage-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(200, 162, 74, 0.14);
+}
+.items-stage-body {
+  display: grid;
+  gap: 7px;
+  align-content: start;
+}
+.items-stage-body > b {
+  font-size: 14px;
+  font-weight: var(--weight-medium);
+  color: #8d9890;
+}
+.items-stage-body > b.is-active {
+  color: #e6ece8;
+}
+.items-stage-dot {
+  width: 9px;
+  height: 9px;
+  border: 1px solid #657067;
+  border-radius: 50%;
+}
+/* The concrete resources of the active download stage, in fetch order. */
+.items-update-resources {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-inline: contain;
+}
+.items-update-resources::-webkit-scrollbar {
+  display: none;
+}
+.items-update-resources li {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid #333b36;
+  border-radius: 999px;
+  color: #8d9890;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.items-update-resources li.active {
+  border-color: var(--accent);
+  color: #f0e2c2;
+  background: rgba(200, 162, 74, 0.14);
+}
+.items-update-resources li.complete {
+  border-color: rgba(123, 197, 118, 0.35);
+  color: #b6ceb4;
+}
+.items-dialog.is-complete .items-dialog-body {
+  background: rgba(123, 197, 118, 0.035);
+}
+.items-dialog.is-cancelled .items-dialog-body {
+  background: rgba(217, 169, 62, 0.035);
+}
+.items-progress-block {
+  display: grid;
+  width: 100%;
+  gap: 8px;
+  padding: 0;
+}
+.items-update-stats {
+  color: var(--muted) !important;
+  font-family: var(--font-mono);
+  font-size: 12px !important;
+}
+.items-dialog-actions {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  padding-top: 4px;
+}
+.items-dialog-actions button {
+  min-width: 120px;
+  height: 36px;
+  border-color: var(--border);
+}
+.items-dialog-body progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.items-progress-text {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+@media (max-width: 980px) {
+  .items-toolbar {
+    grid-template-columns: minmax(240px, 1fr) auto;
+  }
+  .items-search {
+    grid-column: 1 / -1;
+  }
+  .items-row {
+    grid-template-columns: 88px minmax(200px, 1fr) 176px 160px 244px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .items-spin {
+    animation: none;
+  }
+}

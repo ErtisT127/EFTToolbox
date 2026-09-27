@@ -17,37 +17,87 @@ const snapshotUrl = (mode, name) => `https://json.tarkov.dev/${upstreamModes[mod
 export async function fetchModeSnapshots(mode) {
   const data = async (name) =>
     JSON.parse((await download(snapshotUrl(mode, name))).toString()).data;
-  const [items, maps, traders, zhNames, enNames] = await Promise.all([
-    data('items'),
-    data('maps'),
-    data('traders'),
-    data('items_zh'),
-    data('items_en'),
-  ]);
-  return snapshotView(items, maps, traders, zhNames, enNames);
+  const [items, maps, traders, traderNames, zhNames, enNames, tasks, tasksZh, tasksEn, barters] =
+    await Promise.all([
+      data('items'),
+      data('maps'),
+      data('traders'),
+      data('traders_en'),
+      data('items_zh'),
+      data('items_en'),
+      data('tasks'),
+      data('tasks_zh'),
+      data('tasks_en'),
+      data('barters'),
+    ]);
+  return snapshotView(
+    items,
+    maps,
+    traders,
+    traderNames,
+    zhNames,
+    enNames,
+    tasks,
+    tasksZh,
+    tasksEn,
+    barters,
+  );
 }
 
 // Same shape as fetchModeSnapshots, but from the snapshots a `data sources` run already stored.
 export async function loadModeSnapshots(upstream, mode) {
   const data = async (name, dir = mode) =>
     JSON.parse(await readFile(path.join(upstream, 'source', dir, name), 'utf8')).data;
-  const [items, maps, traders, zhNames, enNames] = await Promise.all([
-    data('items.json'),
-    data('maps.json'),
-    data('traders.json', '.'),
-    data('items_zh.json', '.'),
-    data('items_en.json', '.'),
-  ]);
-  return snapshotView(items, maps, traders, zhNames, enNames);
+  const [items, maps, traders, traderNames, zhNames, enNames, tasks, tasksZh, tasksEn, barters] =
+    await Promise.all([
+      data('items.json'),
+      data('maps.json'),
+      data('traders.json', '.'),
+      data('traders_en.json', '.'),
+      data('items_zh.json', '.'),
+      data('items_en.json', '.'),
+      data('tasks.json'),
+      data('tasks_zh.json'),
+      data('tasks_en.json'),
+      data('barters.json'),
+    ]);
+  return snapshotView(
+    items,
+    maps,
+    traders,
+    traderNames,
+    zhNames,
+    enNames,
+    tasks,
+    tasksZh,
+    tasksEn,
+    barters,
+  );
 }
 
-const snapshotView = (items, maps, traders, zhNames, enNames) => ({
+const snapshotView = (
+  items,
+  maps,
+  traders,
+  traderNames,
+  zhNames,
+  enNames,
+  tasks,
+  tasksZh,
+  tasksEn,
+  barters,
+) => ({
   items: items.items,
   handbookCategories: items.handbookCategories,
   mobs: maps.mobs ?? {},
   traders,
+  traderNames,
   zhNames,
   enNames,
+  tasks: tasks.tasks,
+  taskNamesZh: tasksZh,
+  taskNamesEn: tasksEn,
+  barters,
 });
 
 // Every image the map, sticker and catalog surfaces need, keyed by source URL. The prefix feeds
@@ -161,38 +211,223 @@ export function imageUrls(manifest) {
   return new Map(manifest.sources.map((entry) => [entry.source, `/api/assets/${entry.file}`]));
 }
 
-// The five-field catalog: id, localized name, 64px image, trader/flea/lowest prices. Both
-// language files share the records; only `name` differs, resolved from the upstream translation
-// maps with the same fallback order the map pipeline uses.
-export function buildCatalog(mode, { items, zhNames, enNames }, imageUrls) {
-  const records = Object.values(items).map((item) => {
-    const key = item.name;
-    const prices = (values) => {
-      const numbers = values.filter((value) => typeof value === 'number');
-      return numbers.length ? Math.max(...numbers) : null;
-    };
+export const itemCategories = [
+  'headsets',
+  'headgear',
+  'eyewear',
+  'body-armor',
+  'tactical-rigs',
+  'backpacks',
+  'ammo',
+  'weapons',
+  'weapon-parts-mods',
+  'pistol-grips',
+  'suppressors',
+  'throwables',
+  'storage-containers',
+  'barter-items',
+  'keys',
+  'provisions',
+];
+
+// Currencies traders and the flea settle in. An offer priced in one of them is a normal cash
+// purchase even when upstream models it through `requiredItems`.
+const moneyItems = new Set([
+  '5449016a4bdc2d6f028b456f', // roubles
+  '5696686a4bdc2da3298b456a', // dollars
+  '569668774bdc2da2298b4568', // euros
+]);
+
+// Keep category identifiers and price provenance from the upstream source so the UI can localize
+// labels without falling back to slugs or inventing price explanations.
+export function buildCatalog(
+  mode,
+  {
+    items,
+    handbookCategories,
+    traders,
+    traderNames,
+    zhNames,
+    enNames,
+    tasks,
+    taskNamesZh,
+    taskNamesEn,
+    barters,
+  },
+  imageUrls,
+) {
+  const traderName = (id) => traderNames?.[`${id} Nickname`] || traders?.[id]?.normalizedName || id;
+  const traderImage = (id) => imageUrls.get(traders?.[id]?.imageLink) || '';
+  const itemName = (id, locale) => {
+    const names = locale === 'zh' ? zhNames : enNames;
+    const fallback = locale === 'zh' ? enNames : zhNames;
+    return names?.[`${id} Name`] || fallback?.[`${id} Name`] || '';
+  };
+  const taskName = (id, locale) => {
+    const names = locale === 'zh' ? taskNamesZh : taskNamesEn;
+    return names?.[`${id} name`] || names?.[`${id} Name`] || '';
+  };
+  // What one unit costs to obtain: the flea listing you buy from, or the cheapest trader offer.
+  // The catalog's own lowest price and every task/barter cost are built from this same figure.
+  const buyPrice = (item) => {
+    const prices = [];
+    if (!item.types?.includes('noFlea')) {
+      const flea = item.avg24hPrice ?? item.lastLowPrice;
+      if (typeof flea === 'number' && flea > 0) prices.push(flea);
+    }
+    for (const offer of item.buyFromTrader || []) {
+      if (typeof offer.priceRUB === 'number' && offer.priceRUB > 0) prices.push(offer.priceRUB);
+    }
+    return prices.length ? Math.min(...prices) : null;
+  };
+  const requirement = (itemId, count, locale) => {
+    const required = items[itemId];
+    if (!required || !(count > 0)) return null;
+    const unitPrice = buyPrice(required);
     return {
-      id: item.id,
-      zh: zhNames[key] || enNames[key] || key,
-      en: enNames[key] || zhNames[key] || key,
-      image: imageUrls.get(item.baseImageLink) || '',
-      traderPrice: prices((item.sellToTrader || []).map((entry) => entry.priceRUB)),
-      fleaPrice: typeof item.avg24hPrice === 'number' ? item.avg24hPrice : null,
-      lowestPrice: typeof item.lastLowPrice === 'number' ? item.lastLowPrice : null,
+      itemId,
+      name: itemName(itemId, locale),
+      image: imageUrls.get(required.baseImageLink) || '',
+      count,
+      unitPrice,
+      totalPrice: unitPrice === null ? null : Math.round(unitPrice * count),
     };
-  });
-  records.sort((a, b) => a.id.localeCompare(b.id));
+  };
+  // Hand-ins are the item cost of a task; shooting, visiting or locating objectives cost nothing
+  // and must not show up as a prerequisite purchase.
+  const taskUnlock = (taskId, locale) => {
+    const name = taskName(taskId, locale);
+    if (!name) return null;
+    const requirements = [];
+    const seen = new Set();
+    for (const objective of tasks?.[taskId]?.objectives || []) {
+      if (objective.type !== 'giveItem') continue;
+      for (const itemId of objective.items || []) {
+        const entry = requirement(itemId, objective.count, locale);
+        if (!entry || seen.has(itemId)) continue;
+        seen.add(itemId);
+        requirements.push(entry);
+      }
+    }
+    return { id: taskId, name, requirements };
+  };
+  // Barters live in their own snapshot: `offeredItem` is what you receive, `requiredItems` is
+  // what you hand over. Indexed by reward so each catalog row can look up its own exchanges.
+  const barterOffers = new Map();
+  for (const barter of Array.isArray(barters) ? barters : Object.values(barters || {})) {
+    const reward = barter?.offeredItem?.item;
+    if (!reward) continue;
+    barterOffers.set(reward, [...(barterOffers.get(reward) ?? []), barter]);
+  }
+  const records = (locale) => {
+    const result = Object.values(items).map((item) => {
+      const key = item.name;
+      const traderOffers = item.sellToTrader || [];
+      const bestTraderOffer = traderOffers.reduce(
+        (best, offer) =>
+          typeof offer.priceRUB === 'number' && (!best || offer.priceRUB > best.priceRUB)
+            ? offer
+            : best,
+        null,
+      );
+      const lowestCandidates = [];
+      const fleaUnavailable = item.types?.includes('noFlea');
+      const fleaBuyPrice = item.avg24hPrice ?? item.lastLowPrice;
+      if (!fleaUnavailable && typeof fleaBuyPrice === 'number' && fleaBuyPrice > 0) {
+        lowestCandidates.push({
+          price: fleaBuyPrice,
+          source: { kind: 'flea', label: 'FleaMarket', task: null, barter: null },
+        });
+      }
+      for (const offer of item.buyFromTrader || []) {
+        if (typeof offer.priceRUB !== 'number' || typeof offer.minTraderLevel !== 'number')
+          continue;
+        lowestCandidates.push({
+          price: offer.priceRUB,
+          source: {
+            kind: offer.taskUnlock ? 'task' : 'trader',
+            label: `${traderName(offer.trader)} LL${offer.minTraderLevel}`,
+            task: offer.taskUnlock ? taskUnlock(offer.taskUnlock, locale) : null,
+            barter: null,
+          },
+        });
+      }
+      for (const barter of barterOffers.get(item.id) || []) {
+        if (typeof barter.minTraderLevel !== 'number') continue;
+        const entries = (barter.requiredItems || [])
+          .map((entry) => requirement(entry.item, entry.count, locale))
+          .filter(Boolean);
+        const priced = entries.length > 0 && entries.every((entry) => entry.totalPrice !== null);
+        if (!priced) continue;
+        const cashOnly = entries.every((entry) => moneyItems.has(entry.itemId));
+        lowestCandidates.push({
+          price: entries.reduce((sum, entry) => sum + entry.totalPrice, 0),
+          source: {
+            kind: cashOnly ? 'trader' : 'barter',
+            label: `${traderName(barter.trader)} LL${barter.minTraderLevel}`,
+            task: barter.taskUnlock ? taskUnlock(barter.taskUnlock, locale) : null,
+            barter: cashOnly ? null : { items: entries },
+          },
+        });
+      }
+      lowestCandidates.push({
+        price: Number.POSITIVE_INFINITY,
+        source: { kind: 'flea', label: 'FleaMarket', task: null, barter: null },
+      });
+      lowestCandidates.sort((a, b) => a.price - b.price || (a.source.kind === 'flea' ? -1 : 1));
+      const lowest =
+        lowestCandidates[0]?.price === Number.POSITIVE_INFINITY
+          ? { price: null, source: null }
+          : lowestCandidates[0];
+      return {
+        id: item.id,
+        zh: zhNames[key] || enNames[key] || key,
+        en: enNames[key] || zhNames[key] || key,
+        image: imageUrls.get(item.baseImageLink) || '',
+        categories: (item.handbookCategories || [])
+          .map((id) => handbookCategories?.[id]?.normalizedName)
+          .filter((id) => itemCategories.includes(id)),
+        traderPrice: bestTraderOffer?.priceRUB ?? null,
+        trader: bestTraderOffer
+          ? {
+              id: bestTraderOffer.trader,
+              name: traderName(bestTraderOffer.trader),
+              image: traderImage(bestTraderOffer.trader),
+            }
+          : null,
+        traderStatus: traderOffers.length ? 'available' : 'unavailable',
+        // Selling to the flea pays the most recent lowest listing; the buy side used by the lowest
+        // price column is the 24h average, exactly like the upstream API's sellFor/buyFor split.
+        fleaPrice:
+          !fleaUnavailable && typeof item.lastLowPrice === 'number' ? item.lastLowPrice : null,
+        fleaStatus: fleaUnavailable
+          ? 'noFlea'
+          : item.lastLowPrice == null
+            ? 'notScanned'
+            : 'available',
+        lowestPrice: lowest.price,
+        lowestPriceSource: lowest.source,
+      };
+    });
+    result.sort((a, b) => a.id.localeCompare(b.id));
+    return result;
+  };
   const catalog = (locale) => ({
     schemaVersion: 1,
     fetchedAt: '',
     mode,
-    items: records.map((record) => ({
+    items: records(locale).map((record) => ({
       id: record.id,
       name: locale === 'zh' ? record.zh : record.en,
       image: record.image,
+      categories: record.categories,
       traderPrice: record.traderPrice,
+      trader: record.trader,
+      traderStatus: record.traderStatus,
       fleaPrice: record.fleaPrice,
+      fleaStatus: record.fleaStatus,
       lowestPrice: record.lowestPrice,
+      lowestPriceSource: record.lowestPriceSource,
     })),
   });
   return { zh: catalog('zh'), en: catalog('en') };

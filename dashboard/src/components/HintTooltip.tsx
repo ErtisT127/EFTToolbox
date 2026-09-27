@@ -55,7 +55,7 @@ function FloatingTooltip({
     <span
       ref={floating}
       id={id}
-      className="hint-tip"
+      className={`hint-tip ${className}`.trim()}
       role="tooltip"
       aria-hidden={!open}
       data-open={open || undefined}

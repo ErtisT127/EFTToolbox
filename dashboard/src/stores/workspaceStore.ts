@@ -136,10 +136,25 @@ export function reportClientLog(event: string, message: string, error = '') {
   }).catch(() => {});
 }
 
+// Polling and hint-list requests fail silently on purpose, but a first failure is still worth one
+// record. Repeats of the same failure stay silent until it changes or the cooldown elapses, so a
+// broken endpoint cannot flood the log.
+const reportedFailures = new Map<string, { key: string; at: number }>();
+
+export function reportThrottledFailure(event: string, detail: string, cooldownMs = 5 * 60_000) {
+  const now = Date.now();
+  const previous = reportedFailures.get(event) ?? null;
+  // Same rule the notice host uses: a new failure reports at once, a repeat waits for the cooldown.
+  // Kept local so this module stays loadable by the Node-based map tests.
+  if (previous && previous.key === detail && now - previous.at < cooldownMs) return;
+  reportedFailures.set(event, { key: detail, at: now });
+  reportClientLog('http_request_failed', event, detail);
+}
+
 async function failure(response: Response): Promise<string> {
   try {
     const body = (await response.json()) as { code?: string };
-    if (body.code) return `errors.${body.code}`;
+    if (body.code) return body.code.startsWith('errors.') ? body.code : `errors.${body.code}`;
   } catch {
     // Not a JSON error body; fall through to the generic key.
   }

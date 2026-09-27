@@ -6,7 +6,7 @@ import { DataLoadError, isDashboardDevelopment, isDataLoadError } from '../lib/e
 
 type ErrorBoundaryProps = {
   children: ReactNode;
-  module: 'app' | 'map' | 'calibrator' | 'settings';
+  module: 'app' | 'map' | 'calibrator' | 'items' | 'settings';
   resetKeys?: readonly unknown[];
   onRetry: () => void;
   onOpenDirectory?: (error: DataLoadError) => void;

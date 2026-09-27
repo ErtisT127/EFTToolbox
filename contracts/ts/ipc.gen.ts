@@ -36,7 +36,7 @@ export interface MobileInterfaces {
 }
 
 export interface ServerEvent {
-  type: "snapshot" | "heartbeat" | "map_changed" | "floor_changed" | "basemap_changed" | "center_changed" | "filters_changed" | "mode_applied" | "player_upsert" | "player_remove" | "annotation_upsert" | "annotation_remove" | "preferences_changed" | "annotations_changed" | "overlay_settings" | "overlay_command" | "overlay_status" | "resources_changed" | "game_monitor_changed" | "calibration_changed" | "multiplayer_changed" | "session_end" | "session_expired";
+  type: "snapshot" | "heartbeat" | "map_changed" | "floor_changed" | "basemap_changed" | "center_changed" | "filters_changed" | "mode_applied" | "player_upsert" | "player_remove" | "annotation_upsert" | "annotation_remove" | "preferences_changed" | "annotations_changed" | "overlay_settings" | "overlay_command" | "overlay_status" | "resources_changed" | "game_monitor_changed" | "calibration_changed" | "multiplayer_changed" | "items_changed" | "session_end" | "session_expired";
   sentAt: string;
   status: Status;
   mapId?: string;
@@ -55,6 +55,88 @@ export interface ServerEvent {
   overlayCommand?: OverlayCommand;
   gameMonitorStatus?: GameMonitorStatus;
   multiplayerStatus?: MultiplayerStatus;
+}
+
+export interface ItemsCatalogItem {
+  id: string;
+  name: string;
+  image: string;
+  categories: Array<string>;
+  traderPrice: number | null;
+  trader: ItemsTrader | null;
+  traderStatus: "available" | "unavailable";
+  fleaPrice: number | null;
+  fleaStatus: "available" | "noFlea" | "notScanned";
+  lowestPrice: number | null;
+  lowestPriceSource: ItemsPriceSource | null;
+}
+
+export interface ItemsPriceSource {
+  kind: "flea" | "trader" | "task" | "barter";
+  label: string;
+  task: ItemsTaskUnlock | null;
+  barter: ItemsBarter | null;
+}
+
+export interface ItemsTaskUnlock {
+  id: string;
+  name: string;
+  requirements: Array<ItemsRequirement>;
+}
+
+export interface ItemsRequirement {
+  itemId: string;
+  name: string;
+  image: string;
+  count: number;
+  unitPrice: number | null;
+  totalPrice: number | null;
+}
+
+export interface ItemsBarter {
+  items: Array<ItemsRequirement>;
+}
+
+export interface ItemsTrader {
+  id: string;
+  name: string;
+  image: string;
+}
+
+export interface ItemsCatalog {
+  schemaVersion: number;
+  fetchedAt: string;
+  mode: "pvp" | "pve" | "pvp-season";
+  items: Array<ItemsCatalogItem>;
+}
+
+export interface ItemsSettings {
+  schemaVersion: number;
+  autoUpdate: boolean;
+  intervalMinutes: number;
+  includeImages: boolean;
+  category: string;
+  sort: "id" | "name" | "traderPrice" | "fleaPrice" | "lowestPrice";
+  descending: boolean;
+}
+
+export interface ItemsUpdateRequest {
+  includeImages: boolean;
+}
+
+export interface ItemsUpdateStatus {
+  running: boolean;
+  phase: "" | "download" | "parse" | "images" | "write";
+  detail: string;
+  imagesTotal: number;
+  imagesDone: number;
+  downloaded: number;
+  skipped: number;
+  includeImages: boolean;
+  error: "" | "cancelled" | "update_failed";
+  errorDetail: string;
+  startedAt?: string;
+  finishedAt?: string;
 }
 
 export interface GameMonitorSettings {
@@ -362,7 +444,6 @@ export interface OverlaySettings {
   targetZoom: number;
   perMapZoom: boolean;
   mapZooms: Array<MapZoomOverride>;
-  devPlayerEnabled: boolean;
   hotkeys: OverlayHotkeys;
 }
 
@@ -412,13 +493,9 @@ export interface OverlayCommand {
   enabled?: boolean;
 }
 
-export interface DevPlayer {
-  playerId: string;
-  displayName: string;
-  isSelf: boolean;
+export interface ManualPositionUpdate {
   mapId: string;
-  worldPosition: WorldPosition;
-  heading: number;
+  screenshotName: string;
 }
 
 export interface OperationTiming {
@@ -543,6 +620,13 @@ export interface NumericLimit {
 
 export const MobileStatusLimits = {
   connected: { min: 0, max: Infinity, step: 0, precision: 0 },
+} as const;
+
+export const ItemsUpdateStatusLimits = {
+  imagesTotal: { min: 0, max: Infinity, step: 0, precision: 0 },
+  imagesDone: { min: 0, max: Infinity, step: 0, precision: 0 },
+  downloaded: { min: 0, max: Infinity, step: 0, precision: 0 },
+  skipped: { min: 0, max: Infinity, step: 0, precision: 0 },
 } as const;
 
 export const MapPointLimits = {

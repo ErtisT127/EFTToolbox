@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { useEffect, useRef, useState } from 'react';
 import { useLocale } from '../hooks/useLocale';
 import { notices } from '../stores/noticeStore';
+import { reportThrottledFailure } from '../stores/workspaceStore';
 import { AppPopover } from './AppPopover';
 import type {
   MobileInterfaces,
@@ -58,7 +59,7 @@ export function CastControl() {
           current === 'confirm' ? current : next.enabled ? 'running' : 'config',
         );
       })
-      .catch(() => {});
+      .catch((error: unknown) => reportThrottledFailure('cast_status_poll_failed', String(error)));
 
   useEffect(() => {
     load();
@@ -71,7 +72,7 @@ export function CastControl() {
         setInterfaces(values.addresses ?? []);
         if (values.addresses[0]) setAddress(values.addresses[0]);
       })
-      .catch(() => {});
+      .catch((error: unknown) => reportThrottledFailure('cast_interfaces_failed', String(error)));
   }, []);
 
   useEffect(() => {

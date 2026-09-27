@@ -48,7 +48,6 @@ func TestOverlaySettingsAndPlayerSnapshot(t *testing.T) {
 	}
 	s := defaultOverlaySettings()
 	s.Width = 99999
-	s.DevPlayerEnabled = true
 	var saved contracts.OverlaySettings
 	if err := json.Unmarshal(call("PUT", "/api/overlay-settings", s, 200), &saved); err != nil {
 		t.Fatal(err)
@@ -95,8 +94,8 @@ func TestOverlaySettingsAndPlayerSnapshot(t *testing.T) {
 	if err = os.WriteFile(settingsPath, aggregateData, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	player := contracts.DevPlayer{PlayerId: "self", MapId: "fixture", IsSelf: true, WorldPosition: contracts.WorldPosition{X: 25, Y: 1, Z: 75}, Heading: 0}
-	call("POST", "/api/dev/player", player, 200)
+	position := contracts.ManualPositionUpdate{MapId: "fixture", ScreenshotName: "2026-09-21[12-30]_25.000, 1.000, 75.000_0.000, 0.000, 0.000, 1.000.png"}
+	call("POST", "/api/game-monitor/position", position, 200)
 	readSnapshot := func() contracts.ServerEvent {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -122,16 +121,8 @@ func TestOverlaySettingsAndPlayerSnapshot(t *testing.T) {
 			t.Fatalf("world projection: %+v", p)
 		}
 	}
-	call("DELETE", "/api/dev/player/self", nil, 200)
-	if e := readSnapshot(); e.Players == nil || len(*e.Players) != 0 {
-		t.Fatal("removed player survived snapshot")
-	}
-	player.WorldPosition.Y = 999
-	call("POST", "/api/dev/player", player, 200)
-	s.DevPlayerEnabled = false
-	call("PUT", "/api/overlay-settings", s, 200)
-	player.WorldPosition.Y = 1
-	call("POST", "/api/dev/player", player, 403)
+	position.ScreenshotName = "invalid.png"
+	call("POST", "/api/game-monitor/position", position, 400)
 	req := httptest.NewRequest("GET", "http://localhost/api/overlay/bootstrap", nil)
 	req.RemoteAddr = "192.0.2.1:9000"
 	out := httptest.NewRecorder()

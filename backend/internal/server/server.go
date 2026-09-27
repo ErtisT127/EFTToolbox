@@ -17,12 +17,10 @@ import (
 const ProtocolVersion = "1"
 
 func New(ctx context.Context, version string, assets http.FileSystem, dataRoot string) http.Handler {
-	logWriter, err := newDailyLogWriter(filepath.Join(dataRoot, "..", "logs"))
-	if err == nil {
-		log.SetOutput(logWriter)
-	} else {
+	if err := InstallLogging(filepath.Join(dataRoot, "..", "logs")); err != nil {
 		log.Printf("initialize daily log writer: %v", err)
 	}
+	logWriter := installedLogWriter
 	status := contracts.Status{ProtocolVersion: ProtocolVersion, AppVersion: version, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	mux := http.NewServeMux()
 	store := &mapStore{root: dataRoot}
@@ -35,17 +33,20 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 	store.multiplayer = multiplayer
 	store.changed = hub.changed
 	store.calibrationReset = hub.invalidateCalibrationIndexes
-	if writer, ok := logWriter.(*dailyLogWriter); ok {
-		hub.logWriter = writer
-		hub.pipe = startOverlayLogPipe(ctx, writer)
+	items := newItemsManager(ctx, store, hub)
+	store.modeChanged = items.cancelUpdate
+	if logWriter != nil {
+		hub.logWriter = logWriter
+		hub.pipe = startOverlayLogPipe(ctx, logWriter)
 	}
 	store.register(mux)
 	hub.register(mux)
 	mobile.register(mux)
 	multiplayer.register(mux)
+	items.register(mux)
 	hub.registerGameMonitor(mux)
 	hub.startGameMonitor(ctx)
-	if writer, ok := logWriter.(*dailyLogWriter); ok {
+	if logWriter != nil {
 		mux.HandleFunc("POST /api/logs", func(w http.ResponseWriter, r *http.Request) {
 			defer func() { _ = r.Body.Close() }()
 			var entry clientLog
@@ -60,7 +61,7 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 			if entry.Level == "" {
 				entry.Level = "error"
 			}
-			if err := writer.write(entry); err != nil {
+			if err := logWriter.write(entry); err != nil {
 				http.Error(w, "log unavailable", http.StatusServiceUnavailable)
 				return
 			}

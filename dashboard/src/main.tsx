@@ -10,6 +10,7 @@ import './styles/multiplayer.css';
 import './styles/map-display.gen.css';
 import './styles/map.css';
 import './styles/calibrator.css';
+import './styles/items.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

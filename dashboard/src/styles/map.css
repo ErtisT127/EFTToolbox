@@ -1104,6 +1104,72 @@ output {
   font-weight: 400;
   pointer-events: none;
 }
+.map-coordinates {
+  pointer-events: auto;
+}
+.coordinate-readout {
+  display: block;
+  min-height: 0;
+  width: max-content;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.coordinate-readout:hover:not(:disabled) {
+  color: inherit;
+  background: transparent;
+  border-color: transparent;
+}
+.coordinate-update-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: min(320px, calc(100vw - 32px));
+}
+.coordinate-update-form input {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 260px;
+  max-width: calc(100vw - 96px);
+  min-height: 30px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--bg);
+  font: inherit;
+}
+.coordinate-update-form button {
+  display: inline-flex;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  min-height: 30px;
+  padding: 0;
+}
+.map-coordinates.is-editing {
+  transform-origin: right center;
+  animation: coordinate-panel-expand 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes coordinate-panel-expand {
+  from {
+    transform: scaleX(0.45);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .map-coordinates.is-editing {
+    animation: none;
+  }
+}
 .layer-panel .panel-scroll > * + *,
 .minimap-panel .panel-scroll > * + * {
   margin-top: var(--space-2);

@@ -109,6 +109,7 @@
             "game_monitor_changed",
             "calibration_changed",
             "multiplayer_changed",
+            "items_changed",
             "session_end",
             "session_expired"
           ]
@@ -174,6 +175,168 @@
         "multiplayerStatus": {
           "$ref": "#/$defs/MultiplayerStatus"
         }
+      }
+    },
+    "ItemsCatalogItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "image",
+        "categories",
+        "traderPrice",
+        "trader",
+        "traderStatus",
+        "fleaPrice",
+        "fleaStatus",
+        "lowestPrice",
+        "lowestPriceSource"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "image": { "type": "string" },
+        "categories": { "type": "array", "items": { "type": "string" } },
+        "traderPrice": { "type": ["integer", "null"] },
+        "trader": {
+          "anyOf": [{ "$ref": "#/$defs/ItemsTrader" }, { "type": "null" }]
+        },
+        "traderStatus": { "type": "string", "enum": ["available", "unavailable"] },
+        "fleaPrice": { "type": ["integer", "null"] },
+        "fleaStatus": { "type": "string", "enum": ["available", "noFlea", "notScanned"] },
+        "lowestPrice": { "type": ["integer", "null"] },
+        "lowestPriceSource": {
+          "anyOf": [{ "$ref": "#/$defs/ItemsPriceSource" }, { "type": "null" }]
+        }
+      }
+    },
+    "ItemsPriceSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "label", "task", "barter"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["flea", "trader", "task", "barter"] },
+        "label": { "type": "string" },
+        "task": {
+          "anyOf": [{ "$ref": "#/$defs/ItemsTaskUnlock" }, { "type": "null" }]
+        },
+        "barter": {
+          "anyOf": [{ "$ref": "#/$defs/ItemsBarter" }, { "type": "null" }]
+        }
+      }
+    },
+    "ItemsTaskUnlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "requirements"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "requirements": { "type": "array", "items": { "$ref": "#/$defs/ItemsRequirement" } }
+      }
+    },
+    "ItemsRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["itemId", "name", "image", "count", "unitPrice", "totalPrice"],
+      "properties": {
+        "itemId": { "type": "string" },
+        "name": { "type": "string" },
+        "image": { "type": "string" },
+        "count": { "type": "number", "exclusiveMinimum": 0 },
+        "unitPrice": { "type": ["integer", "null"] },
+        "totalPrice": { "type": ["integer", "null"] }
+      }
+    },
+    "ItemsBarter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items"],
+      "properties": {
+        "items": { "type": "array", "items": { "$ref": "#/$defs/ItemsRequirement" } }
+      }
+    },
+    "ItemsTrader": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "image"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "image": { "type": "string" }
+      }
+    },
+    "ItemsCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "fetchedAt", "mode", "items"],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "fetchedAt": { "type": "string" },
+        "mode": { "type": "string", "enum": ["pvp", "pve", "pvp-season"] },
+        "items": { "type": "array", "items": { "$ref": "#/$defs/ItemsCatalogItem" } }
+      }
+    },
+    "ItemsSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "autoUpdate",
+        "intervalMinutes",
+        "includeImages",
+        "category",
+        "sort",
+        "descending"
+      ],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "autoUpdate": { "type": "boolean" },
+        "intervalMinutes": { "type": "integer", "enum": [60, 120, 240, 480, 720] },
+        "includeImages": { "type": "boolean" },
+        "category": { "type": "string" },
+        "sort": {
+          "type": "string",
+          "enum": ["id", "name", "traderPrice", "fleaPrice", "lowestPrice"]
+        },
+        "descending": { "type": "boolean" }
+      }
+    },
+    "ItemsUpdateRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["includeImages"],
+      "properties": { "includeImages": { "type": "boolean" } }
+    },
+    "ItemsUpdateStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "running",
+        "phase",
+        "detail",
+        "imagesTotal",
+        "imagesDone",
+        "downloaded",
+        "skipped",
+        "includeImages",
+        "error",
+        "errorDetail"
+      ],
+      "properties": {
+        "running": { "type": "boolean" },
+        "phase": { "type": "string", "enum": ["", "download", "parse", "images", "write"] },
+        "detail": { "type": "string" },
+        "imagesTotal": { "type": "integer", "minimum": 0 },
+        "imagesDone": { "type": "integer", "minimum": 0 },
+        "downloaded": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "includeImages": { "type": "boolean" },
+        "error": { "type": "string", "enum": ["", "cancelled", "update_failed"] },
+        "errorDetail": { "type": "string" },
+        "startedAt": { "type": "string" },
+        "finishedAt": { "type": "string" }
       }
     },
     "GameMonitorSettings": {
@@ -1113,7 +1276,6 @@
         "targetZoom",
         "perMapZoom",
         "mapZooms",
-        "devPlayerEnabled",
         "hotkeys"
       ],
       "properties": {
@@ -1200,9 +1362,6 @@
           "items": {
             "$ref": "#/$defs/MapZoomOverride"
           }
-        },
-        "devPlayerEnabled": {
-          "type": "boolean"
         },
         "hotkeys": {
           "$ref": "#/$defs/OverlayHotkeys"
@@ -1371,28 +1530,18 @@
         }
       }
     },
-    "DevPlayer": {
+    "ManualPositionUpdate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["playerId", "displayName", "isSelf", "mapId", "worldPosition", "heading"],
+      "required": ["mapId", "screenshotName"],
       "properties": {
-        "playerId": {
-          "type": "string"
-        },
-        "displayName": {
-          "type": "string"
-        },
-        "isSelf": {
-          "type": "boolean"
-        },
         "mapId": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 100
         },
-        "worldPosition": {
-          "$ref": "#/$defs/WorldPosition"
-        },
-        "heading": {
-          "type": "number"
+        "screenshotName": {
+          "type": "string",
+          "maxLength": 4096
         }
       }
     },

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { MapPage } from '../pages/map/MapPage';
 import { CalibratorPage } from '../pages/calibrator/CalibratorPage';
 import { SettingsPage } from '../pages/settings/SettingsPage';
-import { AppHeader } from '../components/AppHeader';
+import { AppHeader, type AppPage } from '../components/AppHeader';
 import { NoticeHost } from '../components/Notice';
 import { workspace } from '../stores/workspaceStore';
 import { useLocale } from '../hooks/useLocale';
@@ -10,11 +10,16 @@ import { Check, Radio } from 'lucide-react';
 import { gameMonitor } from '../stores/gameMonitorStore';
 import { useGlobalErrorRecovery } from '../hooks/useGlobalErrorRecovery';
 import { ErrorBoundary } from '../components/ErrorBoundary';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { DataLoadError } from '../lib/errors';
 import { notices } from '../stores/noticeStore';
+import { ItemsPage } from '../pages/items/ItemsPage';
 
 export function AppShell() {
-  const [page, setPage] = useState<'map' | 'calibrator' | 'items' | 'tools' | 'settings'>('map');
+  const [page, setPage] = useState<AppPage>('map');
+  // Resetting module data is destructive, so it asks with the app's own dialog instead of the
+  // browser's default confirm.
+  const [pendingReset, setPendingReset] = useState<'calibrator' | 'settings' | null>(null);
   const { t } = useLocale();
   const recovery = useGlobalErrorRecovery();
   const { overlay, monitor, failed, saving, workspace: w } = recovery;
@@ -82,12 +87,7 @@ export function AppShell() {
   };
   const boundaryActions = (module: 'calibrator' | 'settings') => ({
     onOpenDirectory: (_error: DataLoadError) => openDataDirectory(),
-    onResetData: (_error: DataLoadError) => {
-      const confirmed = window.confirm(
-        t(module === 'calibrator' ? 'calibrator.resetDataConfirm' : 'settingsError.resetConfirm'),
-      );
-      if (confirmed) resetModuleData(module);
-    },
+    onResetData: (_error: DataLoadError) => setPendingReset(module),
   });
   return (
     <main className="app-shell">
@@ -126,11 +126,9 @@ export function AppShell() {
             <SettingsPage />
           </ErrorBoundary>
         ) : (
-          <section className="placeholder">
-            <h1>{t(`nav.${page}`)}</h1>
-            <p>{t('common.building')}</p>
-            <button onClick={() => setPage('map')}>{t('common.backToMap')}</button>
-          </section>
+          <ErrorBoundary module="items" resetKeys={[page]} onRetry={() => window.location.reload()}>
+            <ItemsPage />
+          </ErrorBoundary>
         )}
         <footer className="statusbar">
           <span className={`connection ${overlay.connected ? 'connected' : ''}`}>
@@ -158,6 +156,28 @@ export function AppShell() {
           </div>
         </footer>
       </ErrorBoundary>
+      <ConfirmDialog
+        open={pendingReset !== null}
+        title={t(
+          pendingReset === 'calibrator' ? 'calibrator.resetDataTitle' : 'settingsError.resetTitle',
+        )}
+        message={t(
+          pendingReset === 'calibrator'
+            ? 'calibrator.resetDataConfirm'
+            : 'settingsError.resetConfirm',
+        )}
+        confirmLabel={t(
+          pendingReset === 'calibrator'
+            ? 'calibrator.resetDataConfirmButton'
+            : 'settingsError.resetConfirmButton',
+        )}
+        danger
+        onConfirm={() => {
+          if (pendingReset) resetModuleData(pendingReset);
+          setPendingReset(null);
+        }}
+        onCancel={() => setPendingReset(null)}
+      />
     </main>
   );
 }

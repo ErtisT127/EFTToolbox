@@ -60,6 +60,88 @@ type ServerEvent struct {
 	MultiplayerStatus *MultiplayerStatus    `json:"multiplayerStatus,omitempty"`
 }
 
+type ItemsCatalogItem struct {
+	Id                string            `json:"id"`
+	Name              string            `json:"name"`
+	Image             string            `json:"image"`
+	Categories        []string          `json:"categories"`
+	TraderPrice       *int              `json:"traderPrice"`
+	Trader            *ItemsTrader      `json:"trader"`
+	TraderStatus      string            `json:"traderStatus"`
+	FleaPrice         *int              `json:"fleaPrice"`
+	FleaStatus        string            `json:"fleaStatus"`
+	LowestPrice       *int              `json:"lowestPrice"`
+	LowestPriceSource *ItemsPriceSource `json:"lowestPriceSource"`
+}
+
+type ItemsPriceSource struct {
+	Kind   string           `json:"kind"`
+	Label  string           `json:"label"`
+	Task   *ItemsTaskUnlock `json:"task"`
+	Barter *ItemsBarter     `json:"barter"`
+}
+
+type ItemsTaskUnlock struct {
+	Id           string             `json:"id"`
+	Name         string             `json:"name"`
+	Requirements []ItemsRequirement `json:"requirements"`
+}
+
+type ItemsRequirement struct {
+	ItemId     string  `json:"itemId"`
+	Name       string  `json:"name"`
+	Image      string  `json:"image"`
+	Count      float64 `json:"count"`
+	UnitPrice  *int    `json:"unitPrice"`
+	TotalPrice *int    `json:"totalPrice"`
+}
+
+type ItemsBarter struct {
+	Items []ItemsRequirement `json:"items"`
+}
+
+type ItemsTrader struct {
+	Id    string `json:"id"`
+	Name  string `json:"name"`
+	Image string `json:"image"`
+}
+
+type ItemsCatalog struct {
+	SchemaVersion int                `json:"schemaVersion"`
+	FetchedAt     string             `json:"fetchedAt"`
+	Mode          string             `json:"mode"`
+	Items         []ItemsCatalogItem `json:"items"`
+}
+
+type ItemsSettings struct {
+	SchemaVersion   int    `json:"schemaVersion"`
+	AutoUpdate      bool   `json:"autoUpdate"`
+	IntervalMinutes int    `json:"intervalMinutes"`
+	IncludeImages   bool   `json:"includeImages"`
+	Category        string `json:"category"`
+	Sort            string `json:"sort"`
+	Descending      bool   `json:"descending"`
+}
+
+type ItemsUpdateRequest struct {
+	IncludeImages bool `json:"includeImages"`
+}
+
+type ItemsUpdateStatus struct {
+	Running       bool    `json:"running"`
+	Phase         string  `json:"phase"`
+	Detail        string  `json:"detail"`
+	ImagesTotal   int     `json:"imagesTotal"`
+	ImagesDone    int     `json:"imagesDone"`
+	Downloaded    int     `json:"downloaded"`
+	Skipped       int     `json:"skipped"`
+	IncludeImages bool    `json:"includeImages"`
+	Error         string  `json:"error"`
+	ErrorDetail   string  `json:"errorDetail"`
+	StartedAt     *string `json:"startedAt,omitempty"`
+	FinishedAt    *string `json:"finishedAt,omitempty"`
+}
+
 type GameMonitorSettings struct {
 	SchemaVersion       int    `json:"schemaVersion"`
 	ScreenshotDirectory string `json:"screenshotDirectory"`
@@ -347,26 +429,25 @@ type MapZoomOverride struct {
 }
 
 type OverlaySettings struct {
-	SchemaVersion    int               `json:"schemaVersion"`
-	Visible          bool              `json:"visible"`
-	Shape            string            `json:"shape"`
-	Width            int               `json:"width"`
-	Height           int               `json:"height"`
-	Left             int               `json:"left"`
-	Top              int               `json:"top"`
-	LockAspect       bool              `json:"lockAspect"`
-	Opacity          *int              `json:"opacity,omitempty"`
-	Backdrop         bool              `json:"backdrop"`
-	SvgResolution    int               `json:"svgResolution"`
-	SvgQualityMode   *string           `json:"svgQualityMode,omitempty"`
-	FollowCenter     bool              `json:"followCenter"`
-	FollowFloor      bool              `json:"followFloor"`
-	FollowZoom       bool              `json:"followZoom"`
-	TargetZoom       float64           `json:"targetZoom"`
-	PerMapZoom       bool              `json:"perMapZoom"`
-	MapZooms         []MapZoomOverride `json:"mapZooms"`
-	DevPlayerEnabled bool              `json:"devPlayerEnabled"`
-	Hotkeys          OverlayHotkeys    `json:"hotkeys"`
+	SchemaVersion  int               `json:"schemaVersion"`
+	Visible        bool              `json:"visible"`
+	Shape          string            `json:"shape"`
+	Width          int               `json:"width"`
+	Height         int               `json:"height"`
+	Left           int               `json:"left"`
+	Top            int               `json:"top"`
+	LockAspect     bool              `json:"lockAspect"`
+	Opacity        *int              `json:"opacity,omitempty"`
+	Backdrop       bool              `json:"backdrop"`
+	SvgResolution  int               `json:"svgResolution"`
+	SvgQualityMode *string           `json:"svgQualityMode,omitempty"`
+	FollowCenter   bool              `json:"followCenter"`
+	FollowFloor    bool              `json:"followFloor"`
+	FollowZoom     bool              `json:"followZoom"`
+	TargetZoom     float64           `json:"targetZoom"`
+	PerMapZoom     bool              `json:"perMapZoom"`
+	MapZooms       []MapZoomOverride `json:"mapZooms"`
+	Hotkeys        OverlayHotkeys    `json:"hotkeys"`
 }
 
 type UserSettings struct {
@@ -415,13 +496,9 @@ type OverlayCommand struct {
 	Enabled *bool     `json:"enabled,omitempty"`
 }
 
-type DevPlayer struct {
-	PlayerId      string        `json:"playerId"`
-	DisplayName   string        `json:"displayName"`
-	IsSelf        bool          `json:"isSelf"`
-	MapId         string        `json:"mapId"`
-	WorldPosition WorldPosition `json:"worldPosition"`
-	Heading       float64       `json:"heading"`
+type ManualPositionUpdate struct {
+	MapId          string `json:"mapId"`
+	ScreenshotName string `json:"screenshotName"`
 }
 
 type OperationTiming struct {
@@ -548,6 +625,18 @@ var MobileStatusLimits = struct {
 	Connected NumericLimit
 }{
 	Connected: NumericLimit{Min: 0, Max: math.Inf(1), Step: 0, Precision: 0},
+}
+
+var ItemsUpdateStatusLimits = struct {
+	ImagesTotal NumericLimit
+	ImagesDone  NumericLimit
+	Downloaded  NumericLimit
+	Skipped     NumericLimit
+}{
+	ImagesTotal: NumericLimit{Min: 0, Max: math.Inf(1), Step: 0, Precision: 0},
+	ImagesDone:  NumericLimit{Min: 0, Max: math.Inf(1), Step: 0, Precision: 0},
+	Downloaded:  NumericLimit{Min: 0, Max: math.Inf(1), Step: 0, Precision: 0},
+	Skipped:     NumericLimit{Min: 0, Max: math.Inf(1), Step: 0, Precision: 0},
 }
 
 var MapPointLimits = struct {

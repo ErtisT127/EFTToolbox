@@ -103,7 +103,7 @@ export function SettingsPage() {
     if (view?.connected) void store.command({ kind: 'visible', enabled: visible });
     else update({ visible });
   };
-  const check = (key: 'followCenter' | 'followFloor' | 'followZoom' | 'devPlayerEnabled') => (
+  const check = (key: 'followCenter' | 'followFloor' | 'followZoom') => (
     <label className="settings-check">
       <input
         type="checkbox"
@@ -603,10 +603,6 @@ export function SettingsPage() {
                       ))}
                     </select>
                   </div>
-                </fieldset>
-                <fieldset>
-                  <legend>{t('settings.development')}</legend>
-                  {check('devPlayerEnabled')}
                 </fieldset>
               </>
             )}

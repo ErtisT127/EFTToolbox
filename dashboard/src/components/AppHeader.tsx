@@ -2,14 +2,20 @@ import { Crosshair } from 'lucide-react';
 import { useLocale } from '../hooks/useLocale';
 import type { GameMode } from '../stores/gameMonitorStore';
 
+// Top-level pages, in the order they appear in the header. The tab set and the page union are the
+// same list, so the shell cannot render a tab it has no page for.
+export const appPages = ['map', 'items', 'calibrator', 'settings'] as const;
+
+export type AppPage = (typeof appPages)[number];
+
 export function AppHeader({
   active,
   onNavigate,
   mode,
   onModeChange,
 }: {
-  active: 'map' | 'calibrator' | 'items' | 'tools' | 'settings';
-  onNavigate: (page: 'map' | 'calibrator' | 'items' | 'tools' | 'settings') => void;
+  active: AppPage;
+  onNavigate: (page: AppPage) => void;
   mode: GameMode;
   onModeChange: (mode: GameMode) => void;
 }) {
@@ -28,7 +34,7 @@ export function AppHeader({
         </span>
       </div>
       <nav aria-label={t('nav.aria')}>
-        {(['map', 'calibrator', 'items', 'tools', 'settings'] as const).map((key) => (
+        {appPages.map((key) => (
           <button
             key={key}
             className={active === key ? 'active' : ''}

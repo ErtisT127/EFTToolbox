@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Brush,
+  Check,
   Eraser,
   Hand,
   Sun,
@@ -21,14 +22,14 @@ import {
   Type,
 } from 'lucide-react';
 import type L from 'leaflet';
-import type { WorldXZ } from '../../../../contracts/ts/ipc.gen';
+import type { ManualPositionUpdate, WorldXZ } from '../../../../contracts/ts/ipc.gen';
 import { MapCanvas, type Tool, type ToolOptions } from './MapCanvas';
 import { StickerPicker } from './StickerPicker';
 import { LayerPanel } from './LayerPanel';
 import { TaskPanel } from './TaskPanel';
 import { MinimapSettingsPanel } from './MinimapSettingsPanel';
 import { ToolOptionsPanel } from './ToolOptionsPanel';
-import { workspace, useWorkspace } from '../../stores/workspaceStore';
+import { request, workspace, useWorkspace } from '../../stores/workspaceStore';
 import { multiplayer, useMultiplayer } from '../../stores/multiplayerStore';
 import { mapTimes, timePhase } from './lib/time';
 import { ZOOM_BOUND_EPSILON } from './lib/zoom';
@@ -92,6 +93,23 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [panel, setPanel] = useState<'layers' | 'tasks' | 'minimap' | null>(null);
   const [taskQuery, setTaskQuery] = useState('');
   const [cursor, setCursor] = useState<WorldXZ | null>(null);
+  const [editingCoordinates, setEditingCoordinates] = useState(false);
+  const [screenshotName, setScreenshotName] = useState('');
+  const [submittingPosition, setSubmittingPosition] = useState(false);
+  const coordinateHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelCoordinateHide = () => {
+    if (coordinateHideTimer.current) clearTimeout(coordinateHideTimer.current);
+    coordinateHideTimer.current = null;
+  };
+  const scheduleCoordinateHide = () => {
+    cancelCoordinateHide();
+    if (editingCoordinates) return;
+    coordinateHideTimer.current = setTimeout(() => setCursor(null), 180);
+  };
+  const handleCursor = (point: WorldXZ | null) => {
+    cancelCoordinateHide();
+    if (point) setCursor(point);
+  };
   const players = overlay.players;
   const [isFullscreen, setIsFullscreen] = useState(false);
   const initialOptions: ToolOptions = {
@@ -113,6 +131,33 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
       ) as Record<Tool, ToolOptions>,
   );
   const options = toolOptions[tool];
+  const submitPosition = async () => {
+    if (submittingPosition) return;
+    const mapId = session?.data.id || id;
+    if (!mapId) {
+      notices.push(t('errors.map_unknown'));
+      setEditingCoordinates(false);
+      setScreenshotName('');
+      return;
+    }
+    setSubmittingPosition(true);
+    try {
+      await request('/api/game-monitor/position', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mapId, screenshotName } satisfies ManualPositionUpdate),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'errors.request_failed';
+      const errorKey = message.startsWith('errors.') ? message : `errors.${message}`;
+      // Anything the API rejects lands in the shared notice host, like every other page.
+      notices.push(t(errorKey, { defaultValue: t('errors.request_failed') }));
+    } finally {
+      setSubmittingPosition(false);
+      setEditingCoordinates(false);
+      setScreenshotName('');
+    }
+  };
   const [browseStickers, setBrowseStickers] = useState(false);
   const [toolSettingsOpen, setToolSettingsOpen] = useState(false);
   const closeToolSettings = () => {
@@ -132,6 +177,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   useEffect(
     () => () => {
       if (previewTimer.current) clearTimeout(previewTimer.current);
+      cancelCoordinateHide();
     },
     [],
   );
@@ -140,7 +186,10 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
     null,
   );
   const [canvasError, setCanvasError] = useState('');
-  const [canvasRetry, setCanvasRetry] = useState(0);
+  const retryMap = () => {
+    setCanvasError('');
+    void w.initialize();
+  };
   const blockingError = !w.loading && (w.error || canvasError);
   const atMin = zoomState !== null && zoomState.zoom <= zoomState.min + ZOOM_BOUND_EPSILON;
   const atMax = zoomState !== null && zoomState.zoom >= zoomState.max - ZOOM_BOUND_EPSILON;
@@ -269,7 +318,6 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   }, [mpVersion, mp.selfId, mp.status.members, mp.status.known, mp.markerPreferences, session]);
   useEffect(() => {
     setCanvasError('');
-    setCanvasRetry(0);
   }, [id]);
   useEffect(() => {
     if (!panel) return;
@@ -336,6 +384,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
               onClick={() => {
                 closeToolSettings();
                 setPanel(null);
+                cancelCoordinateHide();
                 setCursor(null);
                 void w.select(m.id);
               }}
@@ -367,22 +416,21 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
           <RefreshCw size={16} />
         </button>
       </div>
-      <div className="workspace" ref={workArea}>
+      <div
+        className="workspace"
+        ref={workArea}
+        onPointerEnter={cancelCoordinateHide}
+        onPointerLeave={scheduleCoordinateHide}
+      >
         {w.loading ? (
           <div className="empty-state" role="status">
             <span className="spinner" />
             <p>{t('map.state.loading')}</p>
           </div>
         ) : w.error ? (
-          <MapUnavailableState errorKey={w.error} onRetry={() => void w.initialize()} />
+          <MapUnavailableState errorKey={w.error} onRetry={retryMap} />
         ) : canvasError ? (
-          <MapUnavailableState
-            errorKey={canvasError}
-            onRetry={() => {
-              setCanvasError('');
-              setCanvasRetry((value) => value + 1);
-            }}
-          />
+          <MapUnavailableState errorKey={canvasError} onRetry={retryMap} />
         ) : !session || !preference ? (
           <div className="empty-state">
             <h2>{t('map.state.empty')}</h2>
@@ -391,7 +439,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
         ) : (
           <>
             <MapCanvas
-              key={`${id}:${canvasRetry}`}
+              key={id}
               data={session.data}
               preference={preference}
               stickers={stickerIndex}
@@ -407,7 +455,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
               onSelectTool={setTool}
               onTemporaryHand={setTemporaryHand}
               onActivateFloor={(floorId) => w.updatePreference(id, { floorId })}
-              onCursor={setCursor}
+              onCursor={handleCursor}
               onZoomChange={setZoomState}
               onReady={(value) => {
                 map.current = value;
@@ -735,9 +783,62 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                 <MultiplayerControl />
               </div>
             </div>
-            {cursor && (
-              <div className="coordinates">
-                {`x: ${cursor.x.toFixed(2)} z: ${cursor.z.toFixed(2)}`}
+            {(cursor || editingCoordinates) && (
+              <div
+                className={`coordinates map-coordinates${editingCoordinates ? ' is-editing' : ''}`}
+                onPointerEnter={cancelCoordinateHide}
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                {editingCoordinates ? (
+                  <form
+                    className="coordinate-update-form"
+                    onBlur={(event) => {
+                      const next = event.relatedTarget;
+                      if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
+                        setEditingCoordinates(false);
+                        setScreenshotName('');
+                      }
+                    }}
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void submitPosition();
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') {
+                        setEditingCoordinates(false);
+                        setScreenshotName('');
+                      }
+                    }}
+                  >
+                    <input
+                      autoFocus
+                      maxLength={4096}
+                      aria-label={t('map.position.screenshotName')}
+                      placeholder={t('map.position.screenshotName')}
+                      value={screenshotName}
+                      disabled={submittingPosition}
+                      onChange={(event) => setScreenshotName(event.target.value)}
+                    />
+                    <button
+                      type="submit"
+                      aria-label={t('map.position.update')}
+                      title={t('map.position.update')}
+                      disabled={submittingPosition || !screenshotName.trim()}
+                    >
+                      <Check size={17} aria-hidden="true" />
+                    </button>
+                  </form>
+                ) : (
+                  <button
+                    type="button"
+                    className="coordinate-readout"
+                    onClick={() => setEditingCoordinates(true)}
+                    aria-label={t('map.position.open')}
+                    title={t('map.position.open')}
+                  >
+                    {cursor ? `x: ${cursor.x.toFixed(2)} z: ${cursor.z.toFixed(2)}` : ''}
+                  </button>
+                )}
               </div>
             )}
           </>

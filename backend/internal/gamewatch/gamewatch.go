@@ -52,7 +52,7 @@ type Screenshot struct {
 	Heading  float64
 }
 
-var screenshotPattern = regexp.MustCompile(`(?i)^\d{4}-\d{2}-\d{2}\[\d{2}-\d{2}\]_?.*?(-?[0-9]+\.[0-9]+), (-?[0-9]+\.[0-9]+), (-?[0-9]+\.[0-9]+)_?(-?[0-9]+\.[0-9]+), (-?[0-9]+\.[0-9]+), (-?[0-9]+\.[0-9]+), (-?[0-9]+\.[0-9]+).*\.png$`)
+var screenshotPattern = regexp.MustCompile(`([+-]?[0-9]+[.]?[0-9]*)\s*,\s*([+-]?[0-9]+[.]?[0-9]*)\s*,\s*([+-]?[0-9]+[.]?[0-9]*)\s*_\s*([+-]?[0-9]+[.]?[0-9]*)\s*,\s*([+-]?[0-9]+[.]?[0-9]*)\s*,\s*([+-]?[0-9]+[.]?[0-9]*)\s*,\s*([+-]?[0-9]+[.]?[0-9]*)`)
 
 func ParseScreenshotName(name string) (Screenshot, bool) {
 	var out Screenshot
@@ -189,6 +189,7 @@ func (m *Monitor) Run(ctx context.Context) {
 	var screenshotDirectory string
 	pendingDelete := make([]string, 0)
 	deleteOverflowLogged := false
+	deleteFailureLogged := false
 	var generation uint64
 	var logRoot, session, activeApplication string
 	var rootModTime time.Time
@@ -264,6 +265,7 @@ func (m *Monitor) Run(ctx context.Context) {
 		rootModTime = time.Time{}
 		pendingDelete = pendingDelete[:0]
 		deleteOverflowLogged = false
+		deleteFailureLogged = false
 		if m.callbacks.SessionChanged != nil {
 			m.callbacks.SessionChanged(generation)
 		}
@@ -341,7 +343,7 @@ func (m *Monitor) Run(ctx context.Context) {
 		case <-clock.C:
 			tick++
 			m.consumeTailLines(ctx, lines, generation)
-			m.processPendingDeletes(&pendingDelete)
+			m.processPendingDeletes(&pendingDelete, &deleteFailureLogged)
 			if tick%rootScanTicks == 0 {
 				logRoot, rootModTime = scanSessionRoot(logRoot, rootModTime, config.LogDirectory, &session, &switchSession)
 				if session != "" {
@@ -357,7 +359,7 @@ func (m *Monitor) Run(ctx context.Context) {
 			}
 			m.consumeTailLines(ctx, lines, generation)
 			m.processScreenshotEvent(config, screenshotDirectory, event, &pendingDelete, &deleteOverflowLogged)
-			m.processPendingDeletes(&pendingDelete)
+			m.processPendingDeletes(&pendingDelete, &deleteFailureLogged)
 		case err, ok := <-screenshotErrors:
 			if !ok {
 				directory := screenshotDirectory
@@ -434,12 +436,21 @@ func (m *Monitor) processScreenshotEvent(config Config, directory string, event 
 	}
 }
 
-func (m *Monitor) processPendingDeletes(pending *[]string) {
+// Deletions that fail stay queued for the next attempt. Only the first failure of a streak is
+// reported, so one stuck file cannot flood the log.
+func (m *Monitor) processPendingDeletes(pending *[]string, failureLogged *bool) {
 	kept := (*pending)[:0]
 	for _, path := range *pending {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			if !*failureLogged {
+				m.diagnostic("warn", "screenshot_delete_failed", "Delete %q: %v", path, err)
+				*failureLogged = true
+			}
 			kept = append(kept, path)
 		}
+	}
+	if len(kept) == 0 {
+		*failureLogged = false
 	}
 	*pending = kept
 }
@@ -500,6 +511,9 @@ func scanApplicationFiles(session string, active *string, tails map[string]tailH
 			if callbacks.Log != nil {
 				callbacks.Log(event)
 			}
+		} else if err != nil && callbacks.Diagnostic != nil {
+			// Once per startup: the session starts fresh instead of restoring the last position.
+			callbacks.Diagnostic("warn", "state_recovery_failed", fmt.Sprintf("Recover %q: %v", newest, err))
 		}
 	}
 }

@@ -22,6 +22,7 @@ import type {
 } from '../../../contracts/ts/ipc.gen';
 import { multiplayer, MultiplayerError, useMultiplayer } from '../stores/multiplayerStore';
 import { notices } from '../stores/noticeStore';
+import { reportThrottledFailure } from '../stores/workspaceStore';
 import { AppPopover } from './AppPopover';
 import { MemberList, memberRows, type MemberRow } from './MemberList';
 import { useLocale } from '../hooks/useLocale';
@@ -88,13 +89,22 @@ export function MultiplayerControl() {
   useEffect(() => {
     if (!open) return;
     void fetch('/api/multiplayer/interfaces')
-      .then((response) => (response.ok ? response.json() : { addresses: [] }))
+      .then((response) => {
+        if (!response.ok) {
+          // The list is only a hint, so the panel still opens — but the failure is worth one record.
+          reportThrottledFailure('multiplayer_interfaces_failed', `interfaces ${response.status}`);
+          return { addresses: [] };
+        }
+        return response.json() as Promise<{ addresses: string[] }>;
+      })
       .then((value: { addresses: string[] }) => {
         setInterfaces(value.addresses || []);
         // The first interface is the sensible default; never leave the field empty.
         setAddress((current) => current || value.addresses[0] || '');
       })
-      .catch(() => {});
+      .catch((error: unknown) =>
+        reportThrottledFailure('multiplayer_interfaces_failed', String(error)),
+      );
   }, [open]);
 
   const close = () => {
@@ -976,11 +986,22 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
 
   useEffect(() => {
     void fetch('/api/multiplayer/stun/servers')
-      .then((response) => (response.ok ? response.json() : { servers: [] }))
+      .then((response) => {
+        if (!response.ok) {
+          reportThrottledFailure(
+            'multiplayer_stun_servers_failed',
+            `stun servers ${response.status}`,
+          );
+          return { servers: [] };
+        }
+        return response.json() as Promise<{ servers: string[] }>;
+      })
       .then((value: { servers: string[] }) =>
         setServers((value.servers || []).map((server) => ({ server }))),
       )
-      .catch(() => {});
+      .catch((error: unknown) =>
+        reportThrottledFailure('multiplayer_stun_servers_failed', String(error)),
+      );
   }, []);
 
   useEffect(() => {
@@ -1004,6 +1025,9 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ servers: chunk }),
         });
+        if (!response.ok) {
+          reportThrottledFailure('multiplayer_stun_probe_failed', `stun probe ${response.status}`);
+        }
         const results: StunProbeResult[] = response.ok
           ? ((await response.json()) as StunProbeResults).results
           : chunk.map((server) => ({ server }));
@@ -1015,7 +1039,8 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
               : entry;
           }),
         );
-      } catch {
+      } catch (error) {
+        reportThrottledFailure('multiplayer_stun_probe_failed', String(error));
         setServers((current) =>
           current.map((entry) =>
             chunk.includes(entry.server)
@@ -1071,9 +1096,11 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
     setNatPending(true);
     try {
       const response = await fetch('/api/multiplayer/nat-check', { method: 'POST' });
+      if (!response.ok) throw new Error(`nat-check ${response.status}`);
       const value = (await response.json()) as { kind: 'cone' | 'symmetric' | 'unknown' };
       setNat(value.kind);
-    } catch {
+    } catch (error) {
+      reportThrottledFailure('multiplayer_nat_check_failed', String(error));
       setNat('unknown');
     } finally {
       setNatPending(false);

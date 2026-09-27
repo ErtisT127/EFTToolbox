@@ -16,6 +16,7 @@ import {
 } from './workspaceStore';
 import { gameMonitor } from './gameMonitorStore';
 import { multiplayer } from './multiplayerStore';
+import { resources } from './resourceStore';
 
 class OverlayStore {
   settings?: OverlaySettings;
@@ -152,6 +153,7 @@ class OverlayStore {
           const protocolVersion = String(e.status?.protocolVersion || '');
           if (protocolVersion !== '1') throw new Error('Unsupported protocol');
           gameMonitor.handleEvent(e);
+          resources.handleEvent(e);
           if (e.multiplayerStatus) multiplayer.handleStatus(e.multiplayerStatus);
           this.connected = true;
           clearTimeout(stale);

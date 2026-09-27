@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -29,7 +28,27 @@ type dailyLogWriter struct {
 	day  string
 }
 
-func newDailyLogWriter(root string) (io.Writer, error) {
+// installedLogWriter is the process-wide log sink. main installs it before its startup checks so
+// fatal startup failures are recorded too, and server.New reuses it instead of opening a second one.
+var installedLogWriter *dailyLogWriter
+
+// InstallLogging routes the standard logger into the daily JSONL file. A second call for the same
+// directory keeps the existing writer, so everything in one process appends to one file without
+// opening it twice.
+func InstallLogging(root string) error {
+	if installedLogWriter != nil && installedLogWriter.root == root {
+		return nil
+	}
+	writer, err := newDailyLogWriter(root)
+	if err != nil {
+		return err
+	}
+	installedLogWriter = writer
+	log.SetOutput(writer)
+	return nil
+}
+
+func newDailyLogWriter(root string) (*dailyLogWriter, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, err
 	}

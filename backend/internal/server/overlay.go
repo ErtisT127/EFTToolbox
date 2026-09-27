@@ -53,6 +53,15 @@ type overlayHub struct {
 	multiplayer       *multiplayerManager
 }
 
+type playerInput struct {
+	PlayerId      string
+	DisplayName   string
+	IsSelf        bool
+	MapId         string
+	WorldPosition contracts.WorldPosition
+	Heading       float64
+}
+
 type regionIndexSnapshot struct {
 	basemap  string
 	revision int
@@ -619,66 +628,10 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 		h.publish(contracts.ServerEvent{Type: "overlay_command", OverlayCommand: &v, OperationId: operationID(r)})
 		jsonResponse(w, v)
 	})
-	mux.HandleFunc("POST /api/dev/player", h.upsertPlayer)
-	mux.HandleFunc("DELETE /api/dev/player/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if !h.allowPlayer(w, r) {
-			return
-		}
-		id := r.PathValue("id")
-		if !safeID.MatchString(id) || len(id) > 100 {
-			apiError(w, 400, "player_invalid")
-			return
-		}
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		delete(h.players, id)
-		h.publish(contracts.ServerEvent{Type: "player_remove", PlayerId: &id, OperationId: operationID(r)})
-		jsonResponse(w, contracts.ErrorBody{Code: "ok"})
-	})
 }
 
 func validPoint(p contracts.MapPoint) bool {
 	return finite(p.X) && finite(p.Y) && math.Abs(p.X) <= 1e7 && math.Abs(p.Y) <= 1e7
-}
-func (h *overlayHub) allowPlayer(w http.ResponseWriter, r *http.Request) bool {
-	if !localRequest(w, r) {
-		return false
-	}
-	s, err := h.settings()
-	if err != nil || !s.DevPlayerEnabled {
-		apiError(w, 403, "dev_disabled")
-		return false
-	}
-	return true
-}
-
-func (h *overlayHub) upsertPlayer(w http.ResponseWriter, r *http.Request) {
-	if !h.allowPlayer(w, r) {
-		return
-	}
-	var v contracts.DevPlayer
-	if !decodeUpdate(w, r, &v) {
-		return
-	}
-	player, err := h.projectPlayer(v)
-	if err != nil {
-		apiError(w, 400, "player_invalid")
-		return
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if v.IsSelf {
-		for id, old := range h.players {
-			if id != v.PlayerId && old.IsSelf {
-				old.IsSelf = false
-				h.players[id] = old
-				h.publish(contracts.ServerEvent{Type: "player_upsert", Player: &old})
-			}
-		}
-	}
-	h.players[v.PlayerId] = player
-	h.publish(contracts.ServerEvent{Type: "player_upsert", Player: &player, OperationId: operationID(r)})
-	jsonResponse(w, player)
 }
 
 // applyRemotePlayer projects a teammate's world position with the LOCAL calibration and feeds it
@@ -689,8 +642,8 @@ func (h *overlayHub) applyRemotePlayer(playerID, displayName, color, mapID strin
 	if !safeID.MatchString(playerID) || len(playerID) > 100 {
 		return
 	}
-	dev := contracts.DevPlayer{PlayerId: playerID, DisplayName: displayName, IsSelf: false, MapId: mapID, WorldPosition: world, Heading: heading}
-	player, err := h.projectPlayer(dev)
+	input := playerInput{PlayerId: playerID, DisplayName: displayName, IsSelf: false, MapId: mapID, WorldPosition: world, Heading: heading}
+	player, err := h.projectPlayer(input)
 	if err != nil {
 		player = contracts.PlayerState{
 			PlayerId: playerID, DisplayName: displayName, Color: color, IsSelf: false,
@@ -718,10 +671,8 @@ func (h *overlayHub) removeRemotePlayer(playerID string) {
 
 func operationID(r *http.Request) *string { id := r.Header.Get("X-Operation-ID"); return &id }
 
-// projectPlayer is shared by the development injection endpoint and the production screenshot
-// watcher. The watcher intentionally bypasses the DevPlayerEnabled gate, but uses the same map
-// validation and projection math.
-func (h *overlayHub) projectPlayer(v contracts.DevPlayer) (contracts.PlayerState, error) {
+// projectPlayer is shared by the screenshot watcher and multiplayer remote updates.
+func (h *overlayHub) projectPlayer(v playerInput) (contracts.PlayerState, error) {
 	m, err := h.store.load(v.MapId)
 	if err != nil {
 		return contracts.PlayerState{}, errors.New("player_invalid")
@@ -729,7 +680,7 @@ func (h *overlayHub) projectPlayer(v contracts.DevPlayer) (contracts.PlayerState
 	return h.projectPlayerOnMap(m, v)
 }
 
-func (h *overlayHub) projectPlayerOnMap(m contracts.MapData, v contracts.DevPlayer) (contracts.PlayerState, error) {
+func (h *overlayHub) projectPlayerOnMap(m contracts.MapData, v playerInput) (contracts.PlayerState, error) {
 	if !safeID.MatchString(v.PlayerId) || len(v.PlayerId) > 100 || len(v.DisplayName) > 200 ||
 		!finite(v.WorldPosition.X) || !finite(v.WorldPosition.Y) || !finite(v.WorldPosition.Z) || math.Abs(v.WorldPosition.X) > 1e7 || math.Abs(v.WorldPosition.Y) > 1e7 || math.Abs(v.WorldPosition.Z) > 1e7 || !finite(v.Heading) || math.Abs(v.Heading) > 1e7 {
 		return contracts.PlayerState{}, errors.New("player_invalid")

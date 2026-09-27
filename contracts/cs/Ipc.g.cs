@@ -60,6 +60,88 @@ public sealed record ServerEvent {
   [JsonPropertyName("multiplayerStatus")] public MultiplayerStatus? MultiplayerStatus { get; init; } = null;
 }
 
+public sealed record ItemsCatalogItem {
+  [JsonPropertyName("id")] public string Id { get; init; } = "";
+  [JsonPropertyName("name")] public string Name { get; init; } = "";
+  [JsonPropertyName("image")] public string Image { get; init; } = "";
+  [JsonPropertyName("categories")] public string[] Categories { get; init; } = [];
+  [JsonPropertyName("traderPrice")] public int? TraderPrice { get; init; } = null;
+  [JsonPropertyName("trader")] public ItemsTrader? Trader { get; init; } = null;
+  [JsonPropertyName("traderStatus")] public string TraderStatus { get; init; } = "";
+  [JsonPropertyName("fleaPrice")] public int? FleaPrice { get; init; } = null;
+  [JsonPropertyName("fleaStatus")] public string FleaStatus { get; init; } = "";
+  [JsonPropertyName("lowestPrice")] public int? LowestPrice { get; init; } = null;
+  [JsonPropertyName("lowestPriceSource")] public ItemsPriceSource? LowestPriceSource { get; init; } = null;
+}
+
+public sealed record ItemsPriceSource {
+  [JsonPropertyName("kind")] public string Kind { get; init; } = "";
+  [JsonPropertyName("label")] public string Label { get; init; } = "";
+  [JsonPropertyName("task")] public ItemsTaskUnlock? Task { get; init; } = null;
+  [JsonPropertyName("barter")] public ItemsBarter? Barter { get; init; } = null;
+}
+
+public sealed record ItemsTaskUnlock {
+  [JsonPropertyName("id")] public string Id { get; init; } = "";
+  [JsonPropertyName("name")] public string Name { get; init; } = "";
+  [JsonPropertyName("requirements")] public ItemsRequirement[] Requirements { get; init; } = [];
+}
+
+public sealed record ItemsRequirement {
+  [JsonPropertyName("itemId")] public string ItemId { get; init; } = "";
+  [JsonPropertyName("name")] public string Name { get; init; } = "";
+  [JsonPropertyName("image")] public string Image { get; init; } = "";
+  [JsonPropertyName("count")] public double Count { get; init; } = default;
+  [JsonPropertyName("unitPrice")] public int? UnitPrice { get; init; } = null;
+  [JsonPropertyName("totalPrice")] public int? TotalPrice { get; init; } = null;
+}
+
+public sealed record ItemsBarter {
+  [JsonPropertyName("items")] public ItemsRequirement[] Items { get; init; } = [];
+}
+
+public sealed record ItemsTrader {
+  [JsonPropertyName("id")] public string Id { get; init; } = "";
+  [JsonPropertyName("name")] public string Name { get; init; } = "";
+  [JsonPropertyName("image")] public string Image { get; init; } = "";
+}
+
+public sealed record ItemsCatalog {
+  [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; init; } = default;
+  [JsonPropertyName("fetchedAt")] public string FetchedAt { get; init; } = "";
+  [JsonPropertyName("mode")] public string Mode { get; init; } = "";
+  [JsonPropertyName("items")] public ItemsCatalogItem[] Items { get; init; } = [];
+}
+
+public sealed record ItemsSettings {
+  [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; init; } = default;
+  [JsonPropertyName("autoUpdate")] public bool AutoUpdate { get; init; } = default;
+  [JsonPropertyName("intervalMinutes")] public int IntervalMinutes { get; init; } = default;
+  [JsonPropertyName("includeImages")] public bool IncludeImages { get; init; } = default;
+  [JsonPropertyName("category")] public string Category { get; init; } = "";
+  [JsonPropertyName("sort")] public string Sort { get; init; } = "";
+  [JsonPropertyName("descending")] public bool Descending { get; init; } = default;
+}
+
+public sealed record ItemsUpdateRequest {
+  [JsonPropertyName("includeImages")] public bool IncludeImages { get; init; } = default;
+}
+
+public sealed record ItemsUpdateStatus {
+  [JsonPropertyName("running")] public bool Running { get; init; } = default;
+  [JsonPropertyName("phase")] public string Phase { get; init; } = "";
+  [JsonPropertyName("detail")] public string Detail { get; init; } = "";
+  [JsonPropertyName("imagesTotal")] public int ImagesTotal { get; init; } = default;
+  [JsonPropertyName("imagesDone")] public int ImagesDone { get; init; } = default;
+  [JsonPropertyName("downloaded")] public int Downloaded { get; init; } = default;
+  [JsonPropertyName("skipped")] public int Skipped { get; init; } = default;
+  [JsonPropertyName("includeImages")] public bool IncludeImages { get; init; } = default;
+  [JsonPropertyName("error")] public string Error { get; init; } = "";
+  [JsonPropertyName("errorDetail")] public string ErrorDetail { get; init; } = "";
+  [JsonPropertyName("startedAt")] public string? StartedAt { get; init; } = null;
+  [JsonPropertyName("finishedAt")] public string? FinishedAt { get; init; } = null;
+}
+
 public sealed record GameMonitorSettings {
   [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; init; } = default;
   [JsonPropertyName("screenshotDirectory")] public string ScreenshotDirectory { get; init; } = "";
@@ -365,7 +447,6 @@ public sealed record OverlaySettings {
   [JsonPropertyName("targetZoom")] public double TargetZoom { get; init; } = default;
   [JsonPropertyName("perMapZoom")] public bool PerMapZoom { get; init; } = default;
   [JsonPropertyName("mapZooms")] public MapZoomOverride[] MapZooms { get; init; } = [];
-  [JsonPropertyName("devPlayerEnabled")] public bool DevPlayerEnabled { get; init; } = default;
   [JsonPropertyName("hotkeys")] public OverlayHotkeys Hotkeys { get; init; } = new();
 }
 
@@ -415,13 +496,9 @@ public sealed record OverlayCommand {
   [JsonPropertyName("enabled")] public bool? Enabled { get; init; } = null;
 }
 
-public sealed record DevPlayer {
-  [JsonPropertyName("playerId")] public string PlayerId { get; init; } = "";
-  [JsonPropertyName("displayName")] public string DisplayName { get; init; } = "";
-  [JsonPropertyName("isSelf")] public bool IsSelf { get; init; } = default;
+public sealed record ManualPositionUpdate {
   [JsonPropertyName("mapId")] public string MapId { get; init; } = "";
-  [JsonPropertyName("worldPosition")] public WorldPosition WorldPosition { get; init; } = new();
-  [JsonPropertyName("heading")] public double Heading { get; init; } = default;
+  [JsonPropertyName("screenshotName")] public string ScreenshotName { get; init; } = "";
 }
 
 public sealed record OperationTiming {
@@ -541,6 +618,13 @@ public readonly record struct NumericLimit(double Min, double Max, double Step, 
 
 public static class MobileStatusLimits {
   public static readonly NumericLimit Connected = new(0, double.PositiveInfinity, 0, 0);
+}
+
+public static class ItemsUpdateStatusLimits {
+  public static readonly NumericLimit ImagesTotal = new(0, double.PositiveInfinity, 0, 0);
+  public static readonly NumericLimit ImagesDone = new(0, double.PositiveInfinity, 0, 0);
+  public static readonly NumericLimit Downloaded = new(0, double.PositiveInfinity, 0, 0);
+  public static readonly NumericLimit Skipped = new(0, double.PositiveInfinity, 0, 0);
 }
 
 public static class MapPointLimits {

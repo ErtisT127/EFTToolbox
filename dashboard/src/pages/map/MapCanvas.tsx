@@ -164,7 +164,12 @@ export function MapCanvas(props: Props) {
         if (!player.isSelf && player.color) element.style.background = player.color;
         // The arrow tip points up at zero degrees; rotate it to the player's heading.
         element.style.transform = `rotate(${player.heading}deg)`;
-        element.style.opacity = player.resolution.floorId === p.preference.floorId ? '1' : '0.35';
+        element.style.opacity =
+          player.resolution.status === 'resolved' &&
+          player.resolution.floorId !== null &&
+          player.resolution.floorId !== p.preference.floorId
+            ? '0.35'
+            : '1';
         element.title = player.displayName;
         layer.addLayer(
           L.marker(latLng(player.mapPosition), {

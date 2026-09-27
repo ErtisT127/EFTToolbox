@@ -196,6 +196,27 @@ func (h *overlayHub) selectedPlayerMap() (contracts.MapData, error) {
 	return contracts.MapData{}, os.ErrNotExist
 }
 
+func (h *overlayHub) projectScreenshotPlayer(m contracts.MapData, mapID string, value gamewatch.Screenshot) (contracts.PlayerState, error) {
+	return h.projectPlayerOnMap(m, playerInput{
+		PlayerId: "self", DisplayName: "You", IsSelf: true, MapId: mapID,
+		WorldPosition: contracts.WorldPosition{X: value.X, Y: value.Y, Z: value.Z}, Heading: value.Heading,
+	})
+}
+
+func (h *overlayHub) publishSelfPlayer(player contracts.PlayerState) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for id, old := range h.players {
+		if id != player.PlayerId && old.IsSelf {
+			old.IsSelf = false
+			h.players[id] = old
+			h.publish(contracts.ServerEvent{Type: "player_upsert", Player: &old})
+		}
+	}
+	h.players[player.PlayerId] = player
+	h.publish(contracts.ServerEvent{Type: "player_upsert", Player: &player})
+}
+
 func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
 	m, err := h.selectedPlayerMap()
 	h.mu.Lock()
@@ -216,20 +237,13 @@ func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
 	if err != nil || len(m.Floors) == 0 {
 		return errors.New("no active map")
 	}
-	player, err := h.projectPlayerOnMap(m, contracts.DevPlayer{PlayerId: "self", DisplayName: "You", IsSelf: true, MapId: m.Id, WorldPosition: contracts.WorldPosition{X: value.X, Y: value.Y, Z: value.Z}, Heading: value.Heading})
+	player, err := h.projectScreenshotPlayer(m, m.Id, value)
 	if err != nil {
 		return err
 	}
+	h.publishSelfPlayer(player)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for id, old := range h.players {
-		if id != player.PlayerId && old.IsSelf {
-			old.IsSelf = false
-			h.players[id] = old
-			h.publish(contracts.ServerEvent{Type: "player_upsert", Player: &old})
-		}
-	}
-	h.players[player.PlayerId] = player
 	oldMap := h.appliedMapID
 	oldMode := h.monitorSettings.Mode
 	if autoMap && h.pendingMap != "" && m.Id == h.pendingMap {
@@ -240,7 +254,6 @@ func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
 		_ = h.persistAppliedMap()
 		h.monitorDiagnostic("info", "map_applied", fmt.Sprintf("Map %q", m.Id))
 	}
-	h.publish(contracts.ServerEvent{Type: "player_upsert", Player: &player})
 	if oldMap != h.appliedMapID {
 		id := h.appliedMapID
 		h.publish(contracts.ServerEvent{Type: "map_changed", MapId: &id, GameMonitorStatus: &h.monitorStatus})
@@ -272,6 +285,41 @@ func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
 }
 
 func (h *overlayHub) registerGameMonitor(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/game-monitor/position", func(w http.ResponseWriter, r *http.Request) {
+		if !localRequest(w, r) {
+			return
+		}
+		var value contracts.ManualPositionUpdate
+		if !decodeUpdate(w, r, &value) {
+			return
+		}
+		if !safeID.MatchString(value.MapId) || len(value.MapId) > 100 {
+			apiError(w, http.StatusBadRequest, "map_unknown")
+			return
+		}
+		name := strings.TrimSpace(value.ScreenshotName)
+		if name == "" || len(name) > 4096 {
+			apiError(w, http.StatusBadRequest, "screenshot_name_invalid")
+			return
+		}
+		position, ok := gamewatch.ParseScreenshotName(name)
+		if !ok {
+			apiError(w, http.StatusBadRequest, "screenshot_name_invalid")
+			return
+		}
+		m, err := h.store.load(value.MapId)
+		if err != nil || len(m.Floors) == 0 {
+			apiError(w, http.StatusBadRequest, "map_unknown")
+			return
+		}
+		player, err := h.projectScreenshotPlayer(m, value.MapId, position)
+		if err != nil {
+			apiError(w, http.StatusBadRequest, "position_update_failed")
+			return
+		}
+		h.publishSelfPlayer(player)
+		jsonResponse(w, struct{}{})
+	})
 	mux.HandleFunc("GET /api/game-monitor/settings", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
 			return
