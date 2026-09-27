@@ -149,6 +149,53 @@ internal sealed class OverlayStateClient : IDisposable
         catch (Exception e) when (e is HttpRequestException or OperationCanceledException) { OverlayDiagnostics.Log("error", "settings_save_failed", e.Message); }
         finally { if (entered) saves.Release(); }
     }
+    internal async Task PostRecognitionResultAsync(RecognitionResult result)
+    {
+        try { using var response = await http.PostAsJsonAsync("api/recognition/result", result, OverlaySettingsStore.Json, stop.Token); response.EnsureSuccessStatusCode(); }
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException) { OverlayDiagnostics.Log("warn", "recognition_result_failed", e.Message); }
+    }
+    /// <summary>A run starts by telling the backend, which clears the last result and puts both
+    /// displays into their loading state before any pixel work happens.</summary>
+    internal async Task PostRecognitionStartedAsync(string requestId)
+    {
+        try { using var response = await http.PostAsJsonAsync("api/recognition/started", new RecognitionStart { RequestId = requestId }, OverlaySettingsStore.Json, stop.Token); response.EnsureSuccessStatusCode(); }
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException) { OverlayDiagnostics.Log("warn", "recognition_started_failed", e.Message); }
+    }
+    /// <summary>The candidate shortlist per OCR text, resolved by the backend so the name and
+    /// short-name rules stay in one place.</summary>
+    internal async Task<RecognitionCandidates?> CandidatesAsync(string[] texts, CancellationToken token)
+    {
+        try
+        {
+            using var response = await http.PostAsJsonAsync("api/recognition/candidates", new RecognitionCandidateRequest { Texts = texts }, OverlaySettingsStore.Json, token);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadFromJsonAsync<RecognitionCandidates>(OverlaySettingsStore.Json, token);
+        }
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException or JsonException) { OverlayDiagnostics.Log("warn", "recognition_candidates_failed", e.Message); return null; }
+    }
+    /// <summary>Item artwork for the icon check and the result table, fetched once per url.</summary>
+    internal async Task<byte[]?> AssetAsync(string url, CancellationToken token)
+    {
+        if (!url.StartsWith('/') || url.StartsWith("//")) return null;
+        try
+        {
+            using var response = await http.GetAsync(url, token);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadAsByteArrayAsync(token);
+        }
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException) { OverlayDiagnostics.Log("warn", "recognition_asset_failed", $"{url}: {e.Message}"); return null; }
+    }
+    internal async Task SaveRecognitionAsync(RecognitionSettings settings)
+    {
+        var entered = false;
+        try
+        {
+            await saves.WaitAsync(stop.Token); entered = true;
+            using var response = await http.PutAsJsonAsync("api/recognition-settings", settings, stop.Token); response.EnsureSuccessStatusCode();
+        }
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException) { OverlayDiagnostics.Log("error", "recognition_settings_save_failed", e.Message); }
+        finally { if (entered) saves.Release(); }
+    }
     internal static T? Read<T>(string path) => JsonSerializer.Deserialize<T>(File.ReadAllBytes(path), OverlaySettingsStore.Json);
     public void Dispose()
     {

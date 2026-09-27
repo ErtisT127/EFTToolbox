@@ -31,6 +31,7 @@ var itemCategories = []string{
 type upstreamItem struct {
 	ID                 string   `json:"id"`
 	Name               string   `json:"name"`
+	ShortName          string   `json:"shortName"`
 	BaseImageLink      string   `json:"baseImageLink"`
 	HandbookCategories []string `json:"handbookCategories"`
 	Types              []string `json:"types"`
@@ -266,6 +267,15 @@ func itemCatalog(mode string, source upstreamItems, traders map[string]upstreamT
 		if name == "" {
 			name = item.Name
 		}
+		// The game's grid shows the short name; keep it next to the full one for the recognition
+		// matcher and for any list that has room for the shorter label.
+		shortName := en[item.ShortName]
+		if locale == "zh" {
+			shortName = zh[item.ShortName]
+		}
+		if shortName == "" {
+			shortName = name
+		}
 		categories := make([]string, 0, len(item.HandbookCategories))
 		for _, id := range item.HandbookCategories {
 			category := source.HandbookCategories[id]
@@ -296,7 +306,7 @@ func itemCatalog(mode string, source upstreamItems, traders map[string]upstreamT
 		}
 		lowestPrice, lowestSource := lowestItemPrice(item, traders, en, names, taskNames, source.Items, images, tasks, bartersByReward[item.ID])
 		items = append(items, contracts.ItemsCatalogItem{
-			Id: item.ID, Name: name, Image: images[item.BaseImageLink], Categories: categories,
+			Id: item.ID, Name: name, ShortName: shortName, Image: images[item.BaseImageLink], Categories: categories,
 			TraderPrice: traderPrice, Trader: trader, TraderStatus: traderStatus(item),
 			FleaPrice: fleaPrice(item, fleaUnavailable), FleaStatus: fleaStatus, LowestPrice: lowestPrice, LowestPriceSource: lowestSource,
 		})

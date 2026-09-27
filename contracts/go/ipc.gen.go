@@ -39,30 +39,35 @@ type MobileInterfaces struct {
 }
 
 type ServerEvent struct {
-	Type              string                `json:"type"`
-	SentAt            string                `json:"sentAt"`
-	Status            Status                `json:"status"`
-	MapId             *string               `json:"mapId,omitempty"`
-	Player            *PlayerState          `json:"player,omitempty"`
-	PlayerId          *string               `json:"playerId,omitempty"`
-	Players           *[]PlayerState        `json:"players,omitempty"`
-	Annotation        *SharedAnnotation     `json:"annotation,omitempty"`
-	AnnotationId      *string               `json:"annotationId,omitempty"`
-	Annotations       *[]SharedAnnotation   `json:"annotations,omitempty"`
-	OperationId       *string               `json:"operationId,omitempty"`
-	Reason            *string               `json:"reason,omitempty"`
-	Preferences       *Preferences          `json:"preferences,omitempty"`
-	FiltersChanged    *MobileFiltersChanged `json:"filtersChanged,omitempty"`
-	OverlaySettings   *OverlaySettings      `json:"overlaySettings,omitempty"`
-	OverlayView       *OverlayView          `json:"overlayView,omitempty"`
-	OverlayCommand    *OverlayCommand       `json:"overlayCommand,omitempty"`
-	GameMonitorStatus *GameMonitorStatus    `json:"gameMonitorStatus,omitempty"`
-	MultiplayerStatus *MultiplayerStatus    `json:"multiplayerStatus,omitempty"`
+	Type                string                `json:"type"`
+	SentAt              string                `json:"sentAt"`
+	Status              Status                `json:"status"`
+	MapId               *string               `json:"mapId,omitempty"`
+	Player              *PlayerState          `json:"player,omitempty"`
+	PlayerId            *string               `json:"playerId,omitempty"`
+	Players             *[]PlayerState        `json:"players,omitempty"`
+	Annotation          *SharedAnnotation     `json:"annotation,omitempty"`
+	AnnotationId        *string               `json:"annotationId,omitempty"`
+	Annotations         *[]SharedAnnotation   `json:"annotations,omitempty"`
+	OperationId         *string               `json:"operationId,omitempty"`
+	Reason              *string               `json:"reason,omitempty"`
+	Preferences         *Preferences          `json:"preferences,omitempty"`
+	FiltersChanged      *MobileFiltersChanged `json:"filtersChanged,omitempty"`
+	OverlaySettings     *OverlaySettings      `json:"overlaySettings,omitempty"`
+	OverlayView         *OverlayView          `json:"overlayView,omitempty"`
+	OverlayCommand      *OverlayCommand       `json:"overlayCommand,omitempty"`
+	GameMonitorStatus   *GameMonitorStatus    `json:"gameMonitorStatus,omitempty"`
+	MultiplayerStatus   *MultiplayerStatus    `json:"multiplayerStatus,omitempty"`
+	RecognitionSettings *RecognitionSettings  `json:"recognitionSettings,omitempty"`
+	RecognitionRequest  *RecognitionRequest   `json:"recognitionRequest,omitempty"`
+	RecognitionResult   *RecognitionResult    `json:"recognitionResult,omitempty"`
+	RecognitionStart    *RecognitionStart     `json:"recognitionStart,omitempty"`
 }
 
 type ItemsCatalogItem struct {
 	Id                string            `json:"id"`
 	Name              string            `json:"name"`
+	ShortName         string            `json:"shortName"`
 	Image             string            `json:"image"`
 	Categories        []string          `json:"categories"`
 	TraderPrice       *int              `json:"traderPrice"`
@@ -409,6 +414,80 @@ type TileLayer struct {
 	Bounds    []MapPoint `json:"bounds"`
 }
 
+type RecognitionSettings struct {
+	SchemaVersion      int     `json:"schemaVersion"`
+	OcrConfidence      float64 `json:"ocrConfidence"`
+	NameSimilarity     float64 `json:"nameSimilarity"`
+	TemplateSimilarity float64 `json:"templateSimilarity"`
+	CaptureWidth       int     `json:"captureWidth"`
+	CaptureHeight      int     `json:"captureHeight"`
+	AutoPush           bool    `json:"autoPush"`
+	TemplateMatching   bool    `json:"templateMatching"`
+	TemplateStrict     bool    `json:"templateStrict"`
+	OcrUpscale         int     `json:"ocrUpscale"`
+	OcrMinLength       int     `json:"ocrMinLength"`
+	CandidateLimit     int     `json:"candidateLimit"`
+	TemplateMinScale   float64 `json:"templateMinScale"`
+	TemplateMaxScale   float64 `json:"templateMaxScale"`
+	IconWindowRatio    float64 `json:"iconWindowRatio"`
+	AutoClose          bool    `json:"autoClose"`
+	AutoCloseSeconds   int     `json:"autoCloseSeconds"`
+	Opacity            int     `json:"opacity"`
+	WindowWidth        int     `json:"windowWidth"`
+	WindowHeight       int     `json:"windowHeight"`
+	WindowLeft         int     `json:"windowLeft"`
+	WindowTop          int     `json:"windowTop"`
+	Visible            bool    `json:"visible"`
+}
+
+type RecognitionRequest struct {
+	RequestId string `json:"requestId"`
+	ImageData string `json:"imageData"`
+}
+
+type RecognitionRow struct {
+	Id                 string       `json:"id"`
+	Name               string       `json:"name"`
+	Image              string       `json:"image"`
+	TraderPrice        *int         `json:"traderPrice"`
+	Trader             *ItemsTrader `json:"trader"`
+	FleaPrice          *int         `json:"fleaPrice"`
+	OcrConfidence      float64      `json:"ocrConfidence"`
+	TemplateConfidence float64      `json:"templateConfidence"`
+}
+
+type RecognitionResult struct {
+	RequestId    string           `json:"requestId"`
+	ImageData    string           `json:"imageData"`
+	OcrText      []string         `json:"ocrText"`
+	Rows         []RecognitionRow `json:"rows"`
+	Error        string           `json:"error"`
+	CompletedAt  string           `json:"completedAt"`
+	RowsResolved bool             `json:"rowsResolved"`
+}
+
+type RecognitionStart struct {
+	RequestId string `json:"requestId"`
+}
+
+type RecognitionCandidateRequest struct {
+	Texts []string `json:"texts"`
+}
+
+type RecognitionCandidate struct {
+	Id          string  `json:"id"`
+	Name        string  `json:"name"`
+	ShortName   string  `json:"shortName"`
+	Image       string  `json:"image"`
+	TraderPrice *int    `json:"traderPrice"`
+	FleaPrice   *int    `json:"fleaPrice"`
+	Similarity  float64 `json:"similarity"`
+}
+
+type RecognitionCandidates struct {
+	Candidates [][]RecognitionCandidate `json:"candidates"`
+}
+
 type OverlayHotkeys struct {
 	ToggleEdit    string `json:"toggleEdit"`
 	ToggleVisible string `json:"toggleVisible"`
@@ -421,6 +500,7 @@ type OverlayHotkeys struct {
 	PanDown       string `json:"panDown"`
 	PanLeft       string `json:"panLeft"`
 	PanRight      string `json:"panRight"`
+	Recognition   string `json:"recognition"`
 }
 
 type MapZoomOverride struct {
@@ -454,6 +534,7 @@ type UserSettings struct {
 	SchemaVersion int                 `json:"schemaVersion"`
 	Overlay       OverlaySettings     `json:"overlay"`
 	GameMonitor   GameMonitorSettings `json:"gameMonitor"`
+	Recognition   RecognitionSettings `json:"recognition"`
 }
 
 type OverlayBootstrap struct {
@@ -697,6 +778,42 @@ var CalibrationDocumentLimits = struct {
 }{
 	Revision:         NumericLimit{Min: 0, Max: math.Inf(1), Step: 0, Precision: 0},
 	NextRegionNumber: NumericLimit{Min: 1, Max: math.Inf(1), Step: 0, Precision: 0},
+}
+
+var RecognitionSettingsLimits = struct {
+	OcrConfidence      NumericLimit
+	NameSimilarity     NumericLimit
+	TemplateSimilarity NumericLimit
+	CaptureWidth       NumericLimit
+	CaptureHeight      NumericLimit
+	OcrUpscale         NumericLimit
+	OcrMinLength       NumericLimit
+	CandidateLimit     NumericLimit
+	TemplateMinScale   NumericLimit
+	TemplateMaxScale   NumericLimit
+	IconWindowRatio    NumericLimit
+	Opacity            NumericLimit
+	WindowWidth        NumericLimit
+	WindowHeight       NumericLimit
+	WindowLeft         NumericLimit
+	WindowTop          NumericLimit
+}{
+	OcrConfidence:      NumericLimit{Min: 0, Max: 1, Step: 0.01, Precision: 2},
+	NameSimilarity:     NumericLimit{Min: 0, Max: 1, Step: 0.01, Precision: 2},
+	TemplateSimilarity: NumericLimit{Min: 0, Max: 1, Step: 0.01, Precision: 2},
+	CaptureWidth:       NumericLimit{Min: 320, Max: 1280, Step: 160, Precision: 0},
+	CaptureHeight:      NumericLimit{Min: 320, Max: 1280, Step: 160, Precision: 0},
+	OcrUpscale:         NumericLimit{Min: 1, Max: 3, Step: 1, Precision: 0},
+	OcrMinLength:       NumericLimit{Min: 2, Max: 8, Step: 1, Precision: 0},
+	CandidateLimit:     NumericLimit{Min: 1, Max: 10, Step: 1, Precision: 0},
+	TemplateMinScale:   NumericLimit{Min: 0.4, Max: 1.6, Step: 0.1, Precision: 1},
+	TemplateMaxScale:   NumericLimit{Min: 0.8, Max: 2.4, Step: 0.1, Precision: 1},
+	IconWindowRatio:    NumericLimit{Min: 0.8, Max: 2, Step: 0.1, Precision: 1},
+	Opacity:            NumericLimit{Min: 0, Max: 100, Step: 1, Precision: 0},
+	WindowWidth:        NumericLimit{Min: 320, Max: 900, Step: 8, Precision: 0},
+	WindowHeight:       NumericLimit{Min: 200, Max: 640, Step: 8, Precision: 0},
+	WindowLeft:         NumericLimit{Min: -100000, Max: 100000, Step: 1, Precision: 0},
+	WindowTop:          NumericLimit{Min: -100000, Max: 100000, Step: 1, Precision: 0},
 }
 
 var MapZoomOverrideLimits = struct {

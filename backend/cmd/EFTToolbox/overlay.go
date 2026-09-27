@@ -20,7 +20,7 @@ type overlayProcess struct {
 func startOverlay(executable, address string) *overlayProcess {
 	cmd := exec.Command(executable, "--backend", address, "--dev-stdin")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = io.Discard
 	// The overlay sends its diagnostics over the named log pipe. Anything it prints instead —
 	// argument errors, a crash before the pipe is up — would otherwise only exist on the launcher's
 	// terminal, so it is mirrored into the log pipeline as well.

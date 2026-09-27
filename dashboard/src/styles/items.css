@@ -94,6 +94,293 @@
   background: linear-gradient(90deg, rgba(200, 162, 74, 0.22), rgba(200, 162, 74, 0.06));
   color: #f0e2c2;
 }
+
+/* The recognition subpage reuses the items page frame but swaps the search toolbar for a back
+   control and a heading. Its controls keep the items toolbar's 40px height so both screens share
+   one rhythm. */
+.items-recognition-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.items-recognition-toolbar .icon-button {
+  width: 40px;
+  min-height: 40px;
+}
+.items-recognition-title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+}
+.items-recognition-clear {
+  height: 40px;
+  margin-left: auto;
+  padding: 0 var(--space-3);
+  border-color: var(--border);
+  color: var(--muted);
+  font-size: var(--text-md);
+}
+
+/* Preview, results and settings share one row: the results table takes the space the other two
+   panels do not need. */
+.items-recognition-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(320px, 1.6fr) minmax(240px, 300px);
+  gap: var(--space-4);
+  flex: 1;
+  min-height: 0;
+}
+.items-recognition-preview,
+.items-recognition-output,
+.items-recognition-settings {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid #303834;
+  border-radius: var(--radius-md);
+  background: rgba(18, 22, 20, 0.92);
+}
+
+/* The whole preview box is the import control; the file input only has to stay keyboard
+   reachable. */
+.items-recognition-preview {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) ease-out;
+}
+.items-recognition-preview input[type='file'] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+}
+/* The frame is the drop target the eye reads: dashed while it waits for an image, a plain plate
+   once one is in. */
+.items-recognition-frame {
+  display: grid;
+  min-height: 0;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px dashed #3b443e;
+  border-radius: var(--radius-sm);
+  background: rgba(10, 13, 12, 0.45);
+  color: var(--muted);
+  font-size: var(--text-md);
+  text-align: center;
+  transition:
+    border-color var(--duration-fast) ease-out,
+    color var(--duration-fast) ease-out;
+}
+.items-recognition-preview.is-filled .items-recognition-frame {
+  padding: 0;
+  border-style: solid;
+  border-color: #303834;
+}
+/* The frame is the control, so it owns the highlight: hovering or keyboard focus light that one
+   edge and the panel border never joins in, which is what kept a second gold ring from stacking on
+   top of the pointer's. A click focuses the hidden input without `:focus-visible`, so it leaves no
+   ring behind once the pointer moves on. */
+.items-recognition-preview:hover .items-recognition-frame,
+.items-recognition-preview:has(input:focus-visible) .items-recognition-frame {
+  border-color: var(--accent);
+  color: #f0e2c2;
+}
+.items-recognition-preview:has(input:focus-visible) .items-recognition-frame {
+  background: rgba(200, 162, 74, 0.06);
+}
+.items-recognition-frame img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.items-recognition-filename {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--text-base);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.items-recognition-output {
+  position: relative;
+  display: grid;
+  grid-template-rows: 32px auto 32px minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+/* A recognition runs for a few seconds, which reads as a frozen panel without something moving:
+   the middle panel dims under a spinner until the result lands. */
+.items-recognition-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--accent);
+  font-size: var(--text-md);
+  background: rgba(12, 15, 14, 0.62);
+  backdrop-filter: blur(1px);
+}
+.items-recognition-output > h3,
+.items-recognition-heading h3 {
+  margin: 0;
+  color: #e1e7e3;
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+}
+.items-recognition-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.items-recognition-heading > span {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: var(--text-base);
+}
+.items-recognition-heading > span.is-error {
+  color: var(--danger);
+}
+/* The OCR dump is its own scroller: one long line never pushes the results off the panel. */
+.items-recognition-text {
+  max-height: 144px;
+  min-height: 44px;
+  margin: 0;
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(10, 13, 12, 0.5);
+  color: #c9d2cb;
+  font-size: var(--text-md);
+  line-height: 1.6;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+
+.items-recognition-results {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #303834;
+  border-radius: var(--radius-sm);
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+.items-recognition-result {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 104px 124px;
+  /* The price columns keep their width; a narrow window scrolls the results instead of squeezing
+     the item names to nothing. */
+  min-width: 440px;
+  align-items: center;
+  /* Column gutters match the items table, so both tables read with the same breathing room. */
+  gap: var(--space-4);
+  min-height: 60px;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid rgba(42, 48, 45, 0.7);
+}
+.items-recognition-result:last-child {
+  border-bottom: 0;
+}
+.items-recognition-result.is-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-height: 48px;
+  border-bottom-color: var(--border);
+  background: #171c1a;
+  color: #c3ccc5;
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+  text-align: center;
+}
+/* The item image shares the table's frame, at the size a result row has room for. */
+.items-recognition-result .item-image {
+  width: 44px;
+  height: 44px;
+}
+.items-recognition-result .item-image img {
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
+}
+.items-recognition-result .item-name {
+  font-size: var(--text-md);
+}
+.items-recognition-price {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #e1e7e3;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  text-align: center;
+  /* An avatar plus a price has to stay on one line inside its column. */
+  white-space: nowrap;
+}
+/* The trader's portrait travels with its price, the way the items table shows it. */
+.items-recognition-avatar {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  object-fit: cover;
+}
+.items-recognition-empty {
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--muted);
+  font-size: var(--text-md);
+  text-align: center;
+}
+
+.items-recognition-settings {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  overflow: auto;
+  padding: var(--space-4);
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+/* The rail's own heading row, the same 32px line the results panel uses, so the three panels start
+   their content at the same height. */
+.items-recognition-settings-head {
+  display: flex;
+  height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.items-recognition-settings-title {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  color: #e1e7e3;
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+}
+/* The rail carries the four thresholds plus the way to everything else. */
+.items-recognition-detailed {
+  min-height: 34px;
+  border-color: var(--border);
+  color: var(--text);
+}
 .items-recognition:hover:not(:disabled) {
   border-color: var(--accent);
   background: linear-gradient(90deg, rgba(200, 162, 74, 0.32), rgba(200, 162, 74, 0.12));
@@ -118,13 +405,13 @@
   text-align: left;
 }
 .items-recognition-label b {
-  font-size: 15px;
+  font-size: var(--text-md);
   font-weight: var(--weight-bold);
   letter-spacing: 0.01em;
 }
 .items-recognition-label small {
   color: #c9b48a;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .items-categories {
@@ -163,7 +450,7 @@
    platform default bar. */
 .items-table-wrap {
   scrollbar-width: thin;
-  scrollbar-color: #39423c transparent;
+  scrollbar-color: var(--scrollbar) transparent;
 }
 .items-table {
   min-width: 880px;
@@ -179,7 +466,7 @@
   column-gap: 16px;
   border-bottom: 1px solid rgba(42, 48, 45, 0.7);
   padding: 0 20px;
-  font-size: 16px;
+  font-size: var(--text-md);
 }
 
 /* The sticky header keeps one 64px row for every column. The label is the only grid item, so it
@@ -200,7 +487,7 @@
   min-height: 0;
   padding: 0;
   color: inherit;
-  font-size: 16px;
+  font-size: var(--text-md);
   font-weight: var(--weight-bold);
   text-align: center;
 }
@@ -247,7 +534,7 @@
 }
 .items-row > span:not(.item-name) {
   font-family: var(--font-mono);
-  font-size: 16px;
+  font-size: var(--text-md);
 }
 .items-price-cell {
   display: flex;
@@ -312,7 +599,7 @@
   border: 0;
   color: #aeb8b1;
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: var(--text-base);
   text-decoration: none;
 }
 .item-price-info {
@@ -357,7 +644,7 @@
   background: #242a27;
   color: #d7ded9;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
-  font-size: 15px;
+  font-size: var(--text-md);
   line-height: 1.45;
 }
 .items-popover-section {
@@ -378,11 +665,11 @@
   gap: 2px;
   color: #d7ded9;
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 .items-price-formula small {
   color: #aab5ad;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .items-formula-image {
   position: relative;
@@ -410,7 +697,7 @@
   background: #202722;
   color: #f0f4f1;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   line-height: 1.4;
   text-align: center;
@@ -423,7 +710,7 @@
   border-radius: 6px;
   background: #242a27;
   color: #d7ded9;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .item-image {
@@ -442,12 +729,18 @@
   object-fit: contain;
 }
 .item-name {
+  /* Two lines, then an ellipsis: a long name still shows what it is instead of being cut at the
+     column edge, and the row height never changes. The full name stays in the title attribute. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
   color: #e1e7e3;
   font-family: var(--font-ui);
-  font-size: 17px;
+  font-size: var(--text-md);
+  line-height: 1.25;
 }
 .items-rows {
   will-change: transform;
@@ -464,7 +757,7 @@
   justify-content: center;
   gap: var(--space-2);
   color: var(--accent);
-  font-size: 15px;
+  font-size: var(--text-md);
   background: rgba(12, 15, 14, 0.55);
   backdrop-filter: blur(1px);
 }
@@ -507,12 +800,12 @@
 }
 .items-recognition-body > strong {
   color: var(--text);
-  font-size: 19px;
+  font-size: var(--text-lg);
 }
 .items-recognition-body > p {
   margin: 0;
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .items-dialog-status {
@@ -536,12 +829,12 @@
 }
 .items-dialog-headline strong {
   color: var(--text);
-  font-size: 19px;
+  font-size: var(--text-lg);
   font-weight: var(--weight-bold);
 }
 .items-dialog-headline small {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .items-update-stages {
@@ -576,7 +869,7 @@
   align-content: start;
 }
 .items-stage-body > b {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   color: #8d9890;
 }
@@ -614,7 +907,7 @@
   border: 1px solid #333b36;
   border-radius: 999px;
   color: #8d9890;
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1;
   white-space: nowrap;
 }
@@ -642,7 +935,7 @@
 .items-update-stats {
   color: var(--muted) !important;
   font-family: var(--font-mono);
-  font-size: 12px !important;
+  font-size: var(--text-sm) !important;
 }
 .items-dialog-actions {
   display: flex;
@@ -668,6 +961,9 @@
 @media (max-width: 980px) {
   .items-toolbar {
     grid-template-columns: minmax(240px, 1fr) auto;
+  }
+  .items-recognition-grid {
+    grid-template-columns: minmax(180px, 1fr) minmax(260px, 1.5fr) minmax(220px, 260px);
   }
   .items-search {
     grid-column: 1 / -1;

@@ -5,6 +5,7 @@ import type { Annotation, Sticker, StickerUsage } from '../../../../contracts/ts
 import type { Tool, ToolOptions } from './MapCanvas';
 import { resolvePick, type ResolvedPick } from './StickerPicker';
 import { ColorPicker } from '../../components/ColorPicker';
+import { RangeSlider } from '../../components/RangeSlider';
 import { useLocale } from '../../hooks/useLocale';
 
 type Props = {
@@ -55,28 +56,28 @@ export function ToolOptionsPanel({
         <>
           <label className="field-label">{t('map.toolSettings.color')}</label>
           <ColorPicker color={options.color} onChange={setColor} />
-          <label className="range-label">
-            {t('map.toolSettings.width')} <output>{options.width} px</output>
-            <input
-              aria-label={t('map.toolSettings.brushWidth')}
-              type="range"
-              min="1"
-              max="20"
-              value={options.width}
-              onChange={(e) => {
-                setOption({ width: +e.target.value });
-                previewSize(+e.target.value);
-              }}
-            />
-          </label>
-          <button
-            className="clear-button"
-            disabled={!items.some((a) => a.kind === 'stroke')}
-            onClick={() => onCommit(items.filter((a) => a.kind !== 'stroke'))}
-          >
-            <Trash2 size={14} />
-            {t('map.toolSettings.clear')}
-          </button>
+          <RangeSlider
+            label={t('map.toolSettings.width')}
+            ariaLabel={t('map.toolSettings.brushWidth')}
+            value={options.width}
+            min={1}
+            max={20}
+            format={(value) => `${value} px`}
+            onChange={(value) => {
+              setOption({ width: value });
+              previewSize(value);
+            }}
+          />
+          <div className="tool-actions">
+            <button
+              className="clear-button"
+              disabled={!items.some((a) => a.kind === 'stroke')}
+              onClick={() => onCommit(items.filter((a) => a.kind !== 'stroke'))}
+            >
+              <Trash2 size={14} />
+              {t('map.toolSettings.clear')}
+            </button>
+          </div>
         </>
       )}
       {tool === 'marker' && (
@@ -163,42 +164,36 @@ export function ToolOptionsPanel({
               onChange={(e) => setOption({ text: e.target.value })}
             />
           </label>
-          <label className="range-label">
-            {t('map.toolSettings.textSize')}
-            <output>{options.textSize} px</output>
-            <input
-              aria-label={t('map.toolSettings.textSizeAria')}
-              type="range"
-              min="12"
-              max="48"
-              value={options.textSize}
-              onChange={(e) => {
-                setOption({ textSize: +e.target.value });
-                previewSize(+e.target.value);
-              }}
-            />
-          </label>
+          <RangeSlider
+            label={t('map.toolSettings.textSize')}
+            ariaLabel={t('map.toolSettings.textSizeAria')}
+            value={options.textSize}
+            min={12}
+            max={48}
+            format={(value) => `${value} px`}
+            onChange={(value) => {
+              setOption({ textSize: value });
+              previewSize(value);
+            }}
+          />
           <span className="field-label">{t('map.toolSettings.color')}</span>
           <ColorPicker color={options.color} onChange={setColor} />
         </>
       )}
       {tool === 'eraser' && (
         <>
-          <label className="range-label">
-            {t('map.toolSettings.width')}
-            <output>{options.eraserSize} px</output>
-            <input
-              aria-label={t('map.toolSettings.eraserWidth')}
-              type="range"
-              min="5"
-              max="50"
-              value={options.eraserSize}
-              onChange={(e) => {
-                setOption({ eraserSize: +e.target.value });
-                previewSize(+e.target.value);
-              }}
-            />
-          </label>
+          <RangeSlider
+            label={t('map.toolSettings.width')}
+            ariaLabel={t('map.toolSettings.eraserWidth')}
+            value={options.eraserSize}
+            min={5}
+            max={50}
+            format={(value) => `${value} px`}
+            onChange={(value) => {
+              setOption({ eraserSize: value });
+              previewSize(value);
+            }}
+          />
         </>
       )}
     </div>

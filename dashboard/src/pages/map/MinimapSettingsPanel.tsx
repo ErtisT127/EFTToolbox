@@ -7,6 +7,7 @@ import {
 import { useLocale } from '../../hooks/useLocale';
 import { useGameMonitor } from '../../stores/gameMonitorStore';
 import { AppTooltip } from '../../components/HintTooltip';
+import { RangeSlider } from '../../components/RangeSlider';
 
 export function MinimapSettingsPanel({
   settings,
@@ -81,18 +82,15 @@ export function MinimapSettingsPanel({
             </button>
           </div>
         </div>
-        <label className="range-label">
-          {t('settings.opacity')}{' '}
-          <output>{settings.opacity ?? OverlaySettingsLimits.opacity.max}%</output>
-          <input
-            type="range"
-            min={OverlaySettingsLimits.opacity.min}
-            max={OverlaySettingsLimits.opacity.max}
-            step={OverlaySettingsLimits.opacity.step}
-            value={settings.opacity ?? OverlaySettingsLimits.opacity.max}
-            onChange={(e) => updateSoon({ opacity: Number(e.target.value) })}
-          />
-        </label>
+        <RangeSlider
+          label={t('settings.opacity')}
+          value={settings.opacity ?? OverlaySettingsLimits.opacity.max}
+          min={OverlaySettingsLimits.opacity.min}
+          max={OverlaySettingsLimits.opacity.max}
+          step={OverlaySettingsLimits.opacity.step}
+          format={(value) => `${value}%`}
+          onChange={(value) => updateSoon({ opacity: value })}
+        />
         <label className="check-row">
           <input
             type="checkbox"

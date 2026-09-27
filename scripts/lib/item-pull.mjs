@@ -263,6 +263,17 @@ export function buildCatalog(
     const fallback = locale === 'zh' ? enNames : zhNames;
     return names?.[`${id} Name`] || fallback?.[`${id} Name`] || '';
   };
+  // The grid cell in game carries the short name, so the catalog keeps both: the recognition
+  // matcher and any list that has room for the shorter label read it from here.
+  const itemShortName = (key, locale) => {
+    const names = locale === 'zh' ? zhNames : enNames;
+    const fallback = locale === 'zh' ? enNames : zhNames;
+    return (
+      names?.[key.replace(/ Name$/, ' ShortName')] ||
+      fallback?.[key.replace(/ Name$/, ' ShortName')] ||
+      ''
+    );
+  };
   const taskName = (id, locale) => {
     const names = locale === 'zh' ? taskNamesZh : taskNamesEn;
     return names?.[`${id} name`] || names?.[`${id} Name`] || '';
@@ -383,6 +394,7 @@ export function buildCatalog(
         id: item.id,
         zh: zhNames[key] || enNames[key] || key,
         en: enNames[key] || zhNames[key] || key,
+        short: itemShortName(key, locale),
         image: imageUrls.get(item.baseImageLink) || '',
         categories: (item.handbookCategories || [])
           .map((id) => handbookCategories?.[id]?.normalizedName)
@@ -419,6 +431,7 @@ export function buildCatalog(
     items: records(locale).map((record) => ({
       id: record.id,
       name: locale === 'zh' ? record.zh : record.en,
+      shortName: record.short || (locale === 'zh' ? record.zh : record.en),
       image: record.image,
       categories: record.categories,
       traderPrice: record.traderPrice,

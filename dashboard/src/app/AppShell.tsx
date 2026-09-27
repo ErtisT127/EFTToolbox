@@ -15,8 +15,12 @@ import { DataLoadError } from '../lib/errors';
 import { notices } from '../stores/noticeStore';
 import { ItemsPage } from '../pages/items/ItemsPage';
 
+type SettingsTab = 'map' | 'hotkeys' | 'gameMonitor' | 'recognition';
+
 export function AppShell() {
   const [page, setPage] = useState<AppPage>('map');
+  // Which settings tab a jump lands on: the map opens its own, the items page the recognition tab.
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('map');
   // Resetting module data is destructive, so it asks with the app's own dialog instead of the
   // browser's default confirm.
   const [pendingReset, setPendingReset] = useState<'calibrator' | 'settings' | null>(null);
@@ -64,6 +68,10 @@ export function AppShell() {
   const navigate = (next: typeof page) => {
     setPage(next);
   };
+  const openSettings = (tab: SettingsTab) => {
+    setSettingsTab(tab);
+    setPage('settings');
+  };
   const openDataDirectory = () => {
     void fetch('/api/data/open-user-settings')
       .then((response) => {
@@ -105,7 +113,7 @@ export function AppShell() {
             resetKeys={[page]}
             onRetry={() => void workspace.initialize()}
           >
-            <MapPage onOpenSettings={() => setPage('settings')} />
+            <MapPage onOpenSettings={() => openSettings('map')} />
           </ErrorBoundary>
         ) : page === 'calibrator' ? (
           <ErrorBoundary
@@ -123,11 +131,11 @@ export function AppShell() {
             onRetry={() => void workspace.initialize()}
             {...boundaryActions('settings')}
           >
-            <SettingsPage />
+            <SettingsPage initialTab={settingsTab} />
           </ErrorBoundary>
         ) : (
           <ErrorBoundary module="items" resetKeys={[page]} onRetry={() => window.location.reload()}>
-            <ItemsPage />
+            <ItemsPage onOpenSettings={() => openSettings('recognition')} />
           </ErrorBoundary>
         )}
         <footer className="statusbar">

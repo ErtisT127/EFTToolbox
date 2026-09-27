@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"efttoolbox/backend/internal/gamewatch"
 	"efttoolbox/backend/internal/mapper"
@@ -51,6 +52,11 @@ type overlayHub struct {
 	mobile            *mobileManager
 	mobileBase        http.Handler
 	multiplayer       *multiplayerManager
+	// The backend owns the recognition state: what is running now and the last finished result, so
+	// both the dashboard and the overlay render the same thing.
+	recognitionStart *contracts.RecognitionStart
+	recognition      *contracts.RecognitionResult
+	recognitionAt    time.Time
 }
 
 type playerInput struct {
@@ -137,7 +143,23 @@ func defaultOverlaySettings() contracts.OverlaySettings {
 		SchemaVersion: 1, Visible: true, Shape: "square", Width: 384, Height: 384, Left: 24, Top: 24, LockAspect: true, SvgResolution: 2048,
 		Opacity: ptr(defaultOpacity), Backdrop: false, SvgQualityMode: stringPtr("auto"),
 		FollowCenter: true, FollowFloor: true, FollowZoom: true, TargetZoom: 2, MapZooms: []contracts.MapZoomOverride{},
-		Hotkeys: contracts.OverlayHotkeys{ZoomIn: "Ctrl+Alt+Shift+PageUp", ZoomOut: "Ctrl+Alt+Shift+PageDown", FloorUp: "Alt+PageUp", FloorDown: "Alt+PageDown"},
+		Hotkeys: contracts.OverlayHotkeys{ZoomIn: "Ctrl+Alt+Shift+PageUp", ZoomOut: "Ctrl+Alt+Shift+PageDown", FloorUp: "Alt+PageUp", FloorDown: "Alt+PageDown", Recognition: "Ctrl+Alt+R"},
+	}
+}
+
+func defaultRecognitionSettings() contracts.RecognitionSettings {
+	return contracts.RecognitionSettings{
+		SchemaVersion: 1, OcrConfidence: 0.65, NameSimilarity: 0.72, TemplateSimilarity: 0.7,
+		CaptureWidth: 640, CaptureHeight: 640, AutoPush: true,
+		TemplateMatching: true, TemplateStrict: false,
+		OcrUpscale: 2, OcrMinLength: 3, CandidateLimit: 5,
+		TemplateMinScale: 0.6, TemplateMaxScale: 1.6, IconWindowRatio: 1.3,
+		AutoClose: true, AutoCloseSeconds: 5,
+		Opacity: 100,
+		// A tall strip reads better than a wide bar: the rows stack in one column and the list scrolls.
+		// Both sides sit on the contract's step so the dashboard sliders show them exactly, and the
+		// width clears the widest price at the default text size.
+		WindowWidth: 440, WindowHeight: 512, WindowLeft: 0, WindowTop: 0, Visible: false,
 	}
 }
 
@@ -190,6 +212,7 @@ var hotkeyFields = []hotkeyField{
 	{"panDown", func(h *contracts.OverlayHotkeys) *string { return &h.PanDown }},
 	{"panLeft", func(h *contracts.OverlayHotkeys) *string { return &h.PanLeft }},
 	{"panRight", func(h *contracts.OverlayHotkeys) *string { return &h.PanRight }},
+	{"recognition", func(h *contracts.OverlayHotkeys) *string { return &h.Recognition }},
 }
 
 func validHotkeyFailures(values []string) bool {
@@ -375,6 +398,15 @@ func (h *overlayHub) mobileSnapshot() contracts.ServerEvent {
 	if settings, err := h.settings(); err == nil {
 		event.OverlaySettings = &settings
 	}
+	if user, err := h.userSettings(); err == nil {
+		event.RecognitionSettings = &user.Recognition
+	}
+	if h.recognitionStart != nil {
+		event.RecognitionStart = h.recognitionStart
+	}
+	if h.recognition != nil {
+		event.RecognitionResult = h.recognition
+	}
 	return event
 }
 
@@ -410,6 +442,15 @@ func (h *overlayHub) websocket(ctx context.Context, w http.ResponseWriter, r *ht
 	e := contracts.ServerEvent{Type: "snapshot", Status: h.status, SentAt: time.Now().UTC().Format(time.RFC3339Nano), Players: &players, Annotations: &annotations, Preferences: &prefs, OverlayView: &view, GameMonitorStatus: &monitorStatus}
 	if settingsErr == nil {
 		e.OverlaySettings = &settings
+	}
+	if user, err := h.userSettings(); err == nil {
+		e.RecognitionSettings = &user.Recognition
+	}
+	if h.recognitionStart != nil {
+		e.RecognitionStart = h.recognitionStart
+	}
+	if h.recognition != nil {
+		e.RecognitionResult = h.recognition
 	}
 	ch := make(chan contracts.ServerEvent, 64)
 	h.clients[ch] = r.URL.Query().Get("client") == "overlay"
@@ -572,6 +613,137 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 		}
 		jsonResponse(w, current.Overlay)
 	})
+	mux.HandleFunc("GET /api/recognition-settings", func(w http.ResponseWriter, r *http.Request) {
+		if !localRequest(w, r) {
+			return
+		}
+		value, err := h.userSettings()
+		if err != nil {
+			dataError(w, err)
+			return
+		}
+		jsonResponse(w, value.Recognition)
+	})
+	mux.HandleFunc("PUT /api/recognition-settings", func(w http.ResponseWriter, r *http.Request) {
+		if !localRequest(w, r) {
+			return
+		}
+		var value contracts.RecognitionSettings
+		if !decodeUpdate(w, r, &value) || !normalizeRecognition(&value) {
+			apiError(w, http.StatusBadRequest, "recognition_settings_invalid")
+			return
+		}
+		current, err := h.userSettings()
+		if err != nil {
+			dataError(w, err)
+			return
+		}
+		current.Recognition = value
+		if err := h.applyUserSettings(current, operationID(r), true, false); err != nil {
+			dataError(w, err)
+			return
+		}
+		jsonResponse(w, value)
+	})
+	mux.HandleFunc("POST /api/recognition/request", func(w http.ResponseWriter, r *http.Request) {
+		if !localRequest(w, r) {
+			return
+		}
+		var value contracts.RecognitionRequest
+		if !decodeUpdate(w, r, &value) || value.RequestId == "" || len(value.ImageData) > 16<<20 {
+			apiError(w, http.StatusBadRequest, "recognition_request_invalid")
+			return
+		}
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if !h.view.Connected {
+			apiError(w, http.StatusServiceUnavailable, "overlay_unavailable")
+			return
+		}
+		h.startRecognitionLocked(value.RequestId, operationID(r))
+		h.logRecognition("info", "recognition_request", fmt.Sprintf("imageBytes=%d", len(value.ImageData)))
+		h.publish(contracts.ServerEvent{Type: "recognition_request", RecognitionRequest: &value, OperationId: operationID(r)})
+		jsonResponse(w, value)
+	})
+	// A hotkey capture starts in the overlay, so it announces itself here to clear the previous
+	// result and put both displays into their loading state.
+	mux.HandleFunc("POST /api/recognition/started", func(w http.ResponseWriter, r *http.Request) {
+		if !localRequest(w, r) {
+			return
+		}
+		var value contracts.RecognitionStart
+		if !decodeUpdate(w, r, &value) || value.RequestId == "" {
+			apiError(w, http.StatusBadRequest, "recognition_request_invalid")
+			return
+		}
+		h.mu.Lock()
+		h.startRecognitionLocked(value.RequestId, operationID(r))
+		h.mu.Unlock()
+		jsonResponse(w, value)
+	})
+	mux.HandleFunc("DELETE /api/recognition-result", func(w http.ResponseWriter, r *http.Request) {
+		if !localRequest(w, r) {
+			return
+		}
+		h.mu.Lock()
+		h.recognition = nil
+		h.recognitionStart = nil
+		h.recognitionAt = time.Time{}
+		h.publish(contracts.ServerEvent{Type: "recognition_cleared", OperationId: operationID(r)})
+		h.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	})
+	// The overlay asks for the items its OCR text could be before it spends any pixels on the icon
+	// check, so short-name priority and the noise filter stay in one place.
+	mux.HandleFunc("POST /api/recognition/candidates", func(w http.ResponseWriter, r *http.Request) {
+		if !localRequest(w, r) {
+			return
+		}
+		var value contracts.RecognitionCandidateRequest
+		if !decodeUpdate(w, r, &value) || len(value.Texts) > 128 {
+			apiError(w, http.StatusBadRequest, "recognition_request_invalid")
+			return
+		}
+		user, err := h.userSettings()
+		if err != nil {
+			dataError(w, err)
+			return
+		}
+		catalog, ok := recognitionCatalog(h.store)
+		if !ok {
+			apiError(w, http.StatusNotFound, "items_not_available")
+			return
+		}
+		jsonResponse(w, contracts.RecognitionCandidates{Candidates: recognitionCandidates(catalog, value.Texts, user.Recognition)})
+	})
+	mux.HandleFunc("POST /api/recognition/result", func(w http.ResponseWriter, r *http.Request) {
+		if !localRequest(w, r) {
+			return
+		}
+		var value contracts.RecognitionResult
+		if !decodeUpdate(w, r, &value) || value.RequestId == "" || len(value.ImageData) > 16<<20 || len(value.OcrText) > 128 || len(value.Rows) > 256 {
+			apiError(w, http.StatusBadRequest, "recognition_result_invalid")
+			return
+		}
+		settings := defaultRecognitionSettings()
+		if user, settingsErr := h.userSettings(); settingsErr == nil {
+			settings = user.Recognition
+		}
+		value.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		value.Rows = enrichRecognitionRows(h.store, value, settings)
+		h.mu.Lock()
+		h.recognition = &value
+		h.recognitionAt = time.Now()
+		h.recognitionStart = nil
+		h.publish(contracts.ServerEvent{Type: "recognition_result", RecognitionResult: &value, OperationId: operationID(r)})
+		h.mu.Unlock()
+		level := "info"
+		if value.Error != "" {
+			level = "warn"
+		}
+		h.logRecognition(level, "recognition_result", fmt.Sprintf("texts=%d rows=%d template=%s error=%q", len(value.OcrText), len(value.Rows), recognitionTemplateSummary(value.Rows), value.Error))
+		jsonResponse(w, value)
+	})
 	mux.HandleFunc("GET /api/overlay/state", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
 			return
@@ -628,6 +800,258 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 		h.publish(contracts.ServerEvent{Type: "overlay_command", OverlayCommand: &v, OperationId: operationID(r)})
 		jsonResponse(w, v)
 	})
+}
+
+// Recognition spans two processes, so an accepted request and its result each leave one line in the
+// daily log instead of only existing as a dashboard notice.
+func (h *overlayHub) logRecognition(level, event, message string) {
+	if h.logWriter == nil {
+		return
+	}
+	if err := h.logWriter.write(clientLog{Level: level, Component: "recognition", Event: event, Message: message}); err != nil {
+		log.Printf("write recognition log: %v", err)
+	}
+}
+
+// A run starts by clearing what the last one produced: both displays show the empty/loading state
+// until the new result lands, so nothing on screen belongs to an older capture.
+func (h *overlayHub) startRecognitionLocked(requestId string, operationID *string) {
+	previous := h.recognitionAt
+	h.recognition = nil
+	h.recognitionAt = time.Time{}
+	h.recognitionStart = &contracts.RecognitionStart{RequestId: requestId}
+	h.publish(contracts.ServerEvent{Type: "recognition_started", RecognitionStart: h.recognitionStart, OperationId: operationID})
+	age := "none"
+	if !previous.IsZero() {
+		age = time.Since(previous).Round(time.Second).String()
+	}
+	h.logRecognition("info", "recognition_started", fmt.Sprintf("clearedResultAge=%s", age))
+}
+
+// The items catalog the mode's recognition runs against; the prices and names in the result all
+// come from here, whichever client resolved the row.
+func recognitionCatalog(store *mapStore) (contracts.ItemsCatalog, bool) {
+	var catalog contracts.ItemsCatalog
+	mode := "pvp"
+	if repo := store.repository(); repo != nil {
+		mode = repo.mode
+	}
+	if readJSON(filepath.Join(store.root, "upstream", "items", mode, "items_zh.json"), &catalog) != nil {
+		return catalog, false
+	}
+	return catalog, true
+}
+
+func enrichRecognitionRows(store *mapStore, result contracts.RecognitionResult, settings contracts.RecognitionSettings) []contracts.RecognitionRow {
+	catalog, ok := recognitionCatalog(store)
+	if !ok {
+		return result.Rows
+	}
+	byId := make(map[string]contracts.ItemsCatalogItem, len(catalog.Items))
+	for _, item := range catalog.Items {
+		byId[item.Id] = item
+	}
+	rows := make([]contracts.RecognitionRow, 0, len(result.Rows))
+	seen := map[string]bool{}
+	// Rows the overlay already resolved carry the icon score it measured; the catalog still supplies
+	// the name, the picture and both prices.
+	for _, row := range result.Rows {
+		item, known := byId[row.Id]
+		if !known || seen[item.Id] {
+			continue
+		}
+		seen[item.Id] = true
+		rows = append(rows, recognitionRow(item, row.OcrConfidence, row.TemplateConfidence))
+	}
+	// The icon check resolves every text itself — including the ones it deliberately drops in strict
+	// mode — so its verdict must not be undone by matching those texts by name again.
+	if result.RowsResolved {
+		return sortRecognitionRows(rows)
+	}
+	for _, text := range result.OcrText {
+		query := normalizeRecognitionText(text)
+		if !usableRecognitionQuery(query, settings.OcrMinLength) {
+			continue
+		}
+		index, score := matchRecognitionItem(catalog.Items, query, settings.NameSimilarity)
+		if index < 0 {
+			continue
+		}
+		item := catalog.Items[index]
+		// Two OCR lines can name the same item; the first one keeps the row.
+		if seen[item.Id] {
+			continue
+		}
+		seen[item.Id] = true
+		rows = append(rows, recognitionRow(item, score, 0))
+	}
+	return sortRecognitionRows(rows)
+}
+
+func sortRecognitionRows(rows []contracts.RecognitionRow) []contracts.RecognitionRow {
+	slices.SortStableFunc(rows, func(a, b contracts.RecognitionRow) int {
+		ap, bp := maxRecognitionPrice(a), maxRecognitionPrice(b)
+		if ap != bp {
+			if ap > bp {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	return rows
+}
+
+func recognitionRow(item contracts.ItemsCatalogItem, ocrConfidence, templateConfidence float64) contracts.RecognitionRow {
+	return contracts.RecognitionRow{Id: item.Id, Name: item.Name, Image: item.Image, TraderPrice: item.TraderPrice, Trader: item.Trader, FleaPrice: item.FleaPrice, OcrConfidence: ocrConfidence, TemplateConfidence: templateConfidence}
+}
+
+// The icon scores of one result, so tuning a threshold does not need the panel on screen.
+func recognitionTemplateSummary(rows []contracts.RecognitionRow) string {
+	if len(rows) == 0 {
+		return "none"
+	}
+	minimum, maximum, total := rows[0].TemplateConfidence, rows[0].TemplateConfidence, 0.0
+	for _, row := range rows {
+		minimum = math.Min(minimum, row.TemplateConfidence)
+		maximum = math.Max(maximum, row.TemplateConfidence)
+		total += row.TemplateConfidence
+	}
+	return fmt.Sprintf("min=%.2f avg=%.2f max=%.2f", minimum, total/float64(len(rows)), maximum)
+}
+
+// The candidate shortlist the overlay's icon check starts from: every item the text resembles at
+// least as much as the name threshold, best first, capped at the configured limit.
+func recognitionCandidates(catalog contracts.ItemsCatalog, texts []string, settings contracts.RecognitionSettings) [][]contracts.RecognitionCandidate {
+	limit := settings.CandidateLimit
+	result := make([][]contracts.RecognitionCandidate, 0, len(texts))
+	for _, text := range texts {
+		candidates := []contracts.RecognitionCandidate{}
+		query := normalizeRecognitionText(text)
+		if usableRecognitionQuery(query, settings.OcrMinLength) {
+			type scored struct {
+				item  contracts.ItemsCatalogItem
+				score float64
+			}
+			matches := make([]scored, 0, limit*4)
+			for _, item := range catalog.Items {
+				score := recognitionItemScore(item, query)
+				if score >= settings.NameSimilarity {
+					matches = append(matches, scored{item: item, score: score})
+				}
+			}
+			slices.SortStableFunc(matches, func(a, b scored) int {
+				if a.score != b.score {
+					if a.score > b.score {
+						return -1
+					}
+					return 1
+				}
+				return strings.Compare(a.item.Name, b.item.Name)
+			})
+			for index, match := range matches {
+				if index >= limit {
+					break
+				}
+				candidates = append(candidates, contracts.RecognitionCandidate{Id: match.item.Id, Name: match.item.Name, ShortName: match.item.ShortName, Image: match.item.Image, TraderPrice: match.item.TraderPrice, FleaPrice: match.item.FleaPrice, Similarity: match.score})
+			}
+		}
+		result = append(result, candidates)
+	}
+	return result
+}
+
+// An OCR dump also carries counters, separators and stray glyphs: "50/50" or "392/400" are not item
+// names, and a string that short can sit inside a long name by accident.
+func usableRecognitionQuery(query string, minLength int) bool {
+	letters := false
+	for _, r := range query {
+		if unicode.IsLetter(r) {
+			letters = true
+			break
+		}
+	}
+	return letters && len([]rune(query)) >= minLength
+}
+
+// A screenshot names an item the way the game's own grid does, so the short name is the first key to
+// try; the full name covers the tooltips. Whichever of the two scores higher wins, and the short
+// name takes the tie.
+func matchRecognitionItem(items []contracts.ItemsCatalogItem, query string, threshold float64) (int, float64) {
+	index, score := -1, 0.0
+	for i, item := range items {
+		candidate := recognitionItemScore(item, query)
+		if candidate > score {
+			index, score = i, candidate
+		}
+	}
+	if score < threshold {
+		return -1, 0
+	}
+	return index, score
+}
+
+// How well one item answers the text: its short name first, the full name as the fallback.
+func recognitionItemScore(item contracts.ItemsCatalogItem, query string) float64 {
+	short := recognitionSimilarity(query, normalizeRecognitionText(item.ShortName))
+	name := recognitionSimilarity(query, normalizeRecognitionText(item.Name))
+	if short >= name {
+		return short
+	}
+	return name
+}
+
+// OCR separates words differently from the catalog ("MP-133 12铅径" against "MP-133 12 铅径"), so
+// the comparison runs on letters and digits alone.
+func normalizeRecognitionText(value string) string {
+	value = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "-", " "))
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return r
+		}
+		return -1
+	}, value)
+}
+
+func recognitionSimilarity(a, b string) float64 {
+	if a == "" || b == "" {
+		return 0
+	}
+	if a == b {
+		return 1
+	}
+	shorter, longer := a, b
+	if len([]rune(a)) > len([]rune(b)) {
+		shorter, longer = b, a
+	}
+	if len([]rune(shorter)) >= 3 && strings.Contains(longer, shorter) {
+		return 0.86
+	}
+	// Nothing contains anything: score the characters the two share, which is what a dropped or
+	// added separator leaves to go on.
+	shared := 0
+	remaining := map[rune]int{}
+	for _, r := range b {
+		remaining[r]++
+	}
+	for _, r := range a {
+		if remaining[r] > 0 {
+			remaining[r]--
+			shared++
+		}
+	}
+	return 2 * float64(shared) / float64(len([]rune(a))+len([]rune(b)))
+}
+
+func maxRecognitionPrice(row contracts.RecognitionRow) int {
+	var price int
+	if row.TraderPrice != nil && *row.TraderPrice > price {
+		price = *row.TraderPrice
+	}
+	if row.FleaPrice != nil && *row.FleaPrice > price {
+		price = *row.FleaPrice
+	}
+	return price
 }
 
 func validPoint(p contracts.MapPoint) bool {

@@ -6,11 +6,12 @@ internal static class Program
 {
     private static bool closing;
     private static OverlayApplication? application;
+    private static nint panelHwnd;
     private static readonly Native.WindowProc Procedure = WndProc;
     private static nint WndProc(nint hwnd, uint message, nuint wParam, nint lParam)
     {
         if (message is Native.WmClose or Native.WmDestroy) { closing = true; return 0; }
-        if (application?.Message(message, wParam, lParam) is { } result) return result;
+        if (application?.Message(hwnd, message, wParam, lParam) is { } result) return result;
         if (message == Native.WmMouseActivate) return 3;
         return Native.DefWindowProc(hwnd, message, wParam, lParam);
     }
@@ -36,7 +37,12 @@ internal static class Program
             registered = Native.RegisterClassEx(ref wc); Native.Check(registered != 0);
             hwnd = Native.CreateWindowEx(Native.ExStyle, wc.Name, "EFTToolbox Overlay", 0x80000000, 24, 24, 384, 384, 0, 0, instance, 0); Native.Check(hwnd != 0);
             Native.Check(Native.SetLayeredWindowAttributes(hwnd, 0, 255, 2));
-            using var app = new OverlayApplication(hwnd, new Uri(backend)); application = app;
+            // The recognition panel is its own window: clickable (no WS_EX_TRANSPARENT), still never
+            // activating, and hidden until a recognition runs.
+            panelHwnd = Native.CreateWindowEx(Native.PanelExStyle, wc.Name, "EFTToolbox Recognition", 0x80000000, 0, 0, 760, 180, 0, 0, instance, 0); Native.Check(panelHwnd != 0);
+            Native.Check(Native.SetLayeredWindowAttributes(panelHwnd, 0, 255, 2));
+            Native.ShowWindow(panelHwnd, 0);
+            using var app = new OverlayApplication(hwnd, panelHwnd, new Uri(backend)); application = app;
             var inputClosed = args.Contains("--dev-stdin") ? WatchInputAsync() : null;
             OverlayDiagnostics.Log("info", "started", "Native overlay ready");
             while (!closing && !stop.IsCancellationRequested && !(inputClosed?.IsCompleted ?? false))
@@ -47,7 +53,7 @@ internal static class Program
             application = null; return 0;
         }
         catch (Exception error) { Console.Error.WriteLine($"Overlay failed: {error}"); return 1; }
-        finally { Console.CancelKeyPress -= cancel; if (hwnd != 0) Native.DestroyWindow(hwnd); if (registered != 0) Native.UnregisterClass("EFTToolbox.Overlay.Native", instance); }
+        finally { Console.CancelKeyPress -= cancel; if (panelHwnd != 0) Native.DestroyWindow(panelHwnd); if (hwnd != 0) Native.DestroyWindow(hwnd); if (registered != 0) Native.UnregisterClass("EFTToolbox.Overlay.Native", instance); }
     }
     private static async Task WatchInputAsync() { using var input = Console.OpenStandardInput(); await input.CopyToAsync(Stream.Null).ConfigureAwait(false); }
 }

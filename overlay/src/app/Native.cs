@@ -8,9 +8,14 @@ internal static class Native
     internal const uint WmClose = 0x0010, WmDestroy = 0x0002, WmSize = 0x0005;
     internal const uint WmDisplayChange = 0x007E, WmDpiChanged = 0x02E0;
     internal const uint WmNcHitTest = 0x0084, WmMouseActivate = 0x0021, WmContextMenu = 0x007B, WmCaptureChanged = 0x0215;
+    // The cursor a window shows is decided here, not by the hit test that only precedes it.
+    internal const uint WmSetCursor = 0x0020;
     internal const uint WmLButtonDown = 0x0201, WmLButtonUp = 0x0202, WmMouseMove = 0x0200, WmMouseWheel = 0x020A;
     internal const uint WmRButtonDown = 0x0204, WmRButtonUp = 0x0205;
     internal const uint ExStyle = 0x00080000 | 0x00000020 | 0x08000000 | 0x00000080 | 0x00000008 | 0x00200000;
+    // The recognition panel is clickable, so it drops WS_EX_TRANSPARENT and keeps the rest: layered,
+    // never activating, tool window, topmost, no redirection bitmap.
+    internal const uint PanelExStyle = 0x00080000 | 0x08000000 | 0x00000080 | 0x00000008 | 0x00200000;
     internal delegate nint WindowProc(nint hwnd, uint message, nuint wParam, nint lParam);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]

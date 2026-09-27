@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   CircleOff,
   ClipboardList,
   CloudDownload,
+  Eraser,
   Image,
+  ImagePlus,
   LoaderCircle,
   Repeat,
   ScanLine,
   Search,
   SearchX,
+  SlidersHorizontal,
   UserRound,
   X,
   XCircle,
@@ -23,15 +27,20 @@ import type {
   ItemsRequirement,
   ItemsSettings,
   ItemsUpdateStatus,
+  RecognitionResult,
+  RecognitionSettings,
 } from '../../../../contracts/ts/ipc.gen';
+import { RecognitionSettingsLimits } from '../../../../contracts/ts/ipc.gen';
 import { AppPopover } from '../../components/AppPopover';
-import { AppTooltip } from '../../components/HintTooltip';
+import { AppTooltip, HintTooltip } from '../../components/HintTooltip';
+import { RangeSlider } from '../../components/RangeSlider';
 import { useLocale } from '../../hooks/useLocale';
 import { useGameMonitor } from '../../stores/gameMonitorStore';
 import { notices } from '../../stores/noticeStore';
-import { request } from '../../stores/workspaceStore';
+import { reportClientLog, request } from '../../stores/workspaceStore';
 import { DataLoadError } from '../../lib/errors';
 import { useItemsRevision } from '../../stores/resourceStore';
+import { useOverlay } from '../../stores/overlayStore';
 import {
   filterItems,
   formatCount,
@@ -82,7 +91,7 @@ const emptyStatus: ItemsUpdateStatus = {
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
-export function ItemsPage() {
+export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { t, locale } = useLocale();
   const monitor = useGameMonitor();
   const revision = useItemsRevision();
@@ -96,10 +105,19 @@ export function ItemsPage() {
   const [sort, setSort] = useState<ItemSort>('id');
   const [descending, setDescending] = useState(false);
   const [scrollTop, setScrollTop] = useState(0);
-  const [dialog, setDialog] = useState<'update' | 'recognition' | null>(null);
+  const [dialog, setDialog] = useState<'update' | null>(null);
+  const [recognitionPage, setRecognitionPage] = useState(false);
+  const overlay = useOverlay();
+  const [recognitionImage, setRecognitionImage] = useState('');
+  const [recognitionName, setRecognitionName] = useState('');
+  // The backend owns what is running and what came back last, so this page, the settings tab and the
+  // overlay window all render the same run whichever surface started it.
+  const recognitionSettings = overlay.recognitionSettings;
+  const recognitionResult = overlay.recognitionResult;
+  const recognitionPending = overlay.recognitionPending;
   const [scrollHeight, setScrollHeight] = useState(520);
   const [refreshing, setRefreshing] = useState(false);
-  const tableRef = useRef<HTMLDivElement>(null);
+  const [tableNode, setTableNode] = useState<HTMLDivElement | null>(null);
   const reportedRun = useRef<string | undefined>(undefined);
 
   const startUpdate = useCallback(
@@ -187,15 +205,21 @@ export function ItemsPage() {
     );
   }, [status, t, startUpdate]);
 
+  // The virtual window is measured from the live table box. Using the node itself as the dependency
+  // re-measures when the recognition subpage replaces the table and the same table comes back, and
+  // it keeps the recorded scroll offset in step with the node the offset belongs to.
   useEffect(() => {
-    const node = tableRef.current;
-    if (!node) return;
-    const updateHeight = () => setScrollHeight(Math.max(0, node.clientHeight - headerHeight));
+    if (!tableNode) return;
+    setScrollTop(tableNode.scrollTop);
+    const updateHeight = () => {
+      if (tableNode.clientHeight > 0)
+        setScrollHeight(Math.max(0, tableNode.clientHeight - headerHeight));
+    };
     updateHeight();
     const observer = new ResizeObserver(updateHeight);
-    observer.observe(node);
+    observer.observe(tableNode);
     return () => observer.disconnect();
-  }, [catalog]);
+  }, [catalog, tableNode]);
 
   const visible = useMemo(
     () => sortItems(filterItems(catalog?.items || [], query, category), sort, descending),
@@ -234,9 +258,82 @@ export function ItemsPage() {
       .catch(() => notices.push(t('errors.request_failed')));
   };
 
+  // The recognition endpoints answer with contract error codes; the ones a reader can act on get
+  // their own sentence instead of the generic failure.
+  const recognitionErrorKey = (reason: unknown) => {
+    const code = reason instanceof Error ? reason.message : '';
+    if (code === 'errors.overlay_unavailable') return 'errors.recognition_unavailable';
+    if (
+      code === 'errors.recognition_request_invalid' ||
+      code === 'errors.recognition_result_invalid'
+    )
+      return 'errors.recognition_request_invalid';
+    return code || 'errors.request_failed';
+  };
+  const saveRecognition = (changes: Partial<RecognitionSettings>) => {
+    // One implementation for the rail and the settings tab, so a rejected save behaves the same there.
+    overlay.saveRecognitionSettings(changes);
+  };
+  const clearRecognition = () => {
+    setRecognitionImage('');
+    setRecognitionName('');
+    overlay.clearRecognition();
+  };
+  const importRecognition = (file: File) => {
+    setRecognitionName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const data = String(reader.result || '');
+      const requestId = crypto.randomUUID();
+      setRecognitionImage(data);
+      overlay.requestRecognition(requestId);
+      void request('/api/recognition/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId, imageData: data }),
+      }).catch((reason: unknown) => {
+        // Nothing is pending once the request is refused; the notice says why.
+        overlay.clearRecognition();
+        const message = t(recognitionErrorKey(reason));
+        notices.push(message);
+        reportClientLog('recognition_request_failed', message, String(reason));
+      });
+    };
+    reader.onerror = () => {
+      const message = t('errors.request_failed');
+      notices.push(message);
+      reportClientLog(
+        'recognition_import_failed',
+        message,
+        reader.error ? String(reader.error) : '',
+      );
+    };
+    reader.readAsDataURL(file);
+  };
+
   // Rendering the failure instead of handling it locally lets the module's error boundary take
   // over the whole page with the shared error state.
   if (loadError) throw loadError;
+
+  if (recognitionPage) {
+    return (
+      <RecognitionPage
+        t={t}
+        // The result knows the image it was made from, so a hotkey capture mirrored into this page
+        // still shows the picture it came from.
+        image={recognitionImage || recognitionResult?.imageData || ''}
+        imageName={recognitionName}
+        result={recognitionResult}
+        pending={recognitionPending}
+        settings={recognitionSettings}
+        onBack={() => setRecognitionPage(false)}
+        onImport={importRecognition}
+        onSettings={saveRecognition}
+        onClear={clearRecognition}
+        onOpenSettings={onOpenSettings}
+      />
+    );
+  }
 
   return (
     <section className="items-page">
@@ -295,14 +392,19 @@ export function ItemsPage() {
         <button
           type="button"
           className="items-recognition"
-          onClick={() => setDialog('recognition')}
+          onClick={() => setRecognitionPage(true)}
         >
           <span className="items-recognition-badge">
             <ScanLine size={18} aria-hidden="true" />
           </span>
           <span className="items-recognition-label">
             <b>{t('items.recognition')}</b>
-            <small>{t('items.recognitionTag')}</small>
+            {/* The tag used to say "coming soon"; the useful thing to show is the key that runs it. */}
+            {overlay.settings?.hotkeys.recognition && (
+              <small>
+                {t('items.recognitionTag')} {overlay.settings.hotkeys.recognition}
+              </small>
+            )}
           </span>
         </button>
       </div>
@@ -335,7 +437,7 @@ export function ItemsPage() {
           className={`items-table-wrap${refreshing ? ' is-refreshing' : ''}`}
           aria-busy={refreshing}
           onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
-          ref={tableRef}
+          ref={setTableNode}
         >
           {refreshing && (
             <div className="items-refresh" role="status">
@@ -388,9 +490,224 @@ export function ItemsPage() {
           onCancel={cancelUpdate}
         />
       )}
-      {dialog === 'recognition' && (
-        <UpdateDialog status={status} t={t} recognition onClose={() => setDialog(null)} />
-      )}
+    </section>
+  );
+}
+
+function RecognitionPage({
+  t,
+  image,
+  imageName,
+  result,
+  pending,
+  settings,
+  onBack,
+  onImport,
+  onSettings,
+  onClear,
+  onOpenSettings,
+}: {
+  t: Translate;
+  image: string;
+  imageName: string;
+  result?: RecognitionResult;
+  pending: boolean;
+  settings?: RecognitionSettings;
+  onBack: () => void;
+  onImport: (file: File) => void;
+  onSettings: (changes: Partial<RecognitionSettings>) => void;
+  onClear: () => void;
+  onOpenSettings: () => void;
+}) {
+  const ocrText = result?.ocrText.join(' / ') ?? '';
+  const rows = result?.rows ?? [];
+  const limits = RecognitionSettingsLimits;
+  // The label only carries states the reader has to act on: waiting is the import hint's job,
+  // running is the mask's, and a finished import is announced by its notice.
+  const status = result?.error
+    ? t('items.recognitionFailed')
+    : result && rows.length === 0
+      ? t('items.recognitionNoMatches')
+      : '';
+
+  return (
+    <section className="items-page">
+      <div className="items-toolbar items-recognition-toolbar">
+        <button
+          type="button"
+          className="icon-button"
+          aria-label={t('common.back')}
+          onClick={onBack}
+        >
+          <ArrowLeft size={18} />
+        </button>
+        <h2 className="items-recognition-title">{t('items.recognitionTitle')}</h2>
+        <button
+          type="button"
+          className="items-recognition-clear"
+          onClick={onClear}
+          disabled={!image && !result}
+        >
+          <Eraser size={15} aria-hidden="true" />
+          {t('items.recognitionClear')}
+        </button>
+      </div>
+      <div className="items-recognition-grid">
+        {/* The preview is the import control: the file input stays reachable by keyboard, the whole
+            box is the pointer target. */}
+        <label
+          className={`items-recognition-preview${image ? ' is-filled' : ''}`}
+          title={t('items.recognitionImport')}
+        >
+          <input
+            type="file"
+            accept="image/*"
+            disabled={pending}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) onImport(file);
+              event.currentTarget.value = '';
+            }}
+          />
+          <span className="items-recognition-frame">
+            {image ? (
+              <img src={image} alt={imageName} />
+            ) : (
+              <>
+                <ImagePlus size={30} aria-hidden="true" />
+                <span>{t('items.recognitionPreviewEmpty')}</span>
+              </>
+            )}
+          </span>
+          <span className="items-recognition-filename" title={imageName || undefined}>
+            {imageName || (image ? '' : t('items.recognitionPreviewFormats'))}
+          </span>
+        </label>
+        <div className="items-recognition-output">
+          {pending && (
+            <div className="items-recognition-loading" role="status">
+              <LoaderCircle className="items-spin" size={22} aria-hidden="true" />
+              {t('items.recognitionWorking')}
+            </div>
+          )}
+          <div className="items-recognition-heading">
+            <h3>{t('items.recognitionOcr')}</h3>
+            {status && (
+              <span className={result?.error ? 'is-error' : undefined} role="status">
+                {status}
+              </span>
+            )}
+          </div>
+          <p className="items-recognition-text">{ocrText || '—'}</p>
+          <h3>{t('items.recognitionResults')}</h3>
+          <div className="items-recognition-results">
+            <div className="items-recognition-result is-head">
+              <span />
+              <span>{t('items.name')}</span>
+              <span>{t('items.trader')}</span>
+              <span>{t('items.flea')}</span>
+            </div>
+            {rows.map((row) => (
+              <div className="items-recognition-result" key={row.id}>
+                <span className="item-image">
+                  {row.image ? <img src={row.image} alt="" loading="lazy" /> : <Image size={18} />}
+                </span>
+                <span
+                  className="item-name"
+                  title={
+                    row.templateConfidence > 0
+                      ? `${row.name} · ${t('items.templateSimilarity')} ${row.templateConfidence.toFixed(2)}`
+                      : row.name
+                  }
+                >
+                  {row.name}
+                </span>
+                <span className="items-recognition-price">
+                  {row.trader?.image ? (
+                    <img className="items-recognition-avatar" src={row.trader.image} alt="" />
+                  ) : null}
+                  {formatPrice(row.traderPrice)}
+                </span>
+                <span className="items-recognition-price">{formatPrice(row.fleaPrice)}</span>
+              </div>
+            ))}
+            {rows.length === 0 && <p className="items-recognition-empty">—</p>}
+          </div>
+        </div>
+        <div className="items-recognition-settings">
+          <div className="items-recognition-settings-head">
+            <h3 className="items-recognition-settings-title">{t('items.recognitionSettings')}</h3>
+          </div>
+          {settings && (
+            <>
+              <RangeSlider
+                label={
+                  <HintTooltip content={t('items.recognitionOcrConfidenceHint')}>
+                    {t('items.ocrConfidence')}
+                  </HintTooltip>
+                }
+                value={settings.ocrConfidence}
+                min={limits.ocrConfidence.min}
+                max={limits.ocrConfidence.max}
+                step={limits.ocrConfidence.step}
+                format={(value) => value.toFixed(2)}
+                onChange={(value) => onSettings({ ocrConfidence: value })}
+              />
+              <RangeSlider
+                label={
+                  <HintTooltip content={t('items.recognitionNameSimilarityHint')}>
+                    {t('items.nameSimilarity')}
+                  </HintTooltip>
+                }
+                value={settings.nameSimilarity}
+                min={limits.nameSimilarity.min}
+                max={limits.nameSimilarity.max}
+                step={limits.nameSimilarity.step}
+                format={(value) => value.toFixed(2)}
+                onChange={(value) => onSettings({ nameSimilarity: value })}
+              />
+              <RangeSlider
+                label={
+                  <HintTooltip content={t('items.recognitionTemplateSimilarityHint')}>
+                    {t('items.templateSimilarity')}
+                  </HintTooltip>
+                }
+                value={settings.templateSimilarity}
+                min={limits.templateSimilarity.min}
+                max={limits.templateSimilarity.max}
+                step={limits.templateSimilarity.step}
+                // Without the icon check this threshold has nothing to decide.
+                disabled={!settings.templateMatching}
+                format={(value) => value.toFixed(2)}
+                onChange={(value) => onSettings({ templateSimilarity: value })}
+              />
+              {/* The capture region is always square, so one slider drives both sides. */}
+              <RangeSlider
+                label={
+                  <HintTooltip content={t('items.recognitionCaptureSizeHint')}>
+                    {t('items.recognitionCaptureSize')}
+                  </HintTooltip>
+                }
+                value={settings.captureWidth}
+                min={limits.captureWidth.min}
+                max={limits.captureWidth.max}
+                step={limits.captureWidth.step}
+                format={(value) => `${value}×${value}`}
+                onChange={(value) => onSettings({ captureWidth: value, captureHeight: value })}
+              />
+              <button
+                type="button"
+                className="items-recognition-detailed"
+                title={t('items.recognitionDetailedHint')}
+                onClick={onOpenSettings}
+              >
+                <SlidersHorizontal size={14} aria-hidden="true" />
+                {t('items.recognitionDetailed')}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     </section>
   );
 }

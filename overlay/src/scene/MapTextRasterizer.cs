@@ -5,7 +5,12 @@ using SkiaSharp;
 
 namespace EFTToolbox.Overlay;
 
-internal sealed record MapText(string Text, string Role, float Size, float Width, string Color, float Dpi);
+/// <summary><paramref name="Halo"/> is the map label treatment: a blurred dark copy under the glyphs
+/// so they stay readable over artwork. Text on a flat panel turns it off, which is also what keeps it
+/// crisp instead of softly smeared.</summary>
+/// <summary><paramref name="LeftAlign"/> keeps wrapped lines on the same left edge; map labels centre
+/// their lines because they are anchored by their middle.</summary>
+internal sealed record MapText(string Text, string Role, float Size, float Width, string Color, float Dpi, int MaxLines = 0, bool Halo = true, bool LeftAlign = false);
 
 // Owned by the marker workers; typefaces and layout never touch the render thread.
 internal sealed class MapTextRasterizer : IDisposable
@@ -59,7 +64,17 @@ internal sealed class MapTextRasterizer : IDisposable
                 }
                 lines.Add(line);
             }
-            var pad = 4 * request.Dpi;
+            // A caller that only has room for a few lines gets them, with the last one ellipsized
+            // rather than clipped mid-glyph.
+            if (request.MaxLines > 0 && lines.Count > request.MaxLines)
+            {
+                lines = lines.Take(request.MaxLines).ToList();
+                var limit = request.Width > 0 ? request.Width * request.Dpi : float.MaxValue;
+                var last = lines[^1];
+                while (last.Length > 1 && Measure(last + "…") > limit) last = last[..^1];
+                lines[^1] = last + "…";
+            }
+            var pad = request.Halo ? 4 * request.Dpi : 1.5f * request.Dpi;
             var lineHeight = latin.TextSize * (bold ? MapDisplay.LabelLineHeight : MapDisplay.AnnotationLineHeight);
             var width = Math.Max(1, (int)Math.Ceiling(lines.Max(Measure) + 2 * pad));
             var height = Math.Max(1, (int)Math.Ceiling(lines.Count * lineHeight + 2 * pad));
@@ -72,18 +87,21 @@ internal sealed class MapTextRasterizer : IDisposable
             var metrics = latin.FontMetrics;
             for (var i = 0; i < lines.Count; i++)
             {
-                var x = (width - Measure(lines[i])) / 2;
+                var x = request.LeftAlign ? pad : (width - Measure(lines[i])) / 2;
                 var y = pad + i * lineHeight + (lineHeight - metrics.Ascent - metrics.Descent) / 2;
                 foreach (var run in Runs(lines[i]))
                 {
-                    using var shadow = run.Paint.Clone();
-                    shadow.Color = SKColor.Parse(MapDisplay.Background);
-                    shadow.MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 1.2f * request.Dpi);
-                    canvas.DrawText(run.Text, x, y + request.Dpi, shadow);
-                    if (bold)
+                    if (request.Halo)
                     {
-                        using var stroke = run.Paint.Clone(); stroke.Color = shadow.Color; stroke.Style = SKPaintStyle.Stroke; stroke.StrokeWidth = MapDisplay.TextStroke * request.Dpi;
-                        canvas.DrawText(run.Text, x, y, stroke);
+                        using var shadow = run.Paint.Clone();
+                        shadow.Color = SKColor.Parse(MapDisplay.Background);
+                        shadow.MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 1.2f * request.Dpi);
+                        canvas.DrawText(run.Text, x, y + request.Dpi, shadow);
+                        if (bold)
+                        {
+                            using var stroke = run.Paint.Clone(); stroke.Color = shadow.Color; stroke.Style = SKPaintStyle.Stroke; stroke.StrokeWidth = MapDisplay.TextStroke * request.Dpi;
+                            canvas.DrawText(run.Text, x, y, stroke);
+                        }
                     }
                     canvas.DrawText(run.Text, x, y, run.Paint); x += run.Paint.MeasureText(run.Text);
                 }

@@ -110,6 +110,11 @@
             "calibration_changed",
             "multiplayer_changed",
             "items_changed",
+            "recognition_settings",
+            "recognition_request",
+            "recognition_result",
+            "recognition_started",
+            "recognition_cleared",
             "session_end",
             "session_expired"
           ]
@@ -174,6 +179,18 @@
         },
         "multiplayerStatus": {
           "$ref": "#/$defs/MultiplayerStatus"
+        },
+        "recognitionSettings": {
+          "$ref": "#/$defs/RecognitionSettings"
+        },
+        "recognitionRequest": {
+          "$ref": "#/$defs/RecognitionRequest"
+        },
+        "recognitionResult": {
+          "$ref": "#/$defs/RecognitionResult"
+        },
+        "recognitionStart": {
+          "$ref": "#/$defs/RecognitionStart"
         }
       }
     },
@@ -183,6 +200,7 @@
       "required": [
         "id",
         "name",
+        "shortName",
         "image",
         "categories",
         "traderPrice",
@@ -196,6 +214,10 @@
       "properties": {
         "id": { "type": "string" },
         "name": { "type": "string" },
+        "shortName": {
+          "description": "The name the game's own grid shows; falls back to the full name when the item has none.",
+          "type": "string"
+        },
         "image": { "type": "string" },
         "categories": { "type": "array", "items": { "type": "string" } },
         "traderPrice": { "type": ["integer", "null"] },
@@ -1187,6 +1209,275 @@
         }
       }
     },
+    "RecognitionSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "ocrConfidence",
+        "nameSimilarity",
+        "templateSimilarity",
+        "captureWidth",
+        "captureHeight",
+        "autoPush",
+        "templateMatching",
+        "templateStrict",
+        "ocrUpscale",
+        "ocrMinLength",
+        "candidateLimit",
+        "templateMinScale",
+        "templateMaxScale",
+        "iconWindowRatio",
+        "autoClose",
+        "autoCloseSeconds",
+        "opacity",
+        "windowWidth",
+        "windowHeight",
+        "windowLeft",
+        "windowTop",
+        "visible"
+      ],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "ocrConfidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "x-step": 0.01,
+          "x-precision": 2
+        },
+        "nameSimilarity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "x-step": 0.01,
+          "x-precision": 2
+        },
+        "templateSimilarity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "x-step": 0.01,
+          "x-precision": 2
+        },
+        "captureWidth": {
+          "type": "integer",
+          "minimum": 320,
+          "maximum": 1280,
+          "x-step": 160,
+          "x-precision": 0
+        },
+        "captureHeight": {
+          "type": "integer",
+          "minimum": 320,
+          "maximum": 1280,
+          "x-step": 160,
+          "x-precision": 0
+        },
+        "autoPush": {
+          "description": "Show the recognition result in the overlay panel; the dashboard shows it either way.",
+          "type": "boolean"
+        },
+        "templateMatching": {
+          "description": "Verify the name candidates against the items' own icons; off keeps the text-only pipeline.",
+          "type": "boolean"
+        },
+        "templateStrict": {
+          "description": "Drop a row whose icon match stays below the template threshold instead of only re-ranking.",
+          "type": "boolean"
+        },
+        "ocrUpscale": {
+          "description": "How much the capture is enlarged before OCR; small in-game labels read better scaled up.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "x-step": 1,
+          "x-precision": 0
+        },
+        "ocrMinLength": {
+          "description": "Shortest cleaned-up text that can be an item name; counters like 50/50 stay below it.",
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 8,
+          "x-step": 1,
+          "x-precision": 0
+        },
+        "candidateLimit": {
+          "description": "How many name candidates per text are offered to the icon check.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "x-step": 1,
+          "x-precision": 0
+        },
+        "templateMinScale": {
+          "description": "Smallest icon size, as a fraction of the text label's width, the icon check tries.",
+          "type": "number",
+          "minimum": 0.4,
+          "maximum": 1.6,
+          "x-step": 0.1,
+          "x-precision": 1
+        },
+        "templateMaxScale": {
+          "description": "Largest icon size, as a fraction of the text label's width, the icon check tries.",
+          "type": "number",
+          "minimum": 0.8,
+          "maximum": 2.4,
+          "x-step": 0.1,
+          "x-precision": 1
+        },
+        "iconWindowRatio": {
+          "description": "Side of the square search area above a label, as a multiple of the label's width.",
+          "type": "number",
+          "minimum": 0.8,
+          "maximum": 2,
+          "x-step": 0.1,
+          "x-precision": 1
+        },
+        "autoClose": { "type": "boolean" },
+        "autoCloseSeconds": { "type": "integer", "enum": [3, 5, 10, 15] },
+        "opacity": {
+          "description": "How opaque the recognition panel is over the game, as a percentage.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "x-step": 1,
+          "x-precision": 0
+        },
+        "windowWidth": {
+          "type": "integer",
+          "description": "Width of the recognition panel, a tall strip rather than a wide bar.",
+          "minimum": 320,
+          "maximum": 900,
+          "x-step": 8,
+          "x-precision": 0
+        },
+        "windowHeight": {
+          "type": "integer",
+          "description": "Height of the recognition panel; the row list scrolls inside it.",
+          "minimum": 200,
+          "maximum": 640,
+          "x-step": 8,
+          "x-precision": 0
+        },
+        "windowLeft": {
+          "type": "integer",
+          "minimum": -100000,
+          "maximum": 100000,
+          "x-step": 1,
+          "x-precision": 0
+        },
+        "windowTop": {
+          "type": "integer",
+          "minimum": -100000,
+          "maximum": 100000,
+          "x-step": 1,
+          "x-precision": 0
+        },
+        "visible": { "type": "boolean" }
+      }
+    },
+    "RecognitionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "imageData"],
+      "properties": {
+        "requestId": { "type": "string", "maxLength": 128 },
+        "imageData": { "type": "string", "maxLength": 16777216 }
+      }
+    },
+    "RecognitionRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "image",
+        "traderPrice",
+        "trader",
+        "fleaPrice",
+        "ocrConfidence",
+        "templateConfidence"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "image": { "type": "string" },
+        "traderPrice": { "type": ["integer", "null"] },
+        "trader": {
+          "anyOf": [{ "$ref": "#/$defs/ItemsTrader" }, { "type": "null" }]
+        },
+        "fleaPrice": { "type": ["integer", "null"] },
+        "ocrConfidence": { "type": "number" },
+        "templateConfidence": { "type": "number" }
+      }
+    },
+    "RecognitionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "imageData",
+        "ocrText",
+        "rows",
+        "error",
+        "completedAt",
+        "rowsResolved"
+      ],
+      "properties": {
+        "requestId": { "type": "string" },
+        "imageData": { "type": "string" },
+        "ocrText": { "type": "array", "items": { "type": "string" } },
+        "rows": { "type": "array", "items": { "$ref": "#/$defs/RecognitionRow" } },
+        "error": { "type": "string" },
+        "completedAt": { "type": "string", "format": "date-time" },
+        "rowsResolved": {
+          "description": "The client resolved every OCR text itself, so the backend must not match them by name again.",
+          "type": "boolean"
+        }
+      }
+    },
+    "RecognitionStart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId"],
+      "properties": {
+        "requestId": { "type": "string", "maxLength": 128 }
+      }
+    },
+    "RecognitionCandidateRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["texts"],
+      "properties": {
+        "texts": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "RecognitionCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "shortName", "image", "traderPrice", "fleaPrice", "similarity"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "shortName": { "type": "string" },
+        "image": { "type": "string" },
+        "traderPrice": { "type": ["integer", "null"] },
+        "fleaPrice": { "type": ["integer", "null"] },
+        "similarity": { "type": "number" }
+      }
+    },
+    "RecognitionCandidates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidates"],
+      "properties": {
+        "candidates": {
+          "type": "array",
+          "items": { "type": "array", "items": { "$ref": "#/$defs/RecognitionCandidate" } }
+        }
+      }
+    },
     "OverlayHotkeys": {
       "type": "object",
       "additionalProperties": false,
@@ -1201,7 +1492,8 @@
         "panUp",
         "panDown",
         "panLeft",
-        "panRight"
+        "panRight",
+        "recognition"
       ],
       "properties": {
         "toggleEdit": {
@@ -1235,6 +1527,9 @@
           "type": "string"
         },
         "panRight": {
+          "type": "string"
+        },
+        "recognition": {
           "type": "string"
         }
       }
@@ -1371,11 +1666,12 @@
     "UserSettings": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "overlay", "gameMonitor"],
+      "required": ["schemaVersion", "overlay", "gameMonitor", "recognition"],
       "properties": {
         "schemaVersion": { "type": "integer", "const": 1 },
         "overlay": { "$ref": "#/$defs/OverlaySettings" },
-        "gameMonitor": { "$ref": "#/$defs/GameMonitorSettings" }
+        "gameMonitor": { "$ref": "#/$defs/GameMonitorSettings" },
+        "recognition": { "$ref": "#/$defs/RecognitionSettings" }
       }
     },
     "OverlayBootstrap": {

@@ -58,11 +58,16 @@ public sealed record ServerEvent {
   [JsonPropertyName("overlayCommand")] public OverlayCommand? OverlayCommand { get; init; } = null;
   [JsonPropertyName("gameMonitorStatus")] public GameMonitorStatus? GameMonitorStatus { get; init; } = null;
   [JsonPropertyName("multiplayerStatus")] public MultiplayerStatus? MultiplayerStatus { get; init; } = null;
+  [JsonPropertyName("recognitionSettings")] public RecognitionSettings? RecognitionSettings { get; init; } = null;
+  [JsonPropertyName("recognitionRequest")] public RecognitionRequest? RecognitionRequest { get; init; } = null;
+  [JsonPropertyName("recognitionResult")] public RecognitionResult? RecognitionResult { get; init; } = null;
+  [JsonPropertyName("recognitionStart")] public RecognitionStart? RecognitionStart { get; init; } = null;
 }
 
 public sealed record ItemsCatalogItem {
   [JsonPropertyName("id")] public string Id { get; init; } = "";
   [JsonPropertyName("name")] public string Name { get; init; } = "";
+  [JsonPropertyName("shortName")] public string ShortName { get; init; } = "";
   [JsonPropertyName("image")] public string Image { get; init; } = "";
   [JsonPropertyName("categories")] public string[] Categories { get; init; } = [];
   [JsonPropertyName("traderPrice")] public int? TraderPrice { get; init; } = null;
@@ -409,6 +414,80 @@ public sealed record TileLayer {
   [JsonPropertyName("bounds")] public MapPoint[] Bounds { get; init; } = [];
 }
 
+public sealed record RecognitionSettings {
+  [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; init; } = default;
+  [JsonPropertyName("ocrConfidence")] public double OcrConfidence { get; init; } = default;
+  [JsonPropertyName("nameSimilarity")] public double NameSimilarity { get; init; } = default;
+  [JsonPropertyName("templateSimilarity")] public double TemplateSimilarity { get; init; } = default;
+  [JsonPropertyName("captureWidth")] public int CaptureWidth { get; init; } = default;
+  [JsonPropertyName("captureHeight")] public int CaptureHeight { get; init; } = default;
+  [JsonPropertyName("autoPush")] public bool AutoPush { get; init; } = default;
+  [JsonPropertyName("templateMatching")] public bool TemplateMatching { get; init; } = default;
+  [JsonPropertyName("templateStrict")] public bool TemplateStrict { get; init; } = default;
+  [JsonPropertyName("ocrUpscale")] public int OcrUpscale { get; init; } = default;
+  [JsonPropertyName("ocrMinLength")] public int OcrMinLength { get; init; } = default;
+  [JsonPropertyName("candidateLimit")] public int CandidateLimit { get; init; } = default;
+  [JsonPropertyName("templateMinScale")] public double TemplateMinScale { get; init; } = default;
+  [JsonPropertyName("templateMaxScale")] public double TemplateMaxScale { get; init; } = default;
+  [JsonPropertyName("iconWindowRatio")] public double IconWindowRatio { get; init; } = default;
+  [JsonPropertyName("autoClose")] public bool AutoClose { get; init; } = default;
+  [JsonPropertyName("autoCloseSeconds")] public int AutoCloseSeconds { get; init; } = default;
+  [JsonPropertyName("opacity")] public int Opacity { get; init; } = default;
+  [JsonPropertyName("windowWidth")] public int WindowWidth { get; init; } = default;
+  [JsonPropertyName("windowHeight")] public int WindowHeight { get; init; } = default;
+  [JsonPropertyName("windowLeft")] public int WindowLeft { get; init; } = default;
+  [JsonPropertyName("windowTop")] public int WindowTop { get; init; } = default;
+  [JsonPropertyName("visible")] public bool Visible { get; init; } = default;
+}
+
+public sealed record RecognitionRequest {
+  [JsonPropertyName("requestId")] public string RequestId { get; init; } = "";
+  [JsonPropertyName("imageData")] public string ImageData { get; init; } = "";
+}
+
+public sealed record RecognitionRow {
+  [JsonPropertyName("id")] public string Id { get; init; } = "";
+  [JsonPropertyName("name")] public string Name { get; init; } = "";
+  [JsonPropertyName("image")] public string Image { get; init; } = "";
+  [JsonPropertyName("traderPrice")] public int? TraderPrice { get; init; } = null;
+  [JsonPropertyName("trader")] public ItemsTrader? Trader { get; init; } = null;
+  [JsonPropertyName("fleaPrice")] public int? FleaPrice { get; init; } = null;
+  [JsonPropertyName("ocrConfidence")] public double OcrConfidence { get; init; } = default;
+  [JsonPropertyName("templateConfidence")] public double TemplateConfidence { get; init; } = default;
+}
+
+public sealed record RecognitionResult {
+  [JsonPropertyName("requestId")] public string RequestId { get; init; } = "";
+  [JsonPropertyName("imageData")] public string ImageData { get; init; } = "";
+  [JsonPropertyName("ocrText")] public string[] OcrText { get; init; } = [];
+  [JsonPropertyName("rows")] public RecognitionRow[] Rows { get; init; } = [];
+  [JsonPropertyName("error")] public string Error { get; init; } = "";
+  [JsonPropertyName("completedAt")] public string CompletedAt { get; init; } = "";
+  [JsonPropertyName("rowsResolved")] public bool RowsResolved { get; init; } = default;
+}
+
+public sealed record RecognitionStart {
+  [JsonPropertyName("requestId")] public string RequestId { get; init; } = "";
+}
+
+public sealed record RecognitionCandidateRequest {
+  [JsonPropertyName("texts")] public string[] Texts { get; init; } = [];
+}
+
+public sealed record RecognitionCandidate {
+  [JsonPropertyName("id")] public string Id { get; init; } = "";
+  [JsonPropertyName("name")] public string Name { get; init; } = "";
+  [JsonPropertyName("shortName")] public string ShortName { get; init; } = "";
+  [JsonPropertyName("image")] public string Image { get; init; } = "";
+  [JsonPropertyName("traderPrice")] public int? TraderPrice { get; init; } = null;
+  [JsonPropertyName("fleaPrice")] public int? FleaPrice { get; init; } = null;
+  [JsonPropertyName("similarity")] public double Similarity { get; init; } = default;
+}
+
+public sealed record RecognitionCandidates {
+  [JsonPropertyName("candidates")] public RecognitionCandidate[][] Candidates { get; init; } = [];
+}
+
 public sealed record OverlayHotkeys {
   [JsonPropertyName("toggleEdit")] public string ToggleEdit { get; init; } = "";
   [JsonPropertyName("toggleVisible")] public string ToggleVisible { get; init; } = "";
@@ -421,6 +500,7 @@ public sealed record OverlayHotkeys {
   [JsonPropertyName("panDown")] public string PanDown { get; init; } = "";
   [JsonPropertyName("panLeft")] public string PanLeft { get; init; } = "";
   [JsonPropertyName("panRight")] public string PanRight { get; init; } = "";
+  [JsonPropertyName("recognition")] public string Recognition { get; init; } = "";
 }
 
 public sealed record MapZoomOverride {
@@ -454,6 +534,7 @@ public sealed record UserSettings {
   [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; init; } = default;
   [JsonPropertyName("overlay")] public OverlaySettings Overlay { get; init; } = new();
   [JsonPropertyName("gameMonitor")] public GameMonitorSettings GameMonitor { get; init; } = new();
+  [JsonPropertyName("recognition")] public RecognitionSettings Recognition { get; init; } = new();
 }
 
 public sealed record OverlayBootstrap {
@@ -662,6 +743,25 @@ public static class CalibrationRegionLimits {
 public static class CalibrationDocumentLimits {
   public static readonly NumericLimit Revision = new(0, double.PositiveInfinity, 0, 0);
   public static readonly NumericLimit NextRegionNumber = new(1, double.PositiveInfinity, 0, 0);
+}
+
+public static class RecognitionSettingsLimits {
+  public static readonly NumericLimit OcrConfidence = new(0, 1, 0.01, 2);
+  public static readonly NumericLimit NameSimilarity = new(0, 1, 0.01, 2);
+  public static readonly NumericLimit TemplateSimilarity = new(0, 1, 0.01, 2);
+  public static readonly NumericLimit CaptureWidth = new(320, 1280, 160, 0);
+  public static readonly NumericLimit CaptureHeight = new(320, 1280, 160, 0);
+  public static readonly NumericLimit OcrUpscale = new(1, 3, 1, 0);
+  public static readonly NumericLimit OcrMinLength = new(2, 8, 1, 0);
+  public static readonly NumericLimit CandidateLimit = new(1, 10, 1, 0);
+  public static readonly NumericLimit TemplateMinScale = new(0.4, 1.6, 0.1, 1);
+  public static readonly NumericLimit TemplateMaxScale = new(0.8, 2.4, 0.1, 1);
+  public static readonly NumericLimit IconWindowRatio = new(0.8, 2, 0.1, 1);
+  public static readonly NumericLimit Opacity = new(0, 100, 1, 0);
+  public static readonly NumericLimit WindowWidth = new(320, 900, 8, 0);
+  public static readonly NumericLimit WindowHeight = new(200, 640, 8, 0);
+  public static readonly NumericLimit WindowLeft = new(-100000, 100000, 1, 0);
+  public static readonly NumericLimit WindowTop = new(-100000, 100000, 1, 0);
 }
 
 public static class MapZoomOverrideLimits {

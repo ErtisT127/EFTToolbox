@@ -6,6 +6,7 @@ using Vortice.Direct3D11;
 using Vortice.DirectComposition;
 using Vortice.DXGI;
 using Vortice.Mathematics;
+using EFTToolbox.Contracts;
 
 namespace EFTToolbox.Overlay;
 
@@ -155,13 +156,7 @@ internal sealed class OverlayRenderer : IDisposable
     internal double LastPresentMs { get; private set; }
     internal unsafe void Render(MapScene scene, MarkerLayer markers, TileLayerRenderer tiles, bool circle, bool backdrop, int opacity, bool editing, Operation? operation = null)
     {
-        EnsureFonts();
-        if (lastOpacity != opacity) { opacityEffect.SetOpacity(opacity / 100f).CheckError(); composition.Commit().CheckError(); lastOpacity = opacity; }
-        var renderTimer = System.Diagnostics.Stopwatch.StartNew();
-        var io = ImGui.GetIO();
-        io.DisplaySize = new Vector2(width, height); io.DeltaTime = 1f / 60;
-        ImGui.NewFrame();
-        var draw = ImGui.GetBackgroundDrawList();
+        var draw = BeginFrame(opacity);
         if (scene.Map is not null)
         {
             // The dashboard draws the map on an opaque surface, and that is what makes the floor
@@ -180,6 +175,36 @@ internal sealed class OverlayRenderer : IDisposable
             markers.Draw(draw, scene, Images, Texts, operation);
         }
         if (editing) DrawBorder(draw, circle);
+        EndFrame(circle);
+    }
+
+    /// <summary>The recognition window draws nothing but its panel; it owns its own device, swap
+    /// chain and ImGui context, so the frame plumbing is shared but the content is not.</summary>
+    internal unsafe void RenderRecognition(RecognitionPanelView panel, int opacity)
+    {
+        var draw = BeginFrame(opacity);
+        DrawRecognitionPanel(draw, panel);
+        EndFrame(false);
+    }
+
+    /// <summary>Opens a frame and sets the window's one and only alpha: the composition effect group
+    /// scales everything the frame draws, so a percentage on a slider is the percentage on screen.</summary>
+    private ImDrawListPtr BeginFrame(int opacity)
+    {
+        // Two windows share one thread, so each render re-binds the context its own draw lists
+        // belong to before ImGui is touched.
+        ImGui.SetCurrentContext(imgui);
+        EnsureFonts();
+        if (lastOpacity != opacity) { opacityEffect.SetOpacity(opacity / 100f).CheckError(); composition.Commit().CheckError(); lastOpacity = opacity; }
+        var io = ImGui.GetIO();
+        io.DisplaySize = new Vector2(width, height); io.DeltaTime = 1f / 60;
+        ImGui.NewFrame();
+        return ImGui.GetBackgroundDrawList();
+    }
+
+    private unsafe void EndFrame(bool circle)
+    {
+        var renderTimer = frameTimer;
         ImGui.Render();
 
         context.OMSetRenderTargets(renderTarget!);
@@ -194,8 +219,8 @@ internal sealed class OverlayRenderer : IDisposable
         context.IASetIndexBuffer(indices, Format.R16_UInt, 0);
         context.VSSetShader(vertexShader);
         context.PSSetShader(pixelShader);
-        // z clips the circle, w scales the whole panel's alpha.
-        var values = new Vector4(width, height, circle ? 1 : 0, opacity / 100f); context.UpdateSubresource(values, parameters);
+        // z clips the circle; w is spare, since the effect group above already carries the alpha.
+        var values = new Vector4(width, height, circle ? 1 : 0, 0); context.UpdateSubresource(values, parameters);
         context.PSSetConstantBuffer(0, parameters); context.PSSetSampler(0, sampler);
         var data = ImGui.GetDrawData();
         for (int i = 0; i < data.CmdListsCount; i++)
@@ -233,6 +258,149 @@ internal sealed class OverlayRenderer : IDisposable
         LastDrawMs = renderTimer.Elapsed.TotalMilliseconds; renderTimer.Restart();
         swapChain.Present(1, PresentFlags.None).CheckError();
         LastPresentMs = renderTimer.Elapsed.TotalMilliseconds;
+    }
+
+    private readonly System.Diagnostics.Stopwatch frameTimer = System.Diagnostics.Stopwatch.StartNew();
+
+    /// <summary>The recognition panel: a title strip that also drags the window, then one scrollable
+    /// column of rows (artwork, wrapped name, prices with their unit). Every measurement comes from
+    /// <see cref="PanelMetrics"/>, so hit testing can never drift from the drawing.</summary>
+    private void DrawRecognitionPanel(ImDrawListPtr draw, RecognitionPanelView panel)
+    {
+        var m = new PanelMetrics(panel.Scale);
+        var size = new Vector2(width, height);
+        var radius = m.Edge;
+        // The window is exactly the panel, so the polish has to live inside its edges: a soft shadow
+        // line, a two-tone body and a hairline border instead of one flat rectangle.
+        draw.AddRectFilled(Vector2.Zero, size, PanelColor.Of(0x121614, 0xfa), radius);
+        draw.AddRectFilled(new Vector2(1, 1), new Vector2(width - 1, m.TitleBottom), PanelColor.Of(0x1b211e), radius, ImDrawFlags.RoundCornersTop);
+        // A plain panel border, the same colour every other surface uses.
+        draw.AddRect(new Vector2(0.5f, 0.5f), new Vector2(width - 0.5f, height - 0.5f), PanelColor.Of(0x3b443e), radius, ImDrawFlags.None, 1);
+        draw.AddRectFilled(new Vector2(1, m.TitleBottom - 1), new Vector2(width - 1, m.TitleBottom), PanelColor.Of(0x2a302d));
+        var pad = m.Pad;
+        var titleCenter = m.Edge + m.TitleHeight / 2;
+        if (panel.Title.Texture != 0)
+            draw.AddImage(panel.Title.Texture, new Vector2(pad, titleCenter - panel.Title.Size.Y / 2), new Vector2(pad + panel.Title.Size.X, titleCenter + panel.Title.Size.Y / 2));
+        var (closeMin, closeMax) = m.CloseButton(width);
+        var center = (closeMin + closeMax) / 2;
+        var cross = 4.5f * panel.Scale;
+        draw.AddLine(center - new Vector2(cross, cross), center + new Vector2(cross, cross), PanelColor.Of(0xd4d8d5), 1.6f * panel.Scale);
+        draw.AddLine(center + new Vector2(-cross, cross), center + new Vector2(cross, -cross), PanelColor.Of(0xd4d8d5), 1.6f * panel.Scale);
+        var columns = m.Columns(width);
+        var (rowsTop, rowsHeight) = m.RowsArea(height);
+        // A run in progress, a failure or an empty result each take over the whole content area: the
+        // title strip stays what it is, and the reader sees the state where the list would be.
+        if (panel.Loading || panel.Message.Texture != 0)
+        {
+            if (rowsHeight > 0)
+            {
+                // The spinner and its line are one group, so the group is what sits in the middle of
+                // the content area rather than each part separately.
+                var spinner = 14 * panel.Scale;
+                var gap = panel.Loading && panel.Message.Texture != 0 ? 6 * panel.Scale : 0;
+                var groupHeight = (panel.Loading ? spinner + gap : 0) + panel.Message.Size.Y;
+                var top = rowsTop + (rowsHeight - groupHeight) / 2;
+                if (panel.Loading)
+                {
+                    DrawSpinner(draw, new Vector2(width / 2, top + spinner / 2), panel.SpinnerPhase, panel.Scale);
+                    top += spinner + gap;
+                }
+                if (panel.Message.Texture != 0)
+                {
+                    draw.AddImage(panel.Message.Texture, new Vector2(width / 2 - panel.Message.Size.X / 2, top), new Vector2(width / 2 + panel.Message.Size.X / 2, top + panel.Message.Size.Y));
+                }
+            }
+            return;
+        }
+        // The header names the columns once, so the rows stay pure data: no "flea" prefix, no icons
+        // standing in for words.
+        var headerTop = m.HeaderTop;
+        DrawPanelText(draw, panel.HeaderName, columns.Name, headerTop + m.HeaderHeight / 2);
+        DrawPanelText(draw, panel.HeaderTrader, columns.Trader + columns.TraderWidth / 2, headerTop + m.HeaderHeight / 2, centered: true);
+        DrawPanelText(draw, panel.HeaderFlea, columns.Flea + columns.FleaWidth / 2, headerTop + m.HeaderHeight / 2, centered: true);
+        draw.AddLine(new Vector2(pad, headerTop + m.HeaderHeight), new Vector2(width - pad, headerTop + m.HeaderHeight), PanelColor.Of(0x2a302d, 0xcc), 1);
+        if (rowsHeight > 0)
+        {
+            draw.PushClipRect(new Vector2(pad, rowsTop), new Vector2(width - pad, rowsTop + rowsHeight), true);
+            for (var index = 0; index < panel.Items.Count; index++)
+            {
+                var rowTop = rowsTop + index * m.RowHeight - panel.Scroll;
+                if (rowTop + m.RowHeight < rowsTop || rowTop > rowsTop + rowsHeight) continue;
+                var item = panel.Items[index];
+                var box = m.Thumb;
+                var boxTop = rowTop + (m.RowHeight - box) / 2;
+                // The artwork sits on its own plate so bright and dark icons both read on the panel.
+                draw.AddRectFilled(new Vector2(columns.Image, boxTop), new Vector2(columns.Image + box, boxTop + box), PanelColor.Of(0x0a0d0c, 0xb3), 4 * panel.Scale);
+                draw.AddRect(new Vector2(columns.Image, boxTop), new Vector2(columns.Image + box, boxTop + box), PanelColor.Of(0x303834, 0xaa), 4 * panel.Scale, ImDrawFlags.None, 1);
+                if (item.Image is { Texture: var texture, Size: var imageSize } && texture != 0)
+                {
+                    var scale = Math.Min((box - 8 * panel.Scale) / Math.Max(1, imageSize.X), (box - 8 * panel.Scale) / Math.Max(1, imageSize.Y));
+                    var half = imageSize * scale / 2;
+                    var imageCenter = new Vector2(columns.Image + box / 2, boxTop + box / 2);
+                    draw.AddImage(texture, imageCenter - half, imageCenter + half);
+                }
+                // The name wraps inside its column and stops after two lines, so one long item name
+                // cannot push the prices out of the row.
+                if (item.Name.Texture != 0)
+                {
+                    var nameTop = rowTop + (m.RowHeight - item.Name.Size.Y) / 2;
+                    draw.AddImage(item.Name.Texture, new Vector2(columns.Name, nameTop), new Vector2(columns.Name + item.Name.Size.X, nameTop + item.Name.Size.Y));
+                }
+                // Trader: one centred unit per row — portrait, then the price in a fixed slot — so the
+                // portraits form a column and the prices start at the same x.
+                var slot = panel.TraderSlot > 0 ? panel.TraderSlot : m.PriceSlot;
+                var unitLeft = m.TraderUnitLeft(columns.Trader, slot);
+                var priceLeft = unitLeft + m.Avatar + m.AvatarGap;
+                if (item.Trader.Texture != 0)
+                {
+                    DrawPanelText(draw, item.Trader, priceLeft, rowTop + m.RowHeight / 2);
+                    if (item.Avatar is { Texture: var avatar, Size: var avatarSize } && avatar != 0)
+                    {
+                        var avatarSize2 = new Vector2(m.Avatar);
+                        var avatarCenter = new Vector2(unitLeft + m.Avatar / 2, rowTop + m.RowHeight / 2);
+                        draw.AddImage(avatar, avatarCenter - avatarSize2 / 2, avatarCenter + avatarSize2 / 2);
+                    }
+                }
+                DrawPanelText(draw, item.Flea, columns.Flea + columns.FleaWidth / 2, rowTop + m.RowHeight / 2, centered: true);
+                if (item.Flea.Texture == 0 && item.Trader.Texture != 0)
+                {
+                    // Nothing on the flea leg: the dash still has to sit where the numbers would.
+                    draw.AddText(new Vector2(columns.Flea + columns.FleaWidth / 2 - 3, rowTop + m.RowHeight / 2 - 8), PanelColor.Of(0x6b746e), "-");
+                }
+                if (index < panel.Items.Count - 1)
+                    draw.AddLine(new Vector2(pad, rowTop + m.RowHeight), new Vector2(width - pad, rowTop + m.RowHeight), PanelColor.Of(0x2a302d, 0x55), 1);
+            }
+            draw.PopClipRect();
+            // A thumb for the scroll position whenever the rows do not all fit.
+            var content = Math.Max(rowsHeight, panel.ContentHeight);
+            if (content > rowsHeight + 1)
+            {
+                var trackX = m.ScrollbarLeft(width);
+                var thumb = Math.Max(24f * panel.Scale, rowsHeight * rowsHeight / content);
+                var offset = (rowsHeight - thumb) * Math.Clamp(panel.Scroll / (content - rowsHeight), 0, 1);
+                draw.AddRectFilled(new Vector2(trackX, rowsTop + offset), new Vector2(trackX + 3 * panel.Scale, rowsTop + offset + thumb), PanelColor.Of(0xc8a24a, 0x77), 2);
+            }
+        }
+    }
+
+    private static void DrawPanelText(ImDrawListPtr draw, RecognitionText text, float edge, float centerY, bool centered = false)
+    {
+        if (text.Texture == 0) return;
+        var x = centered ? edge - text.Size.X / 2 : edge;
+        draw.AddImage(text.Texture, new Vector2(x, centerY - text.Size.Y / 2), new Vector2(x + text.Size.X, centerY + text.Size.Y / 2));
+    }
+
+    private static void DrawSpinner(ImDrawListPtr draw, Vector2 center, float phase, float scale)
+    {
+        const int Segments = 8;
+        for (var index = 0; index < Segments; index++)
+        {
+            var angle = phase + index * MathF.Tau / Segments;
+            var alpha = (uint)(60 + 195 * index / (Segments - 1));
+            var inner = center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * (4 * scale);
+            var outer = center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * (7 * scale);
+            draw.AddLine(inner, outer, PanelColor.Of(0xc8a24a, alpha), 1.6f * scale);
+        }
     }
 
     private const float DashPeriod = 16, DashThickness = 4, DashOutline = 7;

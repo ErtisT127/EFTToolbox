@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import type { MapData, MapSummary, OverlaySettings } from '../../../../contracts/ts/ipc.gen';
 import { OverlaySettingsLimits, OverlayViewLimits } from '../../../../contracts/ts/ipc.gen';
 import { useOverlay } from '../../stores/overlayStore';
@@ -17,9 +17,11 @@ import { AppTooltip, HintTooltip } from '../../components/HintTooltip';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { ErrorState } from '../../components/ErrorState';
 import { formatCoordinate, resizeOverlay } from '../../lib/overlayScale';
+import { rangeFill } from '../../components/RangeSlider';
 import { Check, FileWarning, Link2, Unlink2 } from 'lucide-react';
 import '../../styles/settings.css';
 import { DataLoadError } from '../../lib/errors';
+import { RecognitionSettingsTab } from './RecognitionSettingsTab';
 
 // Declaration order matches the contract: the overlay reports a refused shortcut by the field name
 // and the backend validates duplicates across the whole set.
@@ -35,10 +37,14 @@ const hotkeyKeys = [
   'panDown',
   'panLeft',
   'panRight',
+  'recognition',
 ] as const;
 type HotkeyKey = (typeof hotkeyKeys)[number];
 
-export function SettingsPage() {
+type SettingsTab = 'map' | 'hotkeys' | 'gameMonitor' | 'recognition';
+const settingsTabs = ['map', 'hotkeys', 'gameMonitor', 'recognition'] as const;
+
+export function SettingsPage({ initialTab }: { initialTab?: SettingsTab }) {
   const { t } = useLocale();
   const store = useOverlay();
   const monitor = useGameMonitor();
@@ -50,7 +56,11 @@ export function SettingsPage() {
       : !monitor.settings && !monitor.loading
         ? monitor.error
         : '';
-  const [tab, setTab] = useState<'map' | 'hotkeys' | 'gameMonitor'>('map');
+  const [tab, setTab] = useState<SettingsTab>(initialTab ?? 'map');
+  // The recognition page jumps straight to its own tab.
+  useEffect(() => {
+    if (initialTab) setTab(initialTab);
+  }, [initialTab]);
   const [catalog, setCatalog] = useState<MapSummary[]>([]);
   const [map, setMap] = useState<MapData>();
   const [mapId, setMapId] = useState('');
@@ -209,7 +219,7 @@ export function SettingsPage() {
       ) : (
         <>
           <aside className="settings-tabs" role="tablist" aria-label={t('nav.settings')}>
-            {(['map', 'hotkeys', 'gameMonitor'] as const).map((key) => (
+            {settingsTabs.map((key) => (
               <button
                 key={key}
                 id={`settings-tab-${key}`}
@@ -219,13 +229,13 @@ export function SettingsPage() {
                 className={tab === key ? 'active' : ''}
                 onClick={() => setTab(key)}
                 onKeyDown={(e) => {
-                  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    const next =
-                      key === 'map' ? 'hotkeys' : key === 'hotkeys' ? 'gameMonitor' : 'map';
-                    setTab(next);
-                    document.getElementById(`settings-tab-${next}`)?.focus();
-                  }
+                  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+                  e.preventDefault();
+                  const step = e.key === 'ArrowDown' ? 1 : settingsTabs.length - 1;
+                  const next =
+                    settingsTabs[(settingsTabs.indexOf(key) + step) % settingsTabs.length];
+                  setTab(next);
+                  document.getElementById(`settings-tab-${next}`)?.focus();
                 }}
               >
                 {t(`settings.${key}`)}
@@ -255,8 +265,8 @@ export function SettingsPage() {
               />
             ) : tab === 'gameMonitor' ? (
               <>
+                {/* The page title already says what this group is, so the fieldset carries no legend. */}
                 <fieldset>
-                  <legend>{t('settings.gameMonitor')}</legend>
                   <div className="settings-field settings-path-field">
                     <label htmlFor="monitor-screenshot-directory">
                       {t('settings.screenshotDirectory')}
@@ -305,6 +315,8 @@ export function SettingsPage() {
                   </div>
                 </fieldset>
               </>
+            ) : tab === 'recognition' ? (
+              <RecognitionSettingsTab />
             ) : !value ? (
               <p>{t('common.loading')}</p>
             ) : tab === 'hotkeys' ? (
@@ -340,11 +352,17 @@ export function SettingsPage() {
                     <span className="settings-slider">
                       <input
                         id="settings-opacity"
+                        className="range-slider"
                         type="range"
                         min={OverlaySettingsLimits.opacity.min}
                         max={OverlaySettingsLimits.opacity.max}
                         step={OverlaySettingsLimits.opacity.step}
                         value={value.opacity ?? OverlaySettingsLimits.opacity.max}
+                        style={
+                          {
+                            '--fill': `${rangeFill(value.opacity ?? OverlaySettingsLimits.opacity.max, OverlaySettingsLimits.opacity.min, OverlaySettingsLimits.opacity.max)}%`,
+                          } as CSSProperties
+                        }
                         onChange={(e) => updateSoon({ opacity: Number(e.target.value) })}
                       />
                       <output htmlFor="settings-opacity">
@@ -488,10 +506,13 @@ export function SettingsPage() {
                   {check('followCenter')}
                   {check('followFloor')}
                   {check('followZoom')}
+                  {/* Everything below configures the zoom that the update applies; without the
+                      update rule above it decides nothing. */}
                   <label className="settings-check">
                     <input
                       type="checkbox"
                       checked={!value.perMapZoom}
+                      disabled={!value.followZoom}
                       onChange={(e) => update({ perMapZoom: !e.target.checked })}
                     />
                     {t('settings.perMapZoom')}
@@ -502,6 +523,7 @@ export function SettingsPage() {
                       <select
                         id="settings-map"
                         value={selectedMap}
+                        disabled={!value.followZoom}
                         onChange={(e) => setMapId(e.target.value)}
                       >
                         {catalog.map((m) => (
@@ -520,6 +542,7 @@ export function SettingsPage() {
                       value.perMapZoom ? (override?.zoom ?? value.targetZoom) : value.targetZoom
                     }
                     limit={OverlaySettingsLimits.targetZoom}
+                    disabled={!value.followZoom}
                     onChange={(zoom) =>
                       update(
                         value.perMapZoom
@@ -537,7 +560,7 @@ export function SettingsPage() {
                   per-map case lands on the map picked in the selector rather than on whichever map
                   the overlay happens to be showing. */}
                   <button
-                    disabled={!view?.connected}
+                    disabled={!view?.connected || !value.followZoom}
                     onClick={() => {
                       if (!view) return;
                       if (value.perMapZoom)

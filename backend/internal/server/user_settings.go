@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 
 	contracts "efttoolbox/contracts"
 )
@@ -18,7 +19,37 @@ func defaultUserSettings() contracts.UserSettings {
 		SchemaVersion: 1,
 		Overlay:       defaultOverlaySettings(),
 		GameMonitor:   defaultGameMonitorSettings(),
+		Recognition:   defaultRecognitionSettings(),
 	}
+}
+
+func normalizeRecognition(v *contracts.RecognitionSettings) bool {
+	if v.SchemaVersion != 1 || !slices.Contains([]int{3, 5, 10, 15}, v.AutoCloseSeconds) {
+		return false
+	}
+	v.OcrConfidence = clampLimit(v.OcrConfidence, contracts.RecognitionSettingsLimits.OcrConfidence)
+	v.NameSimilarity = clampLimit(v.NameSimilarity, contracts.RecognitionSettingsLimits.NameSimilarity)
+	v.TemplateSimilarity = clampLimit(v.TemplateSimilarity, contracts.RecognitionSettingsLimits.TemplateSimilarity)
+	v.CaptureWidth = int(clampLimit(float64(v.CaptureWidth), contracts.RecognitionSettingsLimits.CaptureWidth))
+	v.CaptureHeight = int(clampLimit(float64(v.CaptureHeight), contracts.RecognitionSettingsLimits.CaptureHeight))
+	// The capture region is always square, so a hand-edited pair never reaches the screen grab.
+	v.CaptureHeight = v.CaptureWidth
+	v.OcrUpscale = int(clampLimit(float64(v.OcrUpscale), contracts.RecognitionSettingsLimits.OcrUpscale))
+	v.OcrMinLength = int(clampLimit(float64(v.OcrMinLength), contracts.RecognitionSettingsLimits.OcrMinLength))
+	v.CandidateLimit = int(clampLimit(float64(v.CandidateLimit), contracts.RecognitionSettingsLimits.CandidateLimit))
+	v.TemplateMinScale = clampLimit(v.TemplateMinScale, contracts.RecognitionSettingsLimits.TemplateMinScale)
+	v.TemplateMaxScale = clampLimit(v.TemplateMaxScale, contracts.RecognitionSettingsLimits.TemplateMaxScale)
+	// A range that runs backwards would leave the icon check with nothing to try.
+	if v.TemplateMaxScale < v.TemplateMinScale {
+		v.TemplateMaxScale = v.TemplateMinScale
+	}
+	v.IconWindowRatio = clampLimit(v.IconWindowRatio, contracts.RecognitionSettingsLimits.IconWindowRatio)
+	v.WindowWidth = int(clampLimit(float64(v.WindowWidth), contracts.RecognitionSettingsLimits.WindowWidth))
+	v.WindowHeight = int(clampLimit(float64(v.WindowHeight), contracts.RecognitionSettingsLimits.WindowHeight))
+	v.WindowLeft = int(clampLimit(float64(v.WindowLeft), contracts.RecognitionSettingsLimits.WindowLeft))
+	v.WindowTop = int(clampLimit(float64(v.WindowTop), contracts.RecognitionSettingsLimits.WindowTop))
+	v.Opacity = int(clampLimit(float64(v.Opacity), contracts.RecognitionSettingsLimits.Opacity))
+	return true
 }
 
 func readUserSettings(root string) (contracts.UserSettings, error) {
@@ -45,7 +76,7 @@ func readUserSettings(root string) (contracts.UserSettings, error) {
 	if decoder.Decode(new(any)) != io.EOF {
 		return *value, errUserSettingsInvalid
 	}
-	if value.SchemaVersion != 1 || !validGameMonitorSettings(value.GameMonitor) {
+	if value.SchemaVersion != 1 || !validGameMonitorSettings(value.GameMonitor) || !normalizeRecognition(&value.Recognition) {
 		return *value, errUserSettingsInvalid
 	}
 	return *value, nil
@@ -59,11 +90,14 @@ func (h *overlayHub) userSettings() (contracts.UserSettings, error) {
 	if !h.normalize(&value.Overlay) {
 		return value, errUserSettingsInvalid
 	}
+	if !normalizeRecognition(&value.Recognition) {
+		return value, errUserSettingsInvalid
+	}
 	return value, nil
 }
 
 func (h *overlayHub) prepareUserSettings(value *contracts.UserSettings, checkMode bool) (*modeRepository, string) {
-	if value.SchemaVersion != 1 || !validGameMonitorSettings(value.GameMonitor) {
+	if value.SchemaVersion != 1 || !validGameMonitorSettings(value.GameMonitor) || !normalizeRecognition(&value.Recognition) {
 		return nil, "game_monitor_settings_invalid"
 	}
 	if !h.normalize(&value.Overlay) {
@@ -108,6 +142,7 @@ func (h *overlayHub) applyUserSettings(value contracts.UserSettings, operationID
 	}
 	if overlayChanged {
 		h.publish(contracts.ServerEvent{Type: "overlay_settings", OverlaySettings: &value.Overlay, OperationId: operationID})
+		h.publish(contracts.ServerEvent{Type: "recognition_settings", RecognitionSettings: &value.Recognition, OperationId: operationID})
 	}
 	if monitorChanged {
 		if oldMode != value.GameMonitor.Mode {

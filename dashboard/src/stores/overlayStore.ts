@@ -1,10 +1,13 @@
 import { useSyncExternalStore } from 'react';
+import i18n from '../i18n';
 import type {
   OverlaySettings,
   OverlayView,
   OverlayCommand,
   PlayerState,
   ServerEvent,
+  RecognitionResult,
+  RecognitionSettings,
 } from '../../../contracts/ts/ipc.gen';
 import {
   loadUserSettings,
@@ -16,10 +19,17 @@ import {
 } from './workspaceStore';
 import { gameMonitor } from './gameMonitorStore';
 import { multiplayer } from './multiplayerStore';
+import { notices } from './noticeStore';
 import { resources } from './resourceStore';
 
 class OverlayStore {
   settings?: OverlaySettings;
+  recognitionSettings?: RecognitionSettings;
+  recognitionResult?: RecognitionResult;
+  /** The run the backend says is in flight; both displays show their loading state from it. */
+  recognitionPending = false;
+  /** The import the items page is waiting for; empty when nothing is pending. */
+  recognitionRequestId = '';
   view?: OverlayView;
   players = new Map<string, PlayerState>();
   connected = false;
@@ -44,6 +54,69 @@ class OverlayStore {
     this.version++;
     this.listeners.forEach((f) => f());
   }
+  /** The items page starts an import; its id also tells this page's own result from a capture's. */
+  requestRecognition(requestId: string) {
+    this.recognitionRequestId = requestId;
+    this.changed();
+  }
+  /** Clearing is shared: the backend drops the result and the overlay closes its panel too. */
+  clearRecognition() {
+    this.recognitionRequestId = '';
+    this.changed();
+    // A DELETE answers with no body, so it goes through fetch rather than the JSON request helper.
+    void fetch('/api/recognition-result', { method: 'DELETE' })
+      .then((response) => {
+        if (!response.ok) throw new Error(String(response.status));
+      })
+      .catch((reason: unknown) =>
+        reportClientLog(
+          'recognition_clear_failed',
+          'Recognition result could not be cleared',
+          String(reason),
+        ),
+      );
+  }
+  /**
+   * The recognition rail and the settings tab write the same object; the optimistic update is
+   * rolled back when the backend refuses it, so neither surface can show a value that was rejected.
+   */
+  saveRecognitionSettings(changes: Partial<RecognitionSettings>) {
+    const previous = this.recognitionSettings;
+    if (!previous) return;
+    const next = { ...previous, ...changes };
+    this.recognitionSettings = next;
+    this.changed();
+    void request<RecognitionSettings>('/api/recognition-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(next),
+    }).catch((reason: unknown) => {
+      this.recognitionSettings = previous;
+      this.changed();
+      const message = i18n.t(reason instanceof Error ? reason.message : 'errors.request_failed');
+      notices.push(message);
+      reportClientLog('recognition_settings_save_failed', message, String(reason));
+    });
+  }
+  /**
+   * Announce a result where it arrives: the reader is often not on the recognition page, and an
+   * announcement made from a page would repeat every time that page is remounted. Every finished
+   * recognition says so — an import, a hotkey capture and a failure alike — while the log keeps the
+   * failure record.
+   */
+  private announceRecognition(result: RecognitionResult) {
+    if (result.error) {
+      const message = i18n.t('items.recognitionFailedNotice', { detail: result.error });
+      notices.push(message);
+      reportClientLog('recognition_failed', message, result.error);
+      return;
+    }
+    notices.push(
+      i18n.t('items.recognitionCompleteNotice', { total: result.rows.length }),
+      undefined,
+      'success',
+    );
+  }
   async load() {
     this.loading = true;
     this.changed();
@@ -55,6 +128,20 @@ class OverlayStore {
     } finally {
       this.loading = false;
       this.changed();
+    }
+    // The recognition rail is not fatal to the rest of the app, so it loads on its own and reports
+    // through the log rather than the page-level error state.
+    if (!this.recognitionSettings) {
+      try {
+        this.recognitionSettings = await request<RecognitionSettings>('/api/recognition-settings');
+        this.changed();
+      } catch (e) {
+        reportClientLog(
+          'recognition_settings_load_failed',
+          'Recognition settings could not be read',
+          String(e),
+        );
+      }
     }
   }
   /** Visibility belongs to the overlay, not to this copy: writing a stored `visible` back would
@@ -177,6 +264,21 @@ class OverlayStore {
           if (e.overlaySettings && !this.saving && this.saved === this.revision) {
             this.settings = e.overlaySettings;
             patchUserSettingsCache((current) => ({ ...current, overlay: e.overlaySettings! }));
+          }
+          if (e.recognitionSettings) this.recognitionSettings = e.recognitionSettings;
+          if (e.recognitionStart) {
+            this.recognitionPending = true;
+            this.recognitionResult = undefined;
+          }
+          if (e.type === 'recognition_cleared') {
+            this.recognitionPending = false;
+            this.recognitionResult = undefined;
+          }
+          if (e.recognitionResult) {
+            this.recognitionPending = false;
+            this.recognitionResult = e.recognitionResult;
+            // A snapshot is what a reload sees: restoring the last result must not announce it again.
+            if (e.type !== 'snapshot') this.announceRecognition(e.recognitionResult);
           }
           if (e.overlayView) this.view = e.overlayView;
           this.changed();

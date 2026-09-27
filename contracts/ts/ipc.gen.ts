@@ -36,7 +36,7 @@ export interface MobileInterfaces {
 }
 
 export interface ServerEvent {
-  type: "snapshot" | "heartbeat" | "map_changed" | "floor_changed" | "basemap_changed" | "center_changed" | "filters_changed" | "mode_applied" | "player_upsert" | "player_remove" | "annotation_upsert" | "annotation_remove" | "preferences_changed" | "annotations_changed" | "overlay_settings" | "overlay_command" | "overlay_status" | "resources_changed" | "game_monitor_changed" | "calibration_changed" | "multiplayer_changed" | "items_changed" | "session_end" | "session_expired";
+  type: "snapshot" | "heartbeat" | "map_changed" | "floor_changed" | "basemap_changed" | "center_changed" | "filters_changed" | "mode_applied" | "player_upsert" | "player_remove" | "annotation_upsert" | "annotation_remove" | "preferences_changed" | "annotations_changed" | "overlay_settings" | "overlay_command" | "overlay_status" | "resources_changed" | "game_monitor_changed" | "calibration_changed" | "multiplayer_changed" | "items_changed" | "recognition_settings" | "recognition_request" | "recognition_result" | "recognition_started" | "recognition_cleared" | "session_end" | "session_expired";
   sentAt: string;
   status: Status;
   mapId?: string;
@@ -55,11 +55,16 @@ export interface ServerEvent {
   overlayCommand?: OverlayCommand;
   gameMonitorStatus?: GameMonitorStatus;
   multiplayerStatus?: MultiplayerStatus;
+  recognitionSettings?: RecognitionSettings;
+  recognitionRequest?: RecognitionRequest;
+  recognitionResult?: RecognitionResult;
+  recognitionStart?: RecognitionStart;
 }
 
 export interface ItemsCatalogItem {
   id: string;
   name: string;
+  shortName: string;
   image: string;
   categories: Array<string>;
   traderPrice: number | null;
@@ -406,6 +411,80 @@ export interface TileLayer {
   bounds: Array<MapPoint>;
 }
 
+export interface RecognitionSettings {
+  schemaVersion: number;
+  ocrConfidence: number;
+  nameSimilarity: number;
+  templateSimilarity: number;
+  captureWidth: number;
+  captureHeight: number;
+  autoPush: boolean;
+  templateMatching: boolean;
+  templateStrict: boolean;
+  ocrUpscale: number;
+  ocrMinLength: number;
+  candidateLimit: number;
+  templateMinScale: number;
+  templateMaxScale: number;
+  iconWindowRatio: number;
+  autoClose: boolean;
+  autoCloseSeconds: number;
+  opacity: number;
+  windowWidth: number;
+  windowHeight: number;
+  windowLeft: number;
+  windowTop: number;
+  visible: boolean;
+}
+
+export interface RecognitionRequest {
+  requestId: string;
+  imageData: string;
+}
+
+export interface RecognitionRow {
+  id: string;
+  name: string;
+  image: string;
+  traderPrice: number | null;
+  trader: ItemsTrader | null;
+  fleaPrice: number | null;
+  ocrConfidence: number;
+  templateConfidence: number;
+}
+
+export interface RecognitionResult {
+  requestId: string;
+  imageData: string;
+  ocrText: Array<string>;
+  rows: Array<RecognitionRow>;
+  error: string;
+  completedAt: string;
+  rowsResolved: boolean;
+}
+
+export interface RecognitionStart {
+  requestId: string;
+}
+
+export interface RecognitionCandidateRequest {
+  texts: Array<string>;
+}
+
+export interface RecognitionCandidate {
+  id: string;
+  name: string;
+  shortName: string;
+  image: string;
+  traderPrice: number | null;
+  fleaPrice: number | null;
+  similarity: number;
+}
+
+export interface RecognitionCandidates {
+  candidates: Array<Array<RecognitionCandidate>>;
+}
+
 export interface OverlayHotkeys {
   toggleEdit: string;
   toggleVisible: string;
@@ -418,6 +497,7 @@ export interface OverlayHotkeys {
   panDown: string;
   panLeft: string;
   panRight: string;
+  recognition: string;
 }
 
 export interface MapZoomOverride {
@@ -451,6 +531,7 @@ export interface UserSettings {
   schemaVersion: number;
   overlay: OverlaySettings;
   gameMonitor: GameMonitorSettings;
+  recognition: RecognitionSettings;
 }
 
 export interface OverlayBootstrap {
@@ -664,6 +745,25 @@ export const CalibrationRegionLimits = {
 export const CalibrationDocumentLimits = {
   revision: { min: 0, max: Infinity, step: 0, precision: 0 },
   nextRegionNumber: { min: 1, max: Infinity, step: 0, precision: 0 },
+} as const;
+
+export const RecognitionSettingsLimits = {
+  ocrConfidence: { min: 0, max: 1, step: 0.01, precision: 2 },
+  nameSimilarity: { min: 0, max: 1, step: 0.01, precision: 2 },
+  templateSimilarity: { min: 0, max: 1, step: 0.01, precision: 2 },
+  captureWidth: { min: 320, max: 1280, step: 160, precision: 0 },
+  captureHeight: { min: 320, max: 1280, step: 160, precision: 0 },
+  ocrUpscale: { min: 1, max: 3, step: 1, precision: 0 },
+  ocrMinLength: { min: 2, max: 8, step: 1, precision: 0 },
+  candidateLimit: { min: 1, max: 10, step: 1, precision: 0 },
+  templateMinScale: { min: 0.4, max: 1.6, step: 0.1, precision: 1 },
+  templateMaxScale: { min: 0.8, max: 2.4, step: 0.1, precision: 1 },
+  iconWindowRatio: { min: 0.8, max: 2, step: 0.1, precision: 1 },
+  opacity: { min: 0, max: 100, step: 1, precision: 0 },
+  windowWidth: { min: 320, max: 900, step: 8, precision: 0 },
+  windowHeight: { min: 200, max: 640, step: 8, precision: 0 },
+  windowLeft: { min: -100000, max: 100000, step: 1, precision: 0 },
+  windowTop: { min: -100000, max: 100000, step: 1, precision: 0 },
 } as const;
 
 export const MapZoomOverrideLimits = {

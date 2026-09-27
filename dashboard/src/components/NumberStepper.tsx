@@ -7,6 +7,7 @@ export function NumberStepper({
   value,
   limit,
   unit,
+  disabled,
   deferInput = false,
   onChange,
   onBlur,
@@ -15,6 +16,8 @@ export function NumberStepper({
   value: number;
   limit: NumericLimit;
   unit?: string;
+  /** Set when a switch elsewhere in the group owns this value. */
+  disabled?: boolean;
   deferInput?: boolean;
   onChange: (value: number) => void;
   onBlur?: () => void;
@@ -51,7 +54,7 @@ export function NumberStepper({
           type="button"
           aria-label={`${label} -`}
           title={`${label} -`}
-          disabled={value <= limit.min}
+          disabled={disabled || value <= limit.min}
           onPointerDown={(e) => e.preventDefault()}
           onClick={() => step(-1)}
         >
@@ -65,6 +68,7 @@ export function NumberStepper({
           min={limit.min}
           max={limit.max}
           step={limit.step}
+          disabled={disabled}
           onFocus={(e) => {
             entry.current = value;
             setDraft(String(Number(value.toFixed(limit.precision))));
@@ -107,7 +111,7 @@ export function NumberStepper({
           type="button"
           aria-label={`${label} +`}
           title={`${label} +`}
-          disabled={value >= limit.max}
+          disabled={disabled || value >= limit.max}
           onPointerDown={(e) => e.preventDefault()}
           onClick={() => step(1)}
         >

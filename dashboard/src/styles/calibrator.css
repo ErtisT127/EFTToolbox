@@ -375,9 +375,9 @@
 .calibrator-field,
 .calibrator-detail fieldset {
   display: grid;
-  gap: var(--space-1);
+  gap: var(--space-2);
   min-width: 0;
-  margin: 0 0 var(--space-3);
+  margin: 0 0 var(--space-4);
   border: 0;
   padding: 0;
   color: var(--muted);
@@ -405,10 +405,6 @@
   grid-column: 1 / -1;
 }
 
-.field-error {
-  line-height: var(--space-4);
-}
-
 .calibrator-detail legend {
   grid-column: 1 / -1;
   margin-bottom: var(--space-1);
@@ -417,7 +413,9 @@
   font-size: var(--text-xs);
 }
 
-.calibrator-detail input {
+/* Text-like inputs only: a checkbox keeps the dashboard's own box, which the shared skin would
+   otherwise stretch to a full-width field. */
+.calibrator-detail input:not([type='checkbox']):not([type='radio']) {
   box-sizing: border-box;
   min-width: 0;
   width: 100%;
@@ -430,7 +428,7 @@
   transition: border-color var(--duration-fast) ease-out;
 }
 
-.calibrator-detail input:hover:not(:disabled) {
+.calibrator-detail input:not([type='checkbox']):not([type='radio']):hover:not(:disabled) {
   border-color: var(--border-hover);
 }
 
@@ -438,14 +436,12 @@
   opacity: 0.58;
 }
 
-.full-cover-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: 1 1 auto;
+/* The row is the shared `.check-row` — same box, colour and hover — but it sits at this panel's
+   13px label size instead of the layer panel's 16px. */
+.check-row.full-cover-toggle {
+  flex: 0 1 auto;
   min-width: 0;
   margin: 0;
-  color: var(--text);
   font-size: var(--text-sm);
 }
 
@@ -455,11 +451,14 @@
   opacity: 0.58;
 }
 
+/* A disabled row keeps the muted hover the shared row would otherwise brighten. */
+.full-cover-toggle.is-disabled:hover {
+  color: var(--muted);
+}
+
 .full-cover-toggle input {
   flex: 0 0 auto;
-  width: auto;
-  padding: 0;
-  accent-color: var(--warning);
+  margin: 0;
 }
 
 .full-cover-toggle.is-disabled input {
@@ -475,7 +474,7 @@
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
-  margin: 0 0 var(--space-3);
+  margin: 0 0 var(--space-4);
 }
 
 .readonly-value {
@@ -493,6 +492,8 @@
   color: var(--muted);
   text-align: right;
   font-family: var(--font-mono);
+  /* A `<small>` would otherwise be shrunk by the UA rule below the 12px floor. */
+  font-size: var(--text-xs);
 }
 
 .field-meta {
@@ -500,7 +501,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-2);
-  min-height: var(--space-4);
+  min-height: 0;
 }
 
 .field-meta > :first-child {
@@ -511,13 +512,18 @@
 }
 
 .field-error {
-  line-height: var(--space-4);
-  color: var(--danger);
+  /* Readable at the panel's own size rather than shrunk as a `<small>`, with room for a
+     second wrapped line. */
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  /* Plain `--danger` text only reaches 4.05:1 on this panel, so the message keeps the red
+     identity while clearing the 5:1 floor the rest of the dashboard holds. */
+  color: color-mix(in srgb, var(--danger) 70%, var(--text));
 }
 
 .priority-field {
   min-width: 0;
-  margin: 0 0 var(--space-3);
+  margin: 0 0 var(--space-4);
 }
 
 .priority-head {

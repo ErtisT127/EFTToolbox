@@ -14,6 +14,34 @@
         "resolved": "1.91.6.1",
         "contentHash": "Ph3j8pO6UM28PPJWP+5LEJSPVPkd8ivpVS8tRyY9b0IHn1HDIrMZ2o/FdiXaYW6YhNxMHmbevw6Jcfs+IDKi0Q=="
       },
+      "Newtonsoft.Json": {
+        "type": "Direct",
+        "requested": "[13.0.3, )",
+        "resolved": "13.0.3",
+        "contentHash": "HrC5BXdl00IP9zeV+0Z848QWPAoCr9P3bDEZguI+gkLcBKAOxix/tLEAAHC+UvDNPv4a2d18lOReHMOagPa+zQ=="
+      },
+      "OpenCvSharp4": {
+        "type": "Direct",
+        "requested": "[4.10.0.20241107, )",
+        "resolved": "4.10.0.20241107",
+        "contentHash": "FJcU9AohcZ9jSjrw++1+XzbjPEAbzZa7e2FNDQ7VfPU9IGTKMiAIOMSyiDj4IsnxzlObhk5TuIMzab2PLtvYhA=="
+      },
+      "OpenCvSharp4.runtime.win": {
+        "type": "Direct",
+        "requested": "[4.10.0.20241107, )",
+        "resolved": "4.10.0.20241107",
+        "contentHash": "mIZLE3J03MKuMQxqEE6Q/0s2HotnvDn4KbcvflR94EYdJwEg9zUOQYPz0MH0eYitHIzw90a9zfmk7mgMDBRhHA=="
+      },
+      "PaddleOCRSharp": {
+        "type": "Direct",
+        "requested": "[4.1.0, )",
+        "resolved": "4.1.0",
+        "contentHash": "uHE7MnPhQDYXjIJeq+Kk+KsV2Cle59JdWWy9ozdBnf/4eWHp+DarIkzFOCzs5M5lF5Fde8yXKbrahBlUTR/4Pg==",
+        "dependencies": {
+          "Newtonsoft.Json": "12.0.1",
+          "System.Drawing.Common": "6.0.0"
+        }
+      },
       "Svg.Skia": {
         "type": "Direct",
         "requested": "[3.5.0, )",
@@ -170,6 +198,12 @@
         "requested": "[1.91.6.1, )",
         "resolved": "1.91.6.1",
         "contentHash": "Ph3j8pO6UM28PPJWP+5LEJSPVPkd8ivpVS8tRyY9b0IHn1HDIrMZ2o/FdiXaYW6YhNxMHmbevw6Jcfs+IDKi0Q=="
+      },
+      "OpenCvSharp4.runtime.win": {
+        "type": "Direct",
+        "requested": "[4.10.0.20241107, )",
+        "resolved": "4.10.0.20241107",
+        "contentHash": "mIZLE3J03MKuMQxqEE6Q/0s2HotnvDn4KbcvflR94EYdJwEg9zUOQYPz0MH0eYitHIzw90a9zfmk7mgMDBRhHA=="
       },
       "Microsoft.Win32.SystemEvents": {
         "type": "Transitive",

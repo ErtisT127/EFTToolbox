@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using OpenCvSharp;
 using EFTToolbox.Contracts;
 using MapPoint = EFTToolbox.Contracts.MapPoint;
 
@@ -12,6 +13,8 @@ internal sealed class OverlayApplication : IDisposable
     private readonly nint hwnd;
     private readonly OverlayRenderer renderer = new();
     private readonly OverlayStateClient client;
+    private readonly RecognitionEngine recognition = new();
+    private readonly RecognitionWindow recognitionWindow;
     private readonly TileLayerRenderer tiles;
     private readonly MarkerLayer markers;
     private readonly MapScene scene = new();
@@ -19,6 +22,12 @@ internal sealed class OverlayApplication : IDisposable
     private readonly SemaphoreSlim svgWorker = new(1);
     private readonly SvgRasterizer rasterizer = new();
     private OverlaySettings settings = OverlaySettingsStore.Defaults;
+    private RecognitionSettings recognitionSettings = new() { SchemaVersion = 1, OcrConfidence = 0.65, NameSimilarity = 0.72, TemplateSimilarity = 0.7, CaptureWidth = 640, CaptureHeight = 640, AutoPush = true, AutoClose = true, AutoCloseSeconds = 5, Opacity = 100, WindowWidth = 760, WindowHeight = 180 };
+    // One run at a time: the hotkey supersedes whatever is in flight, and the superseded run stops
+    // producing anything the moment its token is cancelled.
+    private CancellationTokenSource? recognitionRun;
+    private string recognitionRequestId = "";
+    private readonly Dictionary<string, byte[]> recognitionIcons = [];
     private Preferences preferences = new();
     private OverlayBootstrap? bootstrap;
     private CancellationTokenSource loading = new();
@@ -47,7 +56,7 @@ internal sealed class OverlayApplication : IDisposable
     private int dragSaveQueued;
     // Registration ids are 1-based positions in this table; the same names are what the dashboard
     // shows next to a field when RegisterHotKey is refused.
-    private static readonly string[] HotkeyNames = ["toggleEdit", "toggleVisible", "zoomIn", "zoomOut", "floorUp", "floorDown", "toggleBasemap", "panUp", "panDown", "panLeft", "panRight"];
+    private static readonly string[] HotkeyNames = ["toggleEdit", "toggleVisible", "zoomIn", "zoomOut", "floorUp", "floorDown", "toggleBasemap", "panUp", "panDown", "panLeft", "panRight", "recognition"];
     private const long SuspendLimit = 120_000;
     private const double TapZoom = 0.32, zoomPerSecond = 1.2;
     private readonly uint[] hotkeyVirtualKey = new uint[HotkeyNames.Length + 1];
@@ -62,10 +71,13 @@ internal sealed class OverlayApplication : IDisposable
     private bool hotkeysSuspended;
     private long hotkeysSuspendedUntil;
     internal bool Editing => editing;
-    internal OverlayApplication(nint hwnd, Uri backend)
+    private readonly nint panelHwnd;
+
+    internal OverlayApplication(nint hwnd, nint panelHwnd, Uri backend)
     {
-        this.hwnd = hwnd; client = new(backend, Wake); tiles = new(ResourceReady, client); markers = new(ResourceReady);
-        renderer.Initialize(hwnd); ApplyWindow(); client.Start();
+        this.hwnd = hwnd; this.panelHwnd = panelHwnd; client = new(backend, Wake); tiles = new(ResourceReady, client); markers = new(ResourceReady);
+        recognitionWindow = new RecognitionWindow(panelHwnd, (url, token) => client.AssetAsync(url, token), value => client.SaveRecognitionAsync(value), Wake);
+        renderer.Initialize(hwnd); recognitionWindow.Initialize(null); ApplyWindow(); client.Start();
     }
     private void ResourceReady() { Interlocked.Exchange(ref resourceDirty, 1); Wake(); }
     private async Task SaveDragSettings()
@@ -156,7 +168,7 @@ internal sealed class OverlayApplication : IDisposable
         for (int id = 1; id <= HotkeyNames.Length; id++) Native.UnregisterHotKey(hwnd, id);
         interactions.Clear();
         hotkeyCount = 0; var failed = new List<string>();
-        var values = new[] { settings.Hotkeys.ToggleEdit, settings.Hotkeys.ToggleVisible, settings.Hotkeys.ZoomIn, settings.Hotkeys.ZoomOut, settings.Hotkeys.FloorUp, settings.Hotkeys.FloorDown, settings.Hotkeys.ToggleBasemap, settings.Hotkeys.PanUp, settings.Hotkeys.PanDown, settings.Hotkeys.PanLeft, settings.Hotkeys.PanRight };
+        var values = new[] { settings.Hotkeys.ToggleEdit, settings.Hotkeys.ToggleVisible, settings.Hotkeys.ZoomIn, settings.Hotkeys.ZoomOut, settings.Hotkeys.FloorUp, settings.Hotkeys.FloorDown, settings.Hotkeys.ToggleBasemap, settings.Hotkeys.PanUp, settings.Hotkeys.PanDown, settings.Hotkeys.PanLeft, settings.Hotkeys.PanRight, settings.Hotkeys.Recognition };
         hotkeysActive = values.Any(value => !string.IsNullOrWhiteSpace(value));
         if (!hotkeysActive) return;
         for (int index = 0; index < values.Length; index++)
@@ -207,8 +219,153 @@ internal sealed class OverlayApplication : IDisposable
             case 5: ShiftFloor(1); break;
             case 6: ShiftFloor(-1); break;
             case 7: ToggleBasemap(); break;
+            case 12: CaptureRecognition(); break;
         }
         Begin("hotkey");
+    }
+    private void CaptureRecognition()
+    {
+        if (!Native.GetCursorPos(out var point)) return;
+        var width = recognitionSettings.CaptureWidth; var height = recognitionSettings.CaptureHeight;
+        // The cursor can sit on a screen edge, where centring the region would reach outside the
+        // desktop: slide it back inside the monitor under the cursor instead of grabbing black.
+        var probe = new Native.Rect { Left = point.X, Top = point.Y, Right = point.X + 1, Bottom = point.Y + 1 };
+        var info = new Native.MonitorInfo { Size = (uint)Marshal.SizeOf<Native.MonitorInfo>() };
+        Native.Check(Native.GetMonitorInfo(Native.MonitorFromRect(ref probe, 2), ref info));
+        var left = Math.Clamp(point.X - width / 2, info.Monitor.Left, Math.Max(info.Monitor.Left, info.Monitor.Right - width));
+        var top = Math.Clamp(point.Y - height / 2, info.Monitor.Top, Math.Max(info.Monitor.Top, info.Monitor.Bottom - height));
+        OverlayDiagnostics.Log("info", "recognition_capture", $"Captured {width}x{height} at {left},{top}");
+        // Pressing the hotkey again always starts a new run: the previous pipeline is cancelled and
+        // the screen is grabbed again right away, so the newest press is the one that counts.
+        var run = StartRecognition(Guid.NewGuid().ToString("N"), announce: true);
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                using var bitmap = new System.Drawing.Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+                using (var graphics = System.Drawing.Graphics.FromImage(bitmap)) graphics.CopyFromScreen(left, top, 0, 0, bitmap.Size);
+                using var stream = new MemoryStream(); bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
+                var image = "data:image/png;base64," + Convert.ToBase64String(stream.ToArray());
+                RunRecognition(run.RequestId, image, run.Token).GetAwaiter().GetResult();
+            }
+            catch (Exception error) { FailRecognition(run, error); }
+        });
+    }
+
+    /// <summary>Every run begins here: the previous one is cancelled, the last result is cleared on
+    /// both displays and the window comes up in its loading state.</summary>
+    private RecognitionRun StartRecognition(string requestId, bool announce)
+    {
+        recognitionRun?.Cancel();
+        var cancellation = new CancellationTokenSource();
+        recognitionRun = cancellation;
+        recognitionRequestId = requestId;
+        var run = new RecognitionRun(requestId, cancellation.Token);
+        recognitionWindow.ApplySettings(recognitionSettings);
+        // The backend's "started" event already raised the window for an import; this only covers the
+        // capture path, which the backend hears about afterwards.
+        if (!recognitionWindow.Loading) recognitionWindow.ShowLoading();
+        if (announce) _ = client.PostRecognitionStartedAsync(requestId);
+        return run;
+    }
+
+    /// <summary>The request a run works on, plus the token that supersedes it.</summary>
+    private readonly record struct RecognitionRun(string RequestId, CancellationToken Token);
+
+    private async Task RunRecognition(string requestId, string imageData, CancellationToken token)
+    {
+        var comma = imageData.IndexOf(',');
+        var bytes = Convert.FromBase64String(comma >= 0 ? imageData[(comma + 1)..] : imageData);
+        var blocks = recognition.Scan(bytes, recognitionSettings, token, out var image, out var error);
+        using (image)
+        {
+            if (token.IsCancellationRequested) return;
+            var (rows, resolved) = await VerifyRecognitionAsync(image, blocks, error, token);
+            if (token.IsCancellationRequested) return;
+            await client.PostRecognitionResultAsync(new RecognitionResult
+            {
+                RequestId = requestId,
+                ImageData = imageData,
+                OcrText = [.. blocks.Select(block => block.Text)],
+                Rows = rows,
+                Error = error,
+                // Only a run that checked every text may tell the backend to keep its hands off them.
+                RowsResolved = resolved,
+            });
+        }
+    }
+
+    /// <summary>
+    /// The icon check: the backend says which items each text could be, the artwork they name is
+    /// correlated against the cell above the label, and the best candidate wins. Loose mode keeps the
+    /// name result when the artwork cannot be found at all; strict mode drops the row instead.
+    /// </summary>
+    private async Task<(RecognitionRow[] Rows, bool Resolved)> VerifyRecognitionAsync(Mat? image, IReadOnlyList<OcrBlock> blocks, string error, CancellationToken token)
+    {
+        if (image is null || error.Length > 0 || blocks.Count == 0) return ([], false);
+        if (!recognitionSettings.TemplateMatching)
+        {
+            // Without the icon check the rows are the backend's business: it still matches the text.
+            OverlayDiagnostics.Log("info", "recognition_template_skipped", "Template matching is off");
+            return ([], false);
+        }
+        var candidates = await client.CandidatesAsync([.. blocks.Select(block => block.Text)], token);
+        if (candidates is null || token.IsCancellationRequested) return ([], false);
+        var strict = recognitionSettings.TemplateStrict;
+        var threshold = recognitionSettings.TemplateSimilarity;
+        var seen = new HashSet<string>();
+        var rows = new List<RecognitionRow>();
+        for (var index = 0; index < blocks.Count && index < candidates.Candidates.Length; index++)
+        {
+            if (token.IsCancellationRequested) break;
+            var shortlist = candidates.Candidates[index];
+            if (shortlist.Length == 0) continue;
+            var bestScore = 0.0;
+            RecognitionCandidate? best = null;
+            foreach (var candidate in shortlist)
+            {
+                if (token.IsCancellationRequested) break;
+                var artwork = await IconBytesAsync(candidate.Image, token);
+                if (artwork is null) continue;
+                var score = recognition.MatchIcon(image, blocks[index], artwork, recognitionSettings, token);
+                if (score > bestScore) { best = candidate; bestScore = score; }
+                if (bestScore >= 0.995) break;
+            }
+            var chosen = bestScore >= threshold && best is not null ? best : strict ? null : shortlist[0];
+            if (chosen is null || !seen.Add(chosen.Id)) continue;
+            rows.Add(new RecognitionRow
+            {
+                Id = chosen.Id, Name = chosen.Name, Image = chosen.Image, TraderPrice = chosen.TraderPrice, FleaPrice = chosen.FleaPrice,
+                OcrConfidence = blocks[index].Score, TemplateConfidence = bestScore,
+            });
+        }
+        return ([.. rows], true);
+    }
+
+    private async Task<byte[]?> IconBytesAsync(string url, CancellationToken token)
+    {
+        if (url.Length == 0) return null;
+        lock (recognitionIcons)
+        {
+            if (recognitionIcons.TryGetValue(url, out var cached)) return cached;
+        }
+        var bytes = await client.AssetAsync(url, token);
+        if (bytes is null) return null;
+        lock (recognitionIcons)
+        {
+            if (recognitionIcons.Count > 512) recognitionIcons.Clear();
+            recognitionIcons[url] = bytes;
+        }
+        return bytes;
+    }
+
+    private void FailRecognition(RecognitionRun run, Exception error)
+    {
+        if (run.Token.IsCancellationRequested) return;
+        // The dashboard owns the notification pipeline, so the failure travels back as a result
+        // rather than only reaching the log file.
+        OverlayDiagnostics.Log("warn", "recognition_failed", error.Message);
+        _ = client.PostRecognitionResultAsync(new RecognitionResult { RequestId = run.RequestId, Error = error.Message });
     }
     // Floor and basemap both re-rasterize the whole map, so they never run on the per-frame path.
     private bool ReloadCooldown()
@@ -425,6 +582,28 @@ internal sealed class OverlayApplication : IDisposable
         if (replacesResources) operation = null;
         Begin(e.Type, e.OperationId);
         if (e.OverlaySettings is { } s) ApplySettings(s);
+        if (e.RecognitionSettings is { } recognition)
+        {
+            recognitionSettings = recognition;
+            recognitionWindow.ApplySettings(recognition);
+        }
+        // A snapshot is what a late client sees; showing the panel from it would pop an old result
+        // back up on every reconnect, so only live events move the window.
+        var snapshot = e.Type == "snapshot";
+        if (!snapshot && e.Type == "recognition_started") recognitionWindow.ShowLoading();
+        if (!snapshot && e.RecognitionResult is { } completed) recognitionWindow.ShowResult(completed);
+        if (!snapshot && e.Type == "recognition_cleared") recognitionWindow.Clear();
+        if (e.RecognitionRequest is { } request)
+        {
+            OverlayDiagnostics.Log("info", "recognition_request", "Recognizing an image imported in the dashboard");
+            // The dashboard started this run through the backend, which already announced it.
+            var run = StartRecognition(request.RequestId, announce: false);
+            _ = Task.Run(async () =>
+            {
+                try { await RunRecognition(request.RequestId, request.ImageData, run.Token); }
+                catch (Exception error) { FailRecognition(run, error); }
+            });
+        }
         if (e.Preferences is { } p) Select(p);
         if (e.Type == "snapshot")
         {
@@ -462,6 +641,7 @@ internal sealed class OverlayApplication : IDisposable
         {
             var previous = bootstrap;
             bootstrap = b; markers.SetAssets(b.AssetDirectory, b.StickersFile); renderer.SetAssetDirectory(b.AssetDirectory); renderer.Images.Clear(); renderer.Texts.Clear();
+            recognitionWindow.SetAssets(b.AssetDirectory);
             dirty = true;
             // Tells the tile layer which tiles are already on disk; it asks the backend for the rest.
             _ = Task.Run(() => { try { tiles.SetManifest(b.TileManifestFile); } catch (Exception e) { OverlayDiagnostics.Log("warn", "tile_manifest_failed", e.Message); } Wake(); });
@@ -470,6 +650,7 @@ internal sealed class OverlayApplication : IDisposable
         while (client.TryRead(out var e)) if (e is not null) Event(e);
         while (completions.TryDequeue(out var complete)) { complete(); dirty = true; }
         var now = Environment.TickCount64;
+        recognitionWindow.Tick(now);
         if (hotkeysSuspended && now - hotkeysSuspendedUntil >= 0) SuspendHotkeys(false);
         // A held zoom/pan shortcut keeps the loop at frame rate until the key comes back up.
         AdvanceInteraction(now);
@@ -528,11 +709,14 @@ internal sealed class OverlayApplication : IDisposable
         }
     }
     private OverlayView? lastView;
-    internal uint WaitMilliseconds => settings.Visible && (dirty || interactions.Count != 0)
-        ? (uint)Math.Clamp(nextFrame - Environment.TickCount64, 0, 17)
-        : lastFiles != 0 || svgQualityDue != 0 ? 16u : 250u;
-    internal nint? Message(uint message, nuint wParam, nint lParam)
+    internal uint WaitMilliseconds => recognitionWindow.Visible
+        ? 16u
+        : settings.Visible && (dirty || interactions.Count != 0)
+            ? (uint)Math.Clamp(nextFrame - Environment.TickCount64, 0, 17)
+            : lastFiles != 0 || svgQualityDue != 0 ? 16u : 250u;
+    internal nint? Message(nint target, uint message, nuint wParam, nint lParam)
     {
+        if (target == panelHwnd) return recognitionWindow.Message(message, wParam, lParam);
         if (message == 0x8001) return 0;
         if (message is Native.WmDpiChanged or Native.WmDisplayChange)
         {
@@ -616,8 +800,9 @@ internal sealed class OverlayApplication : IDisposable
     public void Dispose()
     {
         if (disposed) return; disposed = true; loading.Cancel(); for (int id = 1; id <= HotkeyNames.Length; id++) Native.UnregisterHotKey(hwnd, id);
+        recognitionRun?.Cancel();
         client.Dispose(); tiles.Dispose(); markers.Dispose();
         if (svgWorker.Wait(1000)) { rasterizer.Dispose(); svgWorker.Release(); }
-        renderer.Dispose(); OverlayDiagnostics.Shutdown();
+        renderer.Dispose(); recognitionWindow.Dispose(); recognition.Dispose(); OverlayDiagnostics.Shutdown();
     }
 }

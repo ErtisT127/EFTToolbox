@@ -9,7 +9,8 @@ import {
   PanelLeftOpen,
   Trash2,
   X,
-  Layers,
+  Satellite,
+  Shapes,
   TriangleAlert,
   Maximize,
   Minimize,
@@ -898,7 +899,11 @@ export function CalibratorPage() {
                       void toggleBasemapForMap(map.id);
                     }}
                   >
-                    <Layers size={16} aria-hidden="true" />
+                    {mapBasemap === 'tiles' ? (
+                      <Satellite size={16} aria-hidden="true" />
+                    ) : (
+                      <Shapes size={16} aria-hidden="true" />
+                    )}
                   </button>
                   {expandedMaps(map.id) && data && (
                     <div className="tree-map-children">
@@ -1122,7 +1127,11 @@ export function CalibratorPage() {
             disabled={!hasBasemapToggle}
             onClick={toggleBasemap}
           >
-            <Layers size={20} />
+            {basemap === 'tiles' ? (
+              <Satellite size={20} aria-hidden="true" />
+            ) : (
+              <Shapes size={20} aria-hidden="true" />
+            )}
           </button>
           <button
             aria-label={isFullscreen ? t('map.view.exitFullscreen') : t('map.view.fullscreen')}
@@ -1268,7 +1277,7 @@ export function CalibratorPage() {
             </fieldset>
             <div className="full-cover-tooltip">
               <label
-                className={`full-cover-toggle${
+                className={`check-row full-cover-toggle${
                   !draft.coversEntireMap &&
                   regions.some((region) => region.id !== draft.id && region.coversEntireMap)
                     ? ' is-disabled'
