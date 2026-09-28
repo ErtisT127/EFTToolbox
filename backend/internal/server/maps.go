@@ -93,12 +93,17 @@ func newModeRepository(root, mode string) (*modeRepository, error) {
 	}
 	repo := &modeRepository{mode: mode, root: modeRoot}
 	validMaps := 0
+	seen := map[string]bool{}
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+		if entry.IsDir() {
 			continue
 		}
-		id := strings.TrimSuffix(entry.Name(), ".json")
-		if _, err := (&mapStore{}).loadFromRepository(id, repo); err != nil {
+		id, ok := mapIDFromFile(entry.Name())
+		if !ok || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if _, err := (&mapStore{}).loadFromRepository(id, repo, "zh"); err != nil {
 			return nil, fmt.Errorf("mode %q map %q invalid: %w", mode, id, err)
 		}
 		validMaps++
@@ -109,15 +114,48 @@ func newModeRepository(root, mode string) (*modeRepository, error) {
 	return repo, nil
 }
 
-func (s *mapStore) loadFromRepository(id string, repo *modeRepository) (contracts.MapData, error) {
-	var data contracts.MapData
+// mapLang maps the API locale query onto the generated per-language map file suffix
+// ({id}_zh.json / {id}_en.json), the same split the items catalog uses.
+func mapLang(locale string) string {
+	if locale == "en-US" {
+		return "en"
+	}
+	return "zh"
+}
+
+// mapIDFromFile extracts the map id from a generated per-language file name.
+func mapIDFromFile(name string) (string, bool) {
+	base := strings.TrimSuffix(name, ".json")
+	if idx := strings.LastIndexByte(base, '_'); idx > 0 {
+		switch base[idx+1:] {
+		case "zh", "en":
+			return base[:idx], true
+		}
+	}
+	return "", false
+}
+
+func (s *mapStore) loadFromRepository(id string, repo *modeRepository, lang string) (contracts.MapData, error) {
 	if !safeID.MatchString(id) {
-		return data, os.ErrNotExist
+		return contracts.MapData{}, os.ErrNotExist
 	}
 	if repo == nil {
-		return data, errors.New("mode repository unavailable")
+		return contracts.MapData{}, errors.New("mode repository unavailable")
 	}
-	if err := readJSON(filepath.Join(repo.root, "maps", id+".json"), &data); err != nil {
+	if lang == "zh" {
+		return readMapData(filepath.Join(repo.root, "maps", id+"_zh.json"), id)
+	}
+	// The English twin may be missing (data not yet regenerated) or broken; either way the
+	// Chinese file is the last resort, so a language switch can never blank the map page.
+	if value, err := readMapData(filepath.Join(repo.root, "maps", id+"_en.json"), id); err == nil {
+		return value, nil
+	}
+	return readMapData(filepath.Join(repo.root, "maps", id+"_zh.json"), id)
+}
+
+func readMapData(name, id string) (contracts.MapData, error) {
+	var data contracts.MapData
+	if err := readJSON(name, &data); err != nil {
 		return data, err
 	}
 	if data.SchemaVersion != 1 || data.Id != id || len(data.Floors) == 0 || len(data.Projection.ViewBox) != 4 || len(data.Projection.Bounds) != 2 {
@@ -131,7 +169,7 @@ func (s *mapStore) loadFromMode(id, mode string) (contracts.MapData, error) {
 	if err != nil {
 		return contracts.MapData{}, err
 	}
-	return s.loadFromRepository(id, repo)
+	return s.loadFromRepository(id, repo, "zh")
 }
 
 func readJSON(name string, value any) error {
@@ -142,8 +180,15 @@ func readJSON(name string, value any) error {
 	return json.Unmarshal(data, value)
 }
 
+// load reads the Chinese map data: the geometry and existence checks never need a locale, and the
+// user-facing handlers use loadLocale instead.
 func (s *mapStore) load(id string) (contracts.MapData, error) {
-	return s.loadFromRepository(id, s.repository())
+	return s.loadFromRepository(id, s.repository(), "zh")
+}
+
+// loadLocale reads the map data in the requested interface language.
+func (s *mapStore) loadLocale(id, locale string) (contracts.MapData, error) {
+	return s.loadFromRepository(id, s.repository(), mapLang(locale))
 }
 
 func (s *mapStore) activeUpstream() string {
@@ -499,21 +544,29 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		cachedJSONResponse(w, r, data)
 	})
 	mux.HandleFunc("GET /api/maps", func(w http.ResponseWriter, r *http.Request) {
+		lang := mapLang(r.URL.Query().Get("locale"))
 		files, err := os.ReadDir(filepath.Join(s.activeUpstream(), "maps"))
 		if err != nil {
 			dataError(w, err)
 			return
 		}
 		summaries := []contracts.MapSummary{}
+		seen := map[string]bool{}
 		// The catalog supplies data-defined ordering; newly added map files are discovered too.
 		var order []contracts.MapSummary
-		_ = readJSON(filepath.Join(s.activeUpstream(), "catalog.json"), &order)
+		catalogFile := filepath.Join(s.activeUpstream(), "catalog_"+lang+".json")
+		if _, err := os.Stat(catalogFile); err != nil {
+			catalogFile = filepath.Join(s.activeUpstream(), "catalog_zh.json")
+		}
+		_ = readJSON(catalogFile, &order)
 		for _, file := range files {
-			if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
+			id, ok := mapIDFromFile(file.Name())
+			// Every map has one file per language; the id decides, so the pair yields one summary.
+			if file.IsDir() || !ok || seen[id] {
 				continue
 			}
-			id := strings.TrimSuffix(file.Name(), ".json")
-			m, err := s.load(id)
+			seen[id] = true
+			m, err := s.loadFromRepository(id, s.repository(), lang)
 			if err != nil {
 				log.Printf("skip map %s: %v", id, err)
 				continue
@@ -532,7 +585,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		cachedJSONResponse(w, r, summaries)
 	})
 	mux.HandleFunc("GET /api/maps/{id}", func(w http.ResponseWriter, r *http.Request) {
-		m, err := s.load(r.PathValue("id"))
+		m, err := s.loadLocale(r.PathValue("id"), r.URL.Query().Get("locale"))
 		if err != nil {
 			dataError(w, err)
 			return

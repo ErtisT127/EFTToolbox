@@ -25,7 +25,12 @@ import { notices } from '../stores/noticeStore';
 import { reportThrottledFailure } from '../stores/workspaceStore';
 import { AppPopover } from './AppPopover';
 import { MemberList, memberRows, type MemberRow } from './MemberList';
-import { useLocale } from '../hooks/useLocale';
+import { useLocale, type LocaleKey } from '../hooks/useLocale';
+import i18n from '../i18n';
+
+// Backend multiplayer error codes → multiplayer.errors.* copy; the {{port}} placeholder is
+// inferred over this key set.
+type MultiplayerErrorKey = Extract<LocaleKey, `multiplayer.errors.${string}`>;
 
 type View = 'root' | 'create' | 'join' | 'joinStun' | 'stun' | 'info' | 'confirm' | 'kickConfirm';
 type Probe = { state: 'probing' } | { state: 'done'; latencyMs?: number };
@@ -81,10 +86,16 @@ export function MultiplayerControl() {
     void multiplayer.initialize();
   }, []);
 
-  // Seed the name input once the identity loads; afterwards the user's typing wins.
+  // Seed the name input once the identity loads; afterwards the user's typing wins. The backend
+  // fills an unnamed profile with its own Chinese default, so the name equal to that default counts
+  // as unset and is seeded in the interface language instead.
   useEffect(() => {
-    if (mp.selfName && !name) setName(mp.selfName);
-  }, [mp.selfName, name]);
+    if (name) return;
+    const id = mp.selfId.slice(0, 4);
+    const backendDefault = i18n.t('multiplayer.defaultPlayerName', { id, lng: 'zh-CN' });
+    if (mp.selfName && mp.selfName !== backendDefault) setName(mp.selfName);
+    else if (id) setName(t('multiplayer.defaultPlayerName', { id }));
+  }, [mp.selfName, mp.selfId, name, t]);
 
   useEffect(() => {
     if (!open) return;
@@ -153,7 +164,11 @@ export function MultiplayerControl() {
     const detail = failure instanceof MultiplayerError ? failure.detail : '';
     if (view === 'root' || view === 'info' || view === 'confirm' || view === 'kickConfirm') {
       // No form to show an inline error on; the shared notice pipeline carries it.
-      notices.push(t(`multiplayer.errors.${code}`, { port: detail }), undefined, 'error');
+      notices.push(
+        t(`multiplayer.errors.${code}` as MultiplayerErrorKey, { port: detail }),
+        undefined,
+        'error',
+      );
       return;
     }
     setError({ code, detail });
@@ -545,7 +560,9 @@ export function MultiplayerControl() {
             ) : null}
             {error && view !== 'root' && view !== 'info' && view !== 'confirm' && (
               <p className="mp-error" role="alert">
-                {t(`multiplayer.errors.${error.code}`, { port: error.detail })}
+                {t(`multiplayer.errors.${error.code}` as MultiplayerErrorKey, {
+                  port: error.detail,
+                })}
               </p>
             )}
           </section>
@@ -848,6 +865,22 @@ function InfoPanel({
         : t('multiplayer.lanMode')
       : field.value;
 
+  // The clipboard copy rebuilds the share text with the labels of the current language; the wire
+  // format stays positional, so text copied in either language reads natively and copies over the
+  // same fields. A share text the parser could not read falls back to the backend's original.
+  const localizedShareText = () => {
+    if (!status.shareText || !fields.length) return status.shareText || '';
+    const value = (kind: InviteField['kind']) =>
+      fields.find((field) => field.kind === kind)?.value ?? '';
+    return [
+      t('multiplayer.shareHeader'),
+      `${t('multiplayer.invite.mode')}: ${value('mode') === 'STUN' ? t('multiplayer.stunTitle') : t('multiplayer.lanMode')}`,
+      `${t('multiplayer.invite.host')}: ${value('host')}`,
+      ...(value('stun') ? [`${t('multiplayer.invite.stun')}: ${value('stun')}`] : []),
+      `${t('multiplayer.invite.password')}: ${value('password')}`,
+    ].join('\n');
+  };
+
   const rows = memberRows(status);
   return (
     <>
@@ -859,7 +892,7 @@ function InfoPanel({
               type="button"
               className="mp-copy-inline mp-copy-all"
               disabled={!status.shareText || copiedKey === 'all'}
-              onClick={() => void copyText('all', status.shareText || '')}
+              onClick={() => void copyText('all', localizedShareText())}
             >
               {copiedKey === 'all' ? <Check size={13} /> : <Copy size={13} />}
               {t('multiplayer.copyAll')}

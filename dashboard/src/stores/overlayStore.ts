@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import i18n from '../i18n';
+import type { LocaleKey } from '../hooks/useLocale';
 import type {
   OverlaySettings,
   OverlayView,
@@ -28,6 +29,11 @@ class OverlayStore {
   recognitionResult?: RecognitionResult;
   /** The run the backend says is in flight; both displays show their loading state from it. */
   recognitionPending = false;
+  private activeRecognitionId = '';
+  private recognitionRevision = 0;
+  private recognitionSaved = 0;
+  private recognitionSaving = false;
+  private persistedRecognitionSettings?: RecognitionSettings;
   /** The import the items page is waiting for; empty when nothing is pending. */
   recognitionRequestId = '';
   view?: OverlayView;
@@ -60,11 +66,13 @@ class OverlayStore {
     this.changed();
   }
   /** Clearing is shared: the backend drops the result and the overlay closes its panel too. */
-  clearRecognition() {
-    this.recognitionRequestId = '';
+  clearRecognition(requestId?: string) {
+    const expected = requestId || this.recognitionRequestId || this.activeRecognitionId;
+    if (!requestId || requestId === this.recognitionRequestId) this.recognitionRequestId = '';
     this.changed();
     // A DELETE answers with no body, so it goes through fetch rather than the JSON request helper.
-    void fetch('/api/recognition-result', { method: 'DELETE' })
+    const query = expected ? `?requestId=${encodeURIComponent(expected)}` : '';
+    void fetch(`/api/recognition-result${query}`, { method: 'DELETE' })
       .then((response) => {
         if (!response.ok) throw new Error(String(response.status));
       })
@@ -81,32 +89,58 @@ class OverlayStore {
    * rolled back when the backend refuses it, so neither surface can show a value that was rejected.
    */
   saveRecognitionSettings(changes: Partial<RecognitionSettings>) {
-    const previous = this.recognitionSettings;
-    if (!previous) return;
-    const next = { ...previous, ...changes };
-    this.recognitionSettings = next;
+    if (!this.recognitionSettings) return;
+    this.recognitionSettings = { ...this.recognitionSettings, ...changes };
+    this.recognitionRevision++;
     this.changed();
-    void request<RecognitionSettings>('/api/recognition-settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(next),
-    }).catch((reason: unknown) => {
-      this.recognitionSettings = previous;
+    void this.flushRecognitionSettings();
+  }
+  private async flushRecognitionSettings() {
+    if (this.recognitionSaving) return;
+    this.recognitionSaving = true;
+    try {
+      while (this.recognitionSaved < this.recognitionRevision) {
+        const revision = this.recognitionRevision;
+        const value = this.recognitionSettings!;
+        try {
+          const saved = await request<RecognitionSettings>('/api/recognition-settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(value),
+          });
+          this.persistedRecognitionSettings = saved;
+          this.recognitionSaved = revision;
+          if (revision === this.recognitionRevision) this.recognitionSettings = saved;
+        } catch (reason: unknown) {
+          if (revision !== this.recognitionRevision) continue;
+          this.recognitionSettings = this.persistedRecognitionSettings;
+          this.recognitionSaved = revision;
+          const message = i18n.t(
+            reason instanceof Error ? (reason.message as LocaleKey) : 'errors.request_failed',
+          );
+          notices.push(message);
+          reportClientLog('recognition_settings_save_failed', message, String(reason));
+        }
+      }
+    } finally {
+      this.recognitionSaving = false;
       this.changed();
-      const message = i18n.t(reason instanceof Error ? reason.message : 'errors.request_failed');
-      notices.push(message);
-      reportClientLog('recognition_settings_save_failed', message, String(reason));
-    });
+    }
   }
   /**
    * Announce a result where it arrives: the reader is often not on the recognition page, and an
    * announcement made from a page would repeat every time that page is remounted. Every finished
    * recognition says so — an import, a hotkey capture and a failure alike — while the log keeps the
-   * failure record.
+   * failure record. The overlay reports stable short codes; anything else it sends is a raw
+   * exception message, which stays out of the notice and only goes to the log.
    */
   private announceRecognition(result: RecognitionResult) {
+    if (result.error === 'cancelled') return;
     if (result.error) {
-      const message = i18n.t('items.recognitionFailedNotice', { detail: result.error });
+      const key = `errors.recognition_${result.error}`;
+      const message = i18n.exists(key)
+        ? i18n.t(key as LocaleKey)
+        : i18n.t('errors.recognition_failed');
       notices.push(message);
       reportClientLog('recognition_failed', message, result.error);
       return;
@@ -134,6 +168,7 @@ class OverlayStore {
     if (!this.recognitionSettings) {
       try {
         this.recognitionSettings = await request<RecognitionSettings>('/api/recognition-settings');
+        this.persistedRecognitionSettings = this.recognitionSettings;
         this.changed();
       } catch (e) {
         reportClientLog(
@@ -265,16 +300,25 @@ class OverlayStore {
             this.settings = e.overlaySettings;
             patchUserSettingsCache((current) => ({ ...current, overlay: e.overlaySettings! }));
           }
-          if (e.recognitionSettings) this.recognitionSettings = e.recognitionSettings;
+          if (e.recognitionSettings && !this.recognitionSaving) {
+            this.recognitionSettings = e.recognitionSettings;
+            this.persistedRecognitionSettings = e.recognitionSettings;
+          }
           if (e.recognitionStart) {
+            this.activeRecognitionId = e.recognitionStart.requestId;
             this.recognitionPending = true;
             this.recognitionResult = undefined;
           }
           if (e.type === 'recognition_cleared') {
+            this.activeRecognitionId = '';
             this.recognitionPending = false;
             this.recognitionResult = undefined;
           }
-          if (e.recognitionResult) {
+          if (
+            e.recognitionResult &&
+            (e.type === 'snapshot' || e.recognitionResult.requestId === this.activeRecognitionId)
+          ) {
+            this.activeRecognitionId = '';
             this.recognitionPending = false;
             this.recognitionResult = e.recognitionResult;
             // A snapshot is what a reload sees: restoring the last result must not announce it again.

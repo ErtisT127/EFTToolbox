@@ -535,6 +535,7 @@ type UserSettings struct {
 	Overlay       OverlaySettings     `json:"overlay"`
 	GameMonitor   GameMonitorSettings `json:"gameMonitor"`
 	Recognition   RecognitionSettings `json:"recognition"`
+	Language      string              `json:"language"`
 }
 
 type OverlayBootstrap struct {

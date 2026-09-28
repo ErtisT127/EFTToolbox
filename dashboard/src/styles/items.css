@@ -1,4 +1,5 @@
 .items-page {
+  position: relative;
   display: flex;
   flex: 1;
   min-height: 0;
@@ -8,6 +9,50 @@
   padding: clamp(24px, 3.4vh, 40px) clamp(28px, 5vw, 96px) 32px;
   color: #d8dfda;
   font-family: 'Map CJK', 'Segoe UI', sans-serif;
+}
+
+/* The catalogue stays laid out behind the subpage — the table keeps its scroll and its measured
+   rows — but leaves the tab order, since it is covered rather than replaced. */
+.items-page.is-recognizing > :not(.items-recognition-view) {
+  visibility: hidden;
+}
+
+/* The recognition subpage is pushed over the catalogue and slides back out before it unmounts, so
+   entering and leaving are both transitions over the table rather than a swap of pages. */
+.items-recognition-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  box-shadow: -18px 0 32px rgba(0, 0, 0, 0.35);
+  will-change: transform;
+  animation: items-recognition-in var(--duration-normal) ease-out both;
+}
+.items-recognition-view.is-leaving {
+  animation: items-recognition-out var(--duration-normal) ease-in both;
+}
+@keyframes items-recognition-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes items-recognition-out {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .items-recognition-view,
+  .items-recognition-view.is-leaving {
+    animation: none;
+  }
 }
 
 .items-toolbar,
@@ -835,6 +880,11 @@
 .items-dialog-headline small {
   color: var(--muted);
   font-size: var(--text-sm);
+}
+.items-dialog-headline .items-dialog-error-detail {
+  color: var(--danger);
+  opacity: 0.75;
+  word-break: break-all;
 }
 
 .items-update-stages {

@@ -16,7 +16,14 @@ import { MapCanvas, type ToolOptions } from '../pages/map/MapCanvas';
 import { LayerPanel } from '../pages/map/LayerPanel';
 import { AppPopover } from '../components/AppPopover';
 import { selectableFloors } from '../stores/workspaceStore';
-import { useLocale } from '../hooks/useLocale';
+import { useLocale, type LocaleKey } from '../hooks/useLocale';
+
+// The API recognizes the app's own locale values; a bare "en" from a browser would silently fall
+// back to Chinese. The cast page runs on whatever device opened the link and cannot read the app's
+// own setting, so the browser language drives both its copy and the map data it fetches.
+export function castLocale(): 'zh-CN' | 'en-US' {
+  return navigator.language.startsWith('en') ? 'en-US' : 'zh-CN';
+}
 
 type Model = {
   data: MapData;
@@ -26,7 +33,15 @@ type Model = {
   players: Map<string, PlayerState>;
 };
 
-type Loading = { value: number; key: string };
+type CastLoadKey =
+  | 'cast.connecting'
+  | 'cast.waitingSnapshot'
+  | 'cast.loadingMap'
+  | 'cast.loadingResources'
+  | 'cast.reconnecting'
+  | 'cast.ready';
+
+type Loading = { value: number; key: CastLoadKey };
 
 const emptyOptions: ToolOptions = {
   color: '#5FD3C4',
@@ -81,7 +96,7 @@ export function CastApp() {
   const { t } = useLocale();
   const [model, setModel] = useState<Model>();
   const [loading, setLoading] = useState<Loading>({ value: 0, key: 'cast.connecting' });
-  const [terminal, setTerminal] = useState('');
+  const [terminal, setTerminal] = useState<'' | 'cast.expired' | 'cast.ended'>('');
   const mapRef = useRef<L.Map | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const modelRef = useRef<Model | undefined>(undefined);
@@ -108,7 +123,7 @@ export function CastApp() {
     modelRef.current = model;
   }, [model]);
 
-  const setStage = useCallback((value: number, key: string) => setLoading({ value, key }), []);
+  const setStage = useCallback((value: number, key: CastLoadKey) => setLoading({ value, key }), []);
 
   const loadModel = useCallback(
     async (
@@ -123,13 +138,13 @@ export function CastApp() {
       const controller = new AbortController();
       loadAbortRef.current = controller;
       setStage(25, 'cast.loadingMap');
+      const locale = castLocale();
       let dataResponse: Response, annotationsResponse: Response, stickersResponse: Response;
       try {
         [dataResponse, annotationsResponse, stickersResponse] = await Promise.all([
-          fetch(
-            `/api/maps/${encodeURIComponent(mapId)}?locale=${encodeURIComponent(navigator.language)}`,
-            { signal: controller.signal },
-          ),
+          fetch(`/api/maps/${encodeURIComponent(mapId)}?locale=${encodeURIComponent(locale)}`, {
+            signal: controller.signal,
+          }),
           fetch(`/api/maps/${encodeURIComponent(mapId)}/annotations`, {
             signal: controller.signal,
           }),
@@ -492,7 +507,7 @@ export function CastApp() {
             <progress max="100" value={loading.value} />
             {loadError && (
               <>
-                <span className="cast-error">{t(loadError)}</span>
+                <span className="cast-error">{t(loadError as LocaleKey)}</span>
                 <button type="button" onClick={retry}>
                   {t('cast.retry')}
                 </button>

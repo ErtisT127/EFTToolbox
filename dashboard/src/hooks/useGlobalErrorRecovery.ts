@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { useLocale } from './useLocale';
+import { useLocale, type LocaleKey } from './useLocale';
 import { notices } from '../stores/noticeStore';
 import { workspace, useWorkspace } from '../stores/workspaceStore';
 import { useOverlay } from '../stores/overlayStore';
@@ -60,7 +60,7 @@ export function useGlobalErrorRecovery() {
     const previous = lastNotice.current;
     if (!shouldPushNotice(previous, failed, now, NOTICE_COOLDOWN_MS)) return;
     lastNotice.current = { key: failed, at: now };
-    notices.push(t(failed), recover);
+    notices.push(t(failed as LocaleKey), recover);
   }, [failed, recover, t]);
   return { failed, saving, workspace: w, overlay, monitor };
 }

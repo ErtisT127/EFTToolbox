@@ -30,11 +30,10 @@ import type {
   RecognitionResult,
   RecognitionSettings,
 } from '../../../../contracts/ts/ipc.gen';
-import { RecognitionSettingsLimits } from '../../../../contracts/ts/ipc.gen';
 import { AppPopover } from '../../components/AppPopover';
-import { AppTooltip, HintTooltip } from '../../components/HintTooltip';
-import { RangeSlider } from '../../components/RangeSlider';
-import { useLocale } from '../../hooks/useLocale';
+import { AppTooltip } from '../../components/HintTooltip';
+import { RecognitionTuningFields } from '../../components/RecognitionTuningFields';
+import { useLocale, type LocaleKey, type Translate } from '../../hooks/useLocale';
 import { useGameMonitor } from '../../stores/gameMonitorStore';
 import { notices } from '../../stores/noticeStore';
 import { reportClientLog, request } from '../../stores/workspaceStore';
@@ -48,19 +47,21 @@ import {
   itemCategories,
   sortItems,
   type ItemSort,
-} from './lib';
-import { useVirtualList } from './useVirtualList';
+} from './lib/catalog';
+import { useVirtualList } from './lib/useVirtualList';
 
 const rowHeight = 91;
 const headerHeight = 64;
+/** Matches the slide in `items.css`; the subpage stays mounted until the exit finishes. */
+const recognitionSlideMs = 200;
 
 // Sortable columns, in table order. The image column carries no header.
-const columns: { key: ItemSort; label: string }[] = [
+const columns = [
   { key: 'name', label: 'name' },
   { key: 'traderPrice', label: 'trader' },
   { key: 'fleaPrice', label: 'flea' },
   { key: 'lowestPrice', label: 'lowest' },
-];
+] as const;
 
 // The backend reports every fetch; the dialog groups them into one chip per thing a reader
 // recognises, so a language pair never shows up as two separate steps.
@@ -89,8 +90,6 @@ const emptyStatus: ItemsUpdateStatus = {
   errorDetail: '',
 };
 
-type Translate = (key: string, options?: Record<string, unknown>) => string;
-
 export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { t, locale } = useLocale();
   const monitor = useGameMonitor();
@@ -107,30 +106,66 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [scrollTop, setScrollTop] = useState(0);
   const [dialog, setDialog] = useState<'update' | null>(null);
   const [recognitionPage, setRecognitionPage] = useState(false);
+  const [recognitionLeaving, setRecognitionLeaving] = useState(false);
+  const recognitionLeaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const overlay = useOverlay();
   const [recognitionImage, setRecognitionImage] = useState('');
   const [recognitionName, setRecognitionName] = useState('');
+  const [recognitionImageRequestId, setRecognitionImageRequestId] = useState('');
+  const recognitionImageRequestRef = useRef('');
+  const recognitionImportRevision = useRef(0);
   // The backend owns what is running and what came back last, so this page, the settings tab and the
   // overlay window all render the same run whichever surface started it.
   const recognitionSettings = overlay.recognitionSettings;
   const recognitionResult = overlay.recognitionResult;
   const recognitionPending = overlay.recognitionPending;
+  // The subpage slides over the catalogue and slides back out before it unmounts, so the exit is a
+  // transition and the table is the surface behind it the whole way.
+  const openRecognitionPage = () => {
+    if (recognitionLeaveTimer.current) clearTimeout(recognitionLeaveTimer.current);
+    recognitionLeaveTimer.current = null;
+    setRecognitionLeaving(false);
+    setRecognitionPage(true);
+  };
+  const closeRecognitionPage = () => {
+    if (!recognitionPage || recognitionLeaving) return;
+    setRecognitionLeaving(true);
+    recognitionLeaveTimer.current = setTimeout(() => {
+      recognitionLeaveTimer.current = null;
+      setRecognitionLeaving(false);
+      setRecognitionPage(false);
+    }, recognitionSlideMs);
+  };
+  useEffect(
+    () => () => {
+      if (recognitionLeaveTimer.current) clearTimeout(recognitionLeaveTimer.current);
+    },
+    [],
+  );
   const [scrollHeight, setScrollHeight] = useState(520);
   const [refreshing, setRefreshing] = useState(false);
   const [tableNode, setTableNode] = useState<HTMLDivElement | null>(null);
   const reportedRun = useRef<string | undefined>(undefined);
+  const statusRevision = useRef(0);
+  const settingsRevision = useRef(0);
+  const settingsSaveQueue = useRef(Promise.resolve());
 
   const startUpdate = useCallback(
     (includeImages = false) => {
+      const statusRequest = ++statusRevision.current;
       setDialog('update');
       void request<ItemsUpdateStatus>('/api/items/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ includeImages }),
       })
-        .then(setStatus)
+        .then((nextStatus) => {
+          if (statusRequest === statusRevision.current) setStatus(nextStatus);
+        })
         .catch((reason: unknown) => {
-          notices.push(t(reason instanceof Error ? reason.message : 'errors.request_failed'));
+          notices.push(
+            t(reason instanceof Error ? (reason.message as LocaleKey) : 'errors.request_failed'),
+          );
         });
     },
     [t],
@@ -163,9 +198,10 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
       .finally(() => {
         if (active) setRefreshing(false);
       });
+    const settingsLoadRevision = settingsRevision.current;
     void request<ItemsSettings>('/api/items-settings')
       .then((nextSettings) => {
-        if (!active) return;
+        if (!active || settingsLoadRevision !== settingsRevision.current) return;
         setSettings(nextSettings);
         setCategory(nextSettings.category || '');
         setSort(nextSettings.sort || 'id');
@@ -175,6 +211,12 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
         // Preferences are not worth blocking the table: keep the defaults and report in a notice.
         if (active) notices.push(t('errors.items_settings_invalid'));
       });
+    const statusRequest = ++statusRevision.current;
+    void request<ItemsUpdateStatus>('/api/items/update')
+      .then((nextStatus) => {
+        if (active && statusRequest === statusRevision.current) setStatus(nextStatus);
+      })
+      .catch(() => undefined);
     return () => {
       active = false;
     };
@@ -183,26 +225,25 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   useEffect(() => {
     if (!status.running) return;
     const timer = window.setInterval(() => {
+      const statusRequest = ++statusRevision.current;
       void request<ItemsUpdateStatus>('/api/items/update')
-        .then(setStatus)
+        .then((nextStatus) => {
+          if (statusRequest === statusRevision.current) setStatus(nextStatus);
+        })
         .catch(() => undefined);
     }, 1000);
     return () => window.clearInterval(timer);
   }, [status.running]);
 
   // A failed background update is not tied to a control the page can put a message next to, so it
-  // reports through the shared notice pipeline with a retry.
+  // reports through the shared notice pipeline with a retry. The raw backend detail stays out of
+  // the notice: it is untranslated diagnostics, kept for the update dialog and the log file.
   useEffect(() => {
     if (status.running || !status.error || status.error === 'cancelled') return;
     const run = status.finishedAt ?? status.errorDetail;
     if (reportedRun.current === run) return;
     reportedRun.current = run;
-    notices.push(
-      t('items.updateFailedNotice', {
-        detail: status.errorDetail ? ` (${status.errorDetail})` : '',
-      }),
-      () => void startUpdate(status.includeImages),
-    );
+    notices.push(t('items.updateFailedNotice'), () => void startUpdate(status.includeImages));
   }, [status, t, startUpdate]);
 
   // The virtual window is measured from the live table box. Using the node itself as the dependency
@@ -229,13 +270,33 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
 
   const saveSettings = (changes: Partial<ItemsSettings>) => {
     if (!settings) return;
+    const revision = ++settingsRevision.current;
+    const previous = { settings, category, sort, descending };
     const next = { ...settings, ...changes };
     setSettings(next);
-    void request<ItemsSettings>('/api/items-settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(next),
-    }).catch(() => notices.push(t('errors.items_settings_invalid')));
+    settingsSaveQueue.current = settingsSaveQueue.current.then(async () => {
+      try {
+        const saved = await request<ItemsSettings>('/api/items-settings', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(next),
+        });
+        if (revision === settingsRevision.current) {
+          setSettings(saved);
+          setCategory(saved.category || '');
+          setSort(saved.sort || 'id');
+          setDescending(saved.descending);
+        }
+      } catch {
+        if (revision === settingsRevision.current) {
+          setSettings(previous.settings);
+          setCategory(previous.category);
+          setSort(previous.sort);
+          setDescending(previous.descending);
+        }
+        notices.push(t('errors.items_settings_invalid'));
+      }
+    });
   };
   const changeSort = (next: ItemSort) => {
     const nextState =
@@ -253,8 +314,11 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
     saveSettings({ category: next });
   };
   const cancelUpdate = () => {
+    const statusRequest = ++statusRevision.current;
     void request<ItemsUpdateStatus>('/api/items/update/cancel', { method: 'POST' })
-      .then(setStatus)
+      .then((nextStatus) => {
+        if (statusRequest === statusRevision.current) setStatus(nextStatus);
+      })
       .catch(() => notices.push(t('errors.request_failed')));
   };
 
@@ -275,17 +339,24 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
     overlay.saveRecognitionSettings(changes);
   };
   const clearRecognition = () => {
+    recognitionImportRevision.current++;
     setRecognitionImage('');
     setRecognitionName('');
+    setRecognitionImageRequestId('');
+    recognitionImageRequestRef.current = '';
     overlay.clearRecognition();
   };
   const importRecognition = (file: File) => {
+    const importRevision = ++recognitionImportRevision.current;
     setRecognitionName(file.name);
     const reader = new FileReader();
     reader.onload = () => {
+      if (importRevision !== recognitionImportRevision.current) return;
       const data = String(reader.result || '');
       const requestId = crypto.randomUUID();
       setRecognitionImage(data);
+      setRecognitionImageRequestId(requestId);
+      recognitionImageRequestRef.current = requestId;
       overlay.requestRecognition(requestId);
       void request('/api/recognition/request', {
         method: 'POST',
@@ -293,13 +364,20 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
         body: JSON.stringify({ requestId, imageData: data }),
       }).catch((reason: unknown) => {
         // Nothing is pending once the request is refused; the notice says why.
-        overlay.clearRecognition();
-        const message = t(recognitionErrorKey(reason));
+        if (recognitionImageRequestRef.current === requestId) {
+          setRecognitionImage('');
+          setRecognitionName('');
+          setRecognitionImageRequestId('');
+          recognitionImageRequestRef.current = '';
+          overlay.clearRecognition(requestId);
+        }
+        const message = t(recognitionErrorKey(reason) as LocaleKey);
         notices.push(message);
         reportClientLog('recognition_request_failed', message, String(reason));
       });
     };
     reader.onerror = () => {
+      if (importRevision !== recognitionImportRevision.current) return;
       const message = t('errors.request_failed');
       notices.push(message);
       reportClientLog(
@@ -315,28 +393,8 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   // over the whole page with the shared error state.
   if (loadError) throw loadError;
 
-  if (recognitionPage) {
-    return (
-      <RecognitionPage
-        t={t}
-        // The result knows the image it was made from, so a hotkey capture mirrored into this page
-        // still shows the picture it came from.
-        image={recognitionImage || recognitionResult?.imageData || ''}
-        imageName={recognitionName}
-        result={recognitionResult}
-        pending={recognitionPending}
-        settings={recognitionSettings}
-        onBack={() => setRecognitionPage(false)}
-        onImport={importRecognition}
-        onSettings={saveRecognition}
-        onClear={clearRecognition}
-        onOpenSettings={onOpenSettings}
-      />
-    );
-  }
-
   return (
-    <section className="items-page">
+    <section className={`items-page${recognitionPage ? ' is-recognizing' : ''}`}>
       <div className="items-toolbar">
         <label className="items-search">
           <Search size={15} aria-hidden="true" />
@@ -389,22 +447,12 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
             </option>
           ))}
         </select>
-        <button
-          type="button"
-          className="items-recognition"
-          onClick={() => setRecognitionPage(true)}
-        >
+        <button type="button" className="items-recognition" onClick={openRecognitionPage}>
           <span className="items-recognition-badge">
             <ScanLine size={18} aria-hidden="true" />
           </span>
           <span className="items-recognition-label">
             <b>{t('items.recognition')}</b>
-            {/* The tag used to say "coming soon"; the useful thing to show is the key that runs it. */}
-            {overlay.settings?.hotkeys.recognition && (
-              <small>
-                {t('items.recognitionTag')} {overlay.settings.hotkeys.recognition}
-              </small>
-            )}
           </span>
         </button>
       </div>
@@ -490,6 +538,33 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
           onCancel={cancelUpdate}
         />
       )}
+      {recognitionPage && (
+        <div className={`items-recognition-view${recognitionLeaving ? ' is-leaving' : ''}`}>
+          <RecognitionPage
+            t={t}
+            // The result knows the image it was made from, so a hotkey capture mirrored into this
+            // page still shows the picture it came from.
+            image={
+              recognitionResult && recognitionResult.requestId !== recognitionImageRequestId
+                ? recognitionResult.imageData
+                : recognitionImage || recognitionResult?.imageData || ''
+            }
+            imageName={
+              recognitionResult && recognitionResult.requestId !== recognitionImageRequestId
+                ? ''
+                : recognitionName
+            }
+            result={recognitionResult}
+            pending={recognitionPending}
+            settings={recognitionSettings}
+            onBack={closeRecognitionPage}
+            onImport={importRecognition}
+            onSettings={saveRecognition}
+            onClear={clearRecognition}
+            onOpenSettings={onOpenSettings}
+          />
+        </div>
+      )}
     </section>
   );
 }
@@ -521,7 +596,6 @@ function RecognitionPage({
 }) {
   const ocrText = result?.ocrText.join(' / ') ?? '';
   const rows = result?.rows ?? [];
-  const limits = RecognitionSettingsLimits;
   // The label only carries states the reader has to act on: waiting is the import hint's job,
   // running is the mask's, and a finished import is announced by its notice.
   const status = result?.error
@@ -640,61 +714,7 @@ function RecognitionPage({
           </div>
           {settings && (
             <>
-              <RangeSlider
-                label={
-                  <HintTooltip content={t('items.recognitionOcrConfidenceHint')}>
-                    {t('items.ocrConfidence')}
-                  </HintTooltip>
-                }
-                value={settings.ocrConfidence}
-                min={limits.ocrConfidence.min}
-                max={limits.ocrConfidence.max}
-                step={limits.ocrConfidence.step}
-                format={(value) => value.toFixed(2)}
-                onChange={(value) => onSettings({ ocrConfidence: value })}
-              />
-              <RangeSlider
-                label={
-                  <HintTooltip content={t('items.recognitionNameSimilarityHint')}>
-                    {t('items.nameSimilarity')}
-                  </HintTooltip>
-                }
-                value={settings.nameSimilarity}
-                min={limits.nameSimilarity.min}
-                max={limits.nameSimilarity.max}
-                step={limits.nameSimilarity.step}
-                format={(value) => value.toFixed(2)}
-                onChange={(value) => onSettings({ nameSimilarity: value })}
-              />
-              <RangeSlider
-                label={
-                  <HintTooltip content={t('items.recognitionTemplateSimilarityHint')}>
-                    {t('items.templateSimilarity')}
-                  </HintTooltip>
-                }
-                value={settings.templateSimilarity}
-                min={limits.templateSimilarity.min}
-                max={limits.templateSimilarity.max}
-                step={limits.templateSimilarity.step}
-                // Without the icon check this threshold has nothing to decide.
-                disabled={!settings.templateMatching}
-                format={(value) => value.toFixed(2)}
-                onChange={(value) => onSettings({ templateSimilarity: value })}
-              />
-              {/* The capture region is always square, so one slider drives both sides. */}
-              <RangeSlider
-                label={
-                  <HintTooltip content={t('items.recognitionCaptureSizeHint')}>
-                    {t('items.recognitionCaptureSize')}
-                  </HintTooltip>
-                }
-                value={settings.captureWidth}
-                min={limits.captureWidth.min}
-                max={limits.captureWidth.max}
-                step={limits.captureWidth.step}
-                format={(value) => `${value}×${value}`}
-                onChange={(value) => onSettings({ captureWidth: value, captureHeight: value })}
-              />
+              <RecognitionTuningFields settings={settings} onChange={onSettings} />
               <button
                 type="button"
                 className="items-recognition-detailed"
@@ -932,7 +952,7 @@ function UpdateDialog({
     : status.error
       ? status.error === 'cancelled'
         ? t('items.cancelledDescription')
-        : status.errorDetail || t('items.updateDescription')
+        : t('items.updateFailedDescription')
       : t('items.completedDescription');
 
   return (
@@ -1008,6 +1028,14 @@ function UpdateDialog({
               <div className="items-dialog-headline">
                 <strong>{phaseTitle}</strong>
                 <small>{phaseDetail}</small>
+                {!status.running &&
+                  status.error &&
+                  status.error !== 'cancelled' &&
+                  status.errorDetail && (
+                    <small className="items-dialog-error-detail">
+                      {t('items.errorDetail')}: {status.errorDetail}
+                    </small>
+                  )}
               </div>
             </div>
             <div className="items-update-stages" aria-live="polite">

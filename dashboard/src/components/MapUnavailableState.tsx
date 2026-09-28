@@ -1,5 +1,5 @@
 import { WifiOff } from 'lucide-react';
-import { useLocale } from '../hooks/useLocale';
+import { useLocale, type LocaleKey } from '../hooks/useLocale';
 import { ErrorState } from './ErrorState';
 
 export function MapUnavailableState({
@@ -15,7 +15,7 @@ export function MapUnavailableState({
       icon={WifiOff}
       tone="network"
       title={t('map.state.unavailable')}
-      description={t(errorKey)}
+      description={t(errorKey as LocaleKey)}
       actions={[{ label: t('map.state.reload'), onClick: onRetry }]}
     />
   );

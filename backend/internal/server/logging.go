@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -121,7 +120,7 @@ func (w *dailyLogWriter) writeValue(entry any) error {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	_, err = fmt.Fprintln(f, string(data))
+	_, err = f.Write(append(data, '\n'))
 	return err
 }
 

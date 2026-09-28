@@ -92,12 +92,12 @@ func (s *signalListener) close() {
 func (s *signalListener) handleSignal(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
-		http.Error(w, "body unreadable", http.StatusBadRequest)
+		writeSignalJSON(w, http.StatusBadRequest, signalResponse{Error: "multiplayer_signal_invalid"})
 		return
 	}
 	var request signalRequest
 	if json.Unmarshal(body, &request) != nil || request.Offer == "" {
-		http.Error(w, "body invalid", http.StatusBadRequest)
+		writeSignalJSON(w, http.StatusBadRequest, signalResponse{Error: "multiplayer_signal_invalid"})
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(request.Key), []byte(s.key)) != 1 {

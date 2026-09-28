@@ -21,7 +21,7 @@ internal static class Program
         if (args.Contains("--tile-preview")) { BruTilePreview.Run(Directory.GetCurrentDirectory()).GetAwaiter().GetResult(); return 0; }
         if (args.Contains("--svg-benchmark")) { var i = Array.IndexOf(args, "--resolution"); SvgRuntimeBenchmark.Run(Directory.GetCurrentDirectory(), i >= 0 ? int.Parse(args[i + 1]) : 2048); return 0; }
         var index = Array.IndexOf(args, "--backend");
-        if (index < 0 || index + 1 >= args.Length || !Uri.TryCreate(args[index + 1], UriKind.Absolute, out var backendUri) || backendUri.Scheme is not ("http" or "https"))
+        if (index < 0 || index + 1 >= args.Length || !Uri.TryCreate(args[index + 1], UriKind.Absolute, out var backendUri) || backendUri.Scheme != "http")
         {
             Console.Error.WriteLine("Missing or invalid --backend URL.");
             return 1;

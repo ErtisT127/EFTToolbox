@@ -186,10 +186,11 @@ func (h *overlayHub) selectedPlayerMap() (contracts.MapData, error) {
 		return contracts.MapData{}, err
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+		id, ok := mapIDFromFile(entry.Name())
+		if entry.IsDir() || !ok {
 			continue
 		}
-		if value, err := h.store.load(strings.TrimSuffix(entry.Name(), ".json")); err == nil {
+		if value, err := h.store.load(id); err == nil {
 			return value, nil
 		}
 	}

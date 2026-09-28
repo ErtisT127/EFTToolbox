@@ -886,10 +886,13 @@ output {
   border-color: var(--accent);
   color: var(--accent);
 }
-.view-controls > button[aria-expanded='true']:hover,
-.view-controls > button[aria-pressed='true']:hover,
-.task-trigger[aria-expanded='true']:hover,
-.task-trigger[aria-pressed='true']:hover {
+/* `:not(:disabled)` is not decoration here: without it the global
+   `button[aria-pressed='true']:hover:not(:disabled)` outranks these and paints the button with the
+   translucent accent tint instead of its own plate, which reads as the button turning transparent. */
+.view-controls > button[aria-expanded='true']:hover:not(:disabled),
+.view-controls > button[aria-pressed='true']:hover:not(:disabled),
+.task-trigger[aria-expanded='true']:hover:not(:disabled),
+.task-trigger[aria-pressed='true']:hover:not(:disabled) {
   background: var(--control-hover);
   border-color: var(--accent);
   color: var(--accent);

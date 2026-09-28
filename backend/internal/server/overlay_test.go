@@ -66,7 +66,7 @@ func TestOverlaySettingsAndPlayerSnapshot(t *testing.T) {
 	call("PUT", "/api/overlay-settings", s, 400)
 	s.Hotkeys.ToggleEdit = ""
 	s.Width = 1
-	aggregate := contracts.UserSettings{SchemaVersion: 1, Overlay: s, GameMonitor: defaultGameMonitorSettings()}
+	aggregate := contracts.UserSettings{SchemaVersion: 1, Overlay: s, GameMonitor: defaultGameMonitorSettings(), Recognition: defaultRecognitionSettings()}
 	aggregateData, err := json.Marshal(aggregate)
 	if err != nil {
 		t.Fatal(err)
@@ -129,6 +129,42 @@ func TestOverlaySettingsAndPlayerSnapshot(t *testing.T) {
 	handler.ServeHTTP(out, req)
 	if out.Code != 403 {
 		t.Fatal("bootstrap accepted non-loopback peer")
+	}
+}
+
+func TestRecognitionResultFromSupersededRunIsIgnored(t *testing.T) {
+	_, handler := mapFixture(t)
+	started := callLocalJSON(t, handler, http.MethodPost, "/api/recognition/started", contracts.RecognitionStart{RequestId: "newer"})
+	if started.Code != http.StatusOK {
+		t.Fatalf("start newer recognition: %d %s", started.Code, started.Body.String())
+	}
+	if response := callLocalJSON(t, handler, http.MethodPost, "/api/recognition/started", contracts.RecognitionStart{RequestId: "latest"}); response.Code != http.StatusOK {
+		t.Fatalf("start latest recognition: %d %s", response.Code, response.Body.String())
+	}
+	stale := callLocalJSON(t, handler, http.MethodPost, "/api/recognition/result", contracts.RecognitionResult{RequestId: "newer", Error: "cancelled"})
+	if stale.Code != http.StatusNoContent {
+		t.Fatalf("stale recognition result was accepted: %d %s", stale.Code, stale.Body.String())
+	}
+	current := callLocalJSON(t, handler, http.MethodPost, "/api/recognition/result", contracts.RecognitionResult{RequestId: "latest"})
+	if current.Code != http.StatusOK {
+		t.Fatalf("current recognition result was rejected: %d %s", current.Code, current.Body.String())
+	}
+}
+
+func TestRecognitionClearDoesNotCancelNewerRun(t *testing.T) {
+	_, handler := mapFixture(t)
+	if response := callLocalJSON(t, handler, http.MethodPost, "/api/recognition/started", contracts.RecognitionStart{RequestId: "first"}); response.Code != http.StatusOK {
+		t.Fatalf("start first recognition: %d", response.Code)
+	}
+	if response := callLocalJSON(t, handler, http.MethodPost, "/api/recognition/started", contracts.RecognitionStart{RequestId: "second"}); response.Code != http.StatusOK {
+		t.Fatalf("start second recognition: %d", response.Code)
+	}
+	clear := localCall(handler, http.MethodDelete, "/api/recognition-result?requestId=first", nil)
+	if clear.Code != http.StatusNoContent {
+		t.Fatalf("stale clear failed: %d", clear.Code)
+	}
+	if result := callLocalJSON(t, handler, http.MethodPost, "/api/recognition/result", contracts.RecognitionResult{RequestId: "second"}); result.Code != http.StatusOK {
+		t.Fatalf("newer recognition was cleared: %d", result.Code)
 	}
 }
 

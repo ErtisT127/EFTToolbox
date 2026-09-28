@@ -49,7 +49,14 @@ internal static class OverlayDiagnostics
                 if (Stop.IsCancellationRequested || e is ChannelClosedException) break; try { await Task.Delay(500, Stop.Token); } catch (OperationCanceledException) { break; } }
         }
     }
-    internal static void Shutdown() { Operation.FlushWarnings(); Log("info", "stopped", "Native overlay stopped"); Queue.Writer.TryComplete(); Worker.Wait(500); Stop.Cancel(); }
+    internal static void Shutdown()
+    {
+        Operation.FlushWarnings();
+        Log("info", "stopped", "Native overlay stopped");
+        Stop.Cancel();
+        Queue.Writer.TryComplete();
+        try { Worker.Wait(500); } catch (AggregateException) { }
+    }
 }
 
 internal sealed class Operation(string source, string mapId, string floorId, string basemap, int generation, int resolution, string? id = null, long startedAt = 0)
@@ -65,26 +72,33 @@ internal sealed class Operation(string source, string mapId, string floorId, str
     internal string Basemap { get; } = basemap;
     internal int Generation { get; } = generation;
     internal int Resolution { get; } = resolution;
-    internal OperationTiming Timing { get; set; } = new();
+    private readonly object timingGate = new();
+    private OperationTiming timing = new();
+    internal OperationTiming Timing { get { lock (timingGate) return timing; } }
+    internal void UpdateTiming(Func<OperationTiming, OperationTiming> update) { lock (timingGate) timing = update(timing); }
     internal void Resource(string path, double queue, double read, double decode, double upload)
     {
         var total = queue + read + decode + upload;
-        Timing = Timing with { QueueMs = Timing.QueueMs + queue, ReadMs = Timing.ReadMs + read, RasterMs = Timing.RasterMs + decode, UploadMs = Timing.UploadMs + upload, Count = Timing.Count + 1, Resource = total > slowest ? path : Timing.Resource };
-        slowest = Math.Max(slowest, total);
+        lock (timingGate)
+        {
+            timing = timing with { QueueMs = timing.QueueMs + queue, ReadMs = timing.ReadMs + read, RasterMs = timing.RasterMs + decode, UploadMs = timing.UploadMs + upload, Count = timing.Count + 1, Resource = total > slowest ? path : timing.Resource };
+            slowest = Math.Max(slowest, total);
+        }
     }
     internal void Complete(bool loading)
     {
-        Timing = Timing with { TotalMs = Stopwatch.GetElapsedTime(Started).TotalMilliseconds };
-        if (Timing.TotalMs <= (loading ? 2000 : 100)) return;
+        UpdateTiming(value => value with { TotalMs = Stopwatch.GetElapsedTime(Started).TotalMilliseconds });
+        var snapshot = Timing;
+        if (snapshot.TotalMs <= (loading ? 2000 : 100)) return;
         var key = $"{Source}:{MapId}"; var now = Environment.TickCount64;
         LastWarning.TryGetValue(key, out var previous);
         if (previous.Time != 0 && now - previous.Time < 30000) {
-            LastWarning[key] = (previous.Time, previous.Count + 1, Timing.TotalMs > (previous.Worst?.Timing.TotalMs ?? 0) ? this : previous.Worst);
+            LastWarning[key] = (previous.Time, previous.Count + 1, snapshot.TotalMs > (previous.Worst?.Timing.TotalMs ?? 0) ? this : previous.Worst);
             return;
         }
         if (previous.Count > 0 && previous.Worst is {} worst) Summary(worst, previous.Count);
         LastWarning[key] = (now, 0, this);
-        OverlayDiagnostics.Log("warn", "slow_operation", $"{Source} took {Timing.TotalMs:F1} ms", this, Timing.Resource);
+        OverlayDiagnostics.Log("warn", "slow_operation", $"{Source} took {snapshot.TotalMs:F1} ms", this, snapshot.Resource);
     }
     private static void Summary(Operation worst, int suppressed) => OverlayDiagnostics.Log("warn", "slow_operation_summary", $"{suppressed + 1} slow operations; worst={worst.Timing.TotalMs:F1} ms", worst, worst.Timing.Resource);
     internal static void FlushWarnings()

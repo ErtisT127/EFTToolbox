@@ -171,7 +171,11 @@ func (m *itemsManager) mode() string {
 }
 
 func (m *itemsManager) catalogPath(locale string) string {
-	return filepath.Join(m.store.root, "upstream", "items", m.mode(), "items_"+locale+".json")
+	return m.catalogPathFor(m.mode(), locale)
+}
+
+func (m *itemsManager) catalogPathFor(mode, locale string) string {
+	return filepath.Join(m.store.root, "upstream", "items", mode, "items_"+locale+".json")
 }
 
 func (m *itemsManager) readSettings() contracts.ItemsSettings {
@@ -192,8 +196,8 @@ func (m *itemsManager) setStatus(update func(*contracts.ItemsUpdateStatus)) {
 	m.mu.Unlock()
 }
 
-func (m *itemsManager) fetchJSON(ctx context.Context, name string, value any) error {
-	base := "https://json.tarkov.dev/" + itemModes[m.mode()]
+func (m *itemsManager) fetchJSON(ctx context.Context, mode, name string, value any) error {
+	base := "https://json.tarkov.dev/" + itemModes[mode]
 	endpoint, _ := url.JoinPath(base, name)
 	var last error
 	for _, delay := range []time.Duration{0, 2 * time.Second, 5 * time.Second} {
@@ -501,6 +505,16 @@ func (m *itemsManager) downloadImages(ctx context.Context, source upstreamItems,
 	}
 	m.setStatus(func(s *contracts.ItemsUpdateStatus) { s.ImagesTotal = len(jobs) })
 	downloaded, skipped := 0, 0
+	type result struct {
+		sourceURL, itemID, file, digest string
+		body                            []byte
+		err                             error
+	}
+	downloadCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan result, len(jobs))
+	var wait sync.WaitGroup
+	sem := make(chan struct{}, 8)
 	for sourceURL, itemID := range jobs {
 		entry := entries[sourceURL]
 		if entry.File != "" {
@@ -511,34 +525,58 @@ func (m *itemsManager) downloadImages(ctx context.Context, source upstreamItems,
 				continue
 			}
 		}
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
-		if err != nil {
-			return nil, downloaded, skipped, err
+		wait.Add(1)
+		go func(sourceURL, itemID string) {
+			defer wait.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-downloadCtx.Done():
+				results <- result{sourceURL: sourceURL, itemID: itemID, err: downloadCtx.Err()}
+				return
+			}
+			defer func() { <-sem }()
+			request, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, sourceURL, nil)
+			if err != nil {
+				results <- result{sourceURL: sourceURL, itemID: itemID, err: err}
+				return
+			}
+			response, err := m.client.Do(request)
+			if err != nil {
+				results <- result{sourceURL: sourceURL, itemID: itemID, err: err}
+				return
+			}
+			body, readErr := io.ReadAll(io.LimitReader(response.Body, 8<<20))
+			_ = response.Body.Close()
+			if readErr != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
+				results <- result{sourceURL: sourceURL, itemID: itemID, err: fmt.Errorf("image download failed for %s", itemID)}
+				return
+			}
+			digest := fmt.Sprintf("%x", sha256.Sum256(body))
+			ext := filepath.Ext(sourceURL)
+			if ext != ".webp" && ext != ".png" && ext != ".jpg" {
+				ext = ".webp"
+			}
+			results <- result{sourceURL: sourceURL, itemID: itemID, file: "items/item-" + digest[:24] + ext, digest: digest, body: body}
+		}(sourceURL, itemID)
+	}
+	go func() { wait.Wait(); close(results) }()
+	for item := range results {
+		if item.err != nil {
+			cancel()
+			return nil, downloaded, skipped, item.err
 		}
-		response, err := m.client.Do(request)
-		if err != nil {
-			return nil, downloaded, skipped, err
-		}
-		body, readErr := io.ReadAll(io.LimitReader(response.Body, 8<<20))
-		_ = response.Body.Close()
-		if readErr != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
-			return nil, downloaded, skipped, fmt.Errorf("image download failed for %s", itemID)
-		}
-		digest := fmt.Sprintf("%x", sha256.Sum256(body))
-		ext := filepath.Ext(sourceURL)
-		if ext != ".webp" && ext != ".png" && ext != ".jpg" {
-			ext = ".webp"
-		}
-		file := "items/item-" + digest[:24] + ext
-		target := filepath.Join(root, "assets", filepath.FromSlash(file))
+		target := filepath.Join(root, "assets", filepath.FromSlash(item.file))
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			cancel()
 			return nil, downloaded, skipped, err
 		}
-		if err := os.WriteFile(target, body, 0o644); err != nil {
+		if err := os.WriteFile(target, item.body, 0o644); err != nil {
+			cancel()
 			return nil, downloaded, skipped, err
 		}
-		entries[sourceURL] = manifestEntry{Source: sourceURL, File: file, SHA256: digest, Previous: entry.Previous}
-		images[sourceURL] = "/api/assets/" + file
+		entry := entries[item.sourceURL]
+		entries[item.sourceURL] = manifestEntry{Source: item.sourceURL, File: item.file, SHA256: item.digest, Previous: entry.Previous}
+		images[item.sourceURL] = "/api/assets/" + item.file
 		downloaded++
 		m.setStatus(func(s *contracts.ItemsUpdateStatus) { s.ImagesDone++ })
 	}
@@ -573,6 +611,7 @@ func atomicJSON(name string, value any) error {
 }
 
 func (m *itemsManager) run(ctx context.Context, includeImages bool) error {
+	mode := m.mode()
 	// Every fetch reports itself so the dialog can show the real sub-step that is in flight.
 	download := func(detail string) {
 		m.setStatus(func(s *contracts.ItemsUpdateStatus) { s.Phase, s.Detail = "download", detail })
@@ -581,24 +620,24 @@ func (m *itemsManager) run(ctx context.Context, includeImages bool) error {
 	var traders map[string]upstreamTrader
 	var zh, en map[string]string
 	download("items")
-	if err := m.fetchJSON(ctx, "items", &source); err != nil {
+	if err := m.fetchJSON(ctx, mode, "items", &source); err != nil {
 		return err
 	}
 	download("items_zh")
-	if err := m.fetchJSON(ctx, "items_zh", &zh); err != nil {
+	if err := m.fetchJSON(ctx, mode, "items_zh", &zh); err != nil {
 		return err
 	}
 	download("items_en")
-	if err := m.fetchJSON(ctx, "items_en", &en); err != nil {
+	if err := m.fetchJSON(ctx, mode, "items_en", &en); err != nil {
 		return err
 	}
 	download("traders")
-	if err := m.fetchJSON(ctx, "traders", &traders); err != nil {
+	if err := m.fetchJSON(ctx, mode, "traders", &traders); err != nil {
 		return err
 	}
 	var traderEN map[string]string
 	download("traders_en")
-	if err := m.fetchJSON(ctx, "traders_en", &traderEN); err != nil {
+	if err := m.fetchJSON(ctx, mode, "traders_en", &traderEN); err != nil {
 		return err
 	}
 	for key, value := range traderEN {
@@ -607,20 +646,20 @@ func (m *itemsManager) run(ctx context.Context, includeImages bool) error {
 	var tasks upstreamTasks
 	var tasksZh, tasksEn map[string]string
 	download("tasks")
-	if err := m.fetchJSON(ctx, "tasks", &tasks); err != nil {
+	if err := m.fetchJSON(ctx, mode, "tasks", &tasks); err != nil {
 		return err
 	}
 	download("tasks_zh")
-	if err := m.fetchJSON(ctx, "tasks_zh", &tasksZh); err != nil {
+	if err := m.fetchJSON(ctx, mode, "tasks_zh", &tasksZh); err != nil {
 		return err
 	}
 	download("tasks_en")
-	if err := m.fetchJSON(ctx, "tasks_en", &tasksEn); err != nil {
+	if err := m.fetchJSON(ctx, mode, "tasks_en", &tasksEn); err != nil {
 		return err
 	}
 	var barters []upstreamBarter
 	download("barters")
-	if err := m.fetchJSON(ctx, "barters", &barters); err != nil {
+	if err := m.fetchJSON(ctx, mode, "barters", &barters); err != nil {
 		return err
 	}
 	taskNamesZh := taskNamesFromJSON(tasksZh)
@@ -649,9 +688,12 @@ func (m *itemsManager) run(ctx context.Context, includeImages bool) error {
 		}
 	}
 	m.setStatus(func(s *contracts.ItemsUpdateStatus) { s.Phase, s.Detail = "parse", "catalog" })
-	for locale, catalog := range map[string]contracts.ItemsCatalog{"zh": itemCatalog(m.mode(), source, traders, zh, en, images, "zh", taskNamesZh, tasks, barters), "en": itemCatalog(m.mode(), source, traders, zh, en, images, "en", taskNamesEn, tasks, barters)} {
+	for locale, catalog := range map[string]contracts.ItemsCatalog{"zh": itemCatalog(mode, source, traders, zh, en, images, "zh", taskNamesZh, tasks, barters), "en": itemCatalog(mode, source, traders, zh, en, images, "en", taskNamesEn, tasks, barters)} {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		m.setStatus(func(s *contracts.ItemsUpdateStatus) { s.Phase, s.Detail = "write", "items_"+locale })
-		if err := atomicJSON(m.catalogPath(locale), catalog); err != nil {
+		if err := atomicJSON(m.catalogPathFor(mode, locale), catalog); err != nil {
 			return err
 		}
 	}

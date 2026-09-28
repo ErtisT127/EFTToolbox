@@ -31,7 +31,13 @@ export function selectableFloors(data: MapData, basemap: string) {
   );
 }
 
-const locale = 'zh-CN';
+// The UI language, applied at boot from user settings; map data requests follow it so map and
+// marker names render in the same language as the interface.
+let locale = 'zh-CN';
+
+export function setLocale(next: string) {
+  locale = next;
+}
 
 const defaultGroups = ['extracts', 'landmarks'];
 
@@ -283,16 +289,21 @@ export class Workspace {
   }
 
   async initialize() {
+    const sequence = ++this.sequence;
+    this.controller?.abort();
+    this.controller = new AbortController();
+    const signal = this.controller.signal;
     this.loading = true;
     this.error = '';
     this.changed();
     try {
       const [catalog, preferences, stickers, calibratorPreferences] = await Promise.all([
-        request<MapSummary[]>(`/api/maps?locale=${locale}`),
-        request<Preferences>('/api/map-preferences'),
-        request<Sticker[]>('/api/stickers'),
-        request<CalibratorPreferences>('/api/calibration-preferences'),
+        request<MapSummary[]>(`/api/maps?locale=${locale}`, { signal }),
+        request<Preferences>('/api/map-preferences', { signal }),
+        request<Sticker[]>('/api/stickers', { signal }),
+        request<CalibratorPreferences>('/api/calibration-preferences', { signal }),
       ]);
+      if (sequence !== this.sequence) return;
       if (
         !isUsableMapCatalog(catalog) ||
         !Array.isArray(stickers) ||
@@ -322,9 +333,11 @@ export class Workspace {
         this.changed();
       }
     } catch (error) {
-      this.error = error instanceof Error ? error.message : 'errors.request_failed';
-      this.loading = false;
-      this.changed();
+      if (sequence === this.sequence) {
+        this.error = error instanceof Error ? error.message : 'errors.request_failed';
+        this.loading = false;
+        this.changed();
+      }
     }
   }
 

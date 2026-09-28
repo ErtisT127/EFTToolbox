@@ -280,7 +280,7 @@ internal sealed class OverlayRenderer : IDisposable
         var pad = m.Pad;
         var titleCenter = m.Edge + m.TitleHeight / 2;
         if (panel.Title.Texture != 0)
-            draw.AddImage(panel.Title.Texture, new Vector2(pad, titleCenter - panel.Title.Size.Y / 2), new Vector2(pad + panel.Title.Size.X, titleCenter + panel.Title.Size.Y / 2));
+            AddPanelImage(draw, panel.Title.Texture, panel.Title.Size, new Vector2(pad, titleCenter - panel.Title.Size.Y / 2));
         var (closeMin, closeMax) = m.CloseButton(width);
         var center = (closeMin + closeMax) / 2;
         var cross = 4.5f * panel.Scale;
@@ -306,9 +306,7 @@ internal sealed class OverlayRenderer : IDisposable
                     top += spinner + gap;
                 }
                 if (panel.Message.Texture != 0)
-                {
-                    draw.AddImage(panel.Message.Texture, new Vector2(width / 2 - panel.Message.Size.X / 2, top), new Vector2(width / 2 + panel.Message.Size.X / 2, top + panel.Message.Size.Y));
-                }
+                    AddPanelImage(draw, panel.Message.Texture, panel.Message.Size, new Vector2(width / 2 - panel.Message.Size.X / 2, top));
             }
             return;
         }
@@ -324,7 +322,9 @@ internal sealed class OverlayRenderer : IDisposable
             draw.PushClipRect(new Vector2(pad, rowsTop), new Vector2(width - pad, rowsTop + rowsHeight), true);
             for (var index = 0; index < panel.Items.Count; index++)
             {
-                var rowTop = rowsTop + index * m.RowHeight - panel.Scroll;
+                // The list is a grid of whole pixels; a fractional scroll would put every row — its
+                // plates, artwork and text — between two pixels.
+                var rowTop = rowsTop + index * m.RowHeight - MathF.Round(panel.Scroll);
                 if (rowTop + m.RowHeight < rowsTop || rowTop > rowsTop + rowsHeight) continue;
                 var item = panel.Items[index];
                 var box = m.Thumb;
@@ -344,7 +344,7 @@ internal sealed class OverlayRenderer : IDisposable
                 if (item.Name.Texture != 0)
                 {
                     var nameTop = rowTop + (m.RowHeight - item.Name.Size.Y) / 2;
-                    draw.AddImage(item.Name.Texture, new Vector2(columns.Name, nameTop), new Vector2(columns.Name + item.Name.Size.X, nameTop + item.Name.Size.Y));
+                    AddPanelImage(draw, item.Name.Texture, item.Name.Size, new Vector2(columns.Name, nameTop));
                 }
                 // Trader: one centred unit per row — portrait, then the price in a fixed slot — so the
                 // portraits form a column and the prices start at the same x.
@@ -387,7 +387,20 @@ internal sealed class OverlayRenderer : IDisposable
     {
         if (text.Texture == 0) return;
         var x = centered ? edge - text.Size.X / 2 : edge;
-        draw.AddImage(text.Texture, new Vector2(x, centerY - text.Size.Y / 2), new Vector2(x + text.Size.X, centerY + text.Size.Y / 2));
+        AddPanelImage(draw, text.Texture, text.Size, new Vector2(x, centerY - text.Size.Y / 2));
+    }
+
+    /// <summary>
+    /// The sampler is linear, so a glyph quad that lands on a half pixel is smeared across two —
+    /// and the price columns, centred on arithmetic that halves whatever width the widest number
+    /// happens to have, land on one about half the time. Rounding the destination keeps the texture
+    /// texel-for-texel with the screen; the dropped sub-pixel is invisible either way.
+    /// </summary>
+    private static void AddPanelImage(ImDrawListPtr draw, nint texture, Vector2 size, Vector2 topLeft)
+    {
+        var x = MathF.Round(topLeft.X);
+        var y = MathF.Round(topLeft.Y);
+        draw.AddImage(texture, new Vector2(x, y), new Vector2(x + size.X, y + size.Y));
     }
 
     private static void DrawSpinner(ImDrawListPtr draw, Vector2 center, float phase, float scale)

@@ -4,9 +4,10 @@ import { CalibratorPage } from '../pages/calibrator/CalibratorPage';
 import { SettingsPage } from '../pages/settings/SettingsPage';
 import { AppHeader, type AppPage } from '../components/AppHeader';
 import { NoticeHost } from '../components/Notice';
-import { workspace } from '../stores/workspaceStore';
-import { useLocale } from '../hooks/useLocale';
+import { workspace, loadUserSettings, setLocale } from '../stores/workspaceStore';
+import { useLocale, type LocaleKey } from '../hooks/useLocale';
 import { Check, Radio } from 'lucide-react';
+import i18n from '../i18n';
 import { gameMonitor } from '../stores/gameMonitorStore';
 import { useGlobalErrorRecovery } from '../hooks/useGlobalErrorRecovery';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -15,12 +16,12 @@ import { DataLoadError } from '../lib/errors';
 import { notices } from '../stores/noticeStore';
 import { ItemsPage } from '../pages/items/ItemsPage';
 
-type SettingsTab = 'map' | 'hotkeys' | 'gameMonitor' | 'recognition';
+type SettingsTab = 'system' | 'map' | 'recognition' | 'hotkeys';
 
 export function AppShell() {
   const [page, setPage] = useState<AppPage>('map');
   // Which settings tab a jump lands on: the map opens its own, the items page the recognition tab.
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>('map');
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('system');
   // Resetting module data is destructive, so it asks with the app's own dialog instead of the
   // browser's default confirm.
   const [pendingReset, setPendingReset] = useState<'calibrator' | 'settings' | null>(null);
@@ -31,7 +32,15 @@ export function AppShell() {
   useEffect(() => {
     if (!initialized.current) {
       initialized.current = true;
-      void workspace.initialize();
+      // The interface language lives in user settings: apply it before the workspace loads so the
+      // map catalog and map data are fetched in the language the UI renders in.
+      void loadUserSettings()
+        .then((settings) => {
+          void i18n.changeLanguage(settings.language);
+          setLocale(settings.language);
+        })
+        .catch(() => {})
+        .finally(() => void workspace.initialize());
       void gameMonitor.initialize();
     }
     const disconnect = overlay.connect();
@@ -149,7 +158,7 @@ export function AppShell() {
             aria-live={failed ? 'assertive' : 'polite'}
           >
             {failed ? (
-              <span className="danger">{t(failed)}</span>
+              <span className="danger">{t(failed as LocaleKey)}</span>
             ) : saving ? (
               <>
                 <span className="small-spinner" aria-hidden="true" />

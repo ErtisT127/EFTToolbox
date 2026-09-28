@@ -11,10 +11,10 @@ const root = new URL('../../data/upstream/', import.meta.url);
 const assetsRoot = new URL('assets/', root);
 const dataRoot = new URL('modes/pvp/', root);
 const load = async (name) => JSON.parse(await readFile(new URL(name, dataRoot), 'utf8'));
-const catalog = await load('catalog.json');
+const catalog = await load('catalog_zh.json');
 
 test('floor options respect basemap availability and never switch basemap implicitly', async () => {
-  const data = await load('maps/customs.json');
+  const data = await load('maps/customs_zh.json');
   const rasterOnly = data.floors.find((f) => !f.svgGroups.length);
   assert.ok(rasterOnly);
   assert.ok(!selectableFloors(data, 'svg').some((f) => f.id === rasterOnly.id));
@@ -34,7 +34,7 @@ test('floor options respect basemap availability and never switch basemap implic
 });
 
 test('daylight icons follow each clock independently at dawn/day/dusk/night boundaries', async () => {
-  const { clock } = await load('maps/interchange.json');
+  const { clock } = await load('maps/interchange_zh.json');
   for (const [time, phase] of [
     ['00:00:00', 'night'],
     ['04:59:59', 'night'],
@@ -57,7 +57,7 @@ test('daylight icons follow each clock independently at dawn/day/dusk/night boun
 test('tile grid matches upstream world transform for rotated and nonuniform maps', async () => {
   const sources = JSON.parse(await readFile(new URL('source/map-rules.json', root), 'utf8'));
   for (const id of ['factory', 'lab', 'reserve', 'icebreaker', 'the-labyrinth']) {
-    const map = await load(`maps/${id}.json`);
+    const map = await load(`maps/${id}_zh.json`);
     const rule = sources
       .flatMap((s) => s.maps)
       .find((r) => map.tiles.some((t) => t.sourceUrl === r.tilePath));
@@ -82,7 +82,7 @@ test('tile grid matches upstream world transform for rotated and nonuniform maps
 test('zoom bounds follow each map: one upscale step over native tiles, fit-based floor', async () => {
   const ceilings = new Set();
   for (const summary of catalog) {
-    const map = await load(`maps/${summary.id}.json`);
+    const map = await load(`maps/${summary.id}_zh.json`);
     const wide = zoomRange(map, 1600, 900);
     const narrow = zoomRange(map, 640, 480);
     assert.ok(wide.min < wide.max, `${summary.id}: ${wide.min}..${wide.max}`);
@@ -102,7 +102,7 @@ test('zoom bounds follow each map: one upscale step over native tiles, fit-based
 
 test('all shipped maps reference real SVG groups and coordinates round-trip', async () => {
   for (const summary of catalog) {
-    const map = await load(`maps/${summary.id}.json`);
+    const map = await load(`maps/${summary.id}_zh.json`);
     const svg = map.svgUrl
       ? await readFile(new URL(map.svgUrl.slice('/api/assets/'.length), assetsRoot), 'utf8')
       : '<svg/>';
@@ -203,7 +203,7 @@ test('rotation orientation and stroke hit testing have independent expected valu
 
 test('serial saves coalesce edits, retain failed edits, retry, and preserve map history', async () => {
   const previous = globalThis.fetch;
-  const map = await load('maps/factory.json');
+  const map = await load('maps/factory_zh.json');
   const w = new Workspace();
   const session = {
     data: map,
@@ -278,8 +278,8 @@ test('serial saves coalesce edits, retain failed edits, retry, and preserve map 
 test('a slow previous map response cannot replace the active map', async () => {
   const previous = globalThis.fetch,
     w = new Workspace();
-  const first = await load('maps/factory.json'),
-    second = await load('maps/interchange.json');
+  const first = await load('maps/factory_zh.json'),
+    second = await load('maps/interchange_zh.json');
   const pending = [];
   globalThis.fetch = (url, init) => {
     if (url === '/api/logs') return Promise.resolve(new Response(null, { status: 204 }));

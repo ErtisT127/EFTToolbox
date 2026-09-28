@@ -40,16 +40,21 @@ const staticMarkers = await read('maps-static.json');
 // `translations` below merges zh over en, so English map names need their own table. The older
 // maps also carry a name in the tarkovdata baseline, but it stops before the newer ones and the
 // subtitle would then fall back to a raw id like `the-labyrinth`.
-const mapNamesEn = (await read('maps_en.json')).data;
+const mapsEn = (await read('maps_en.json')).data;
+const tasksEn = (await read('tasks_en.json')).data;
+const itemsEn = (await read('items_en.json')).data;
+const tradersEn = (await read('traders_en.json')).data;
+// The en-only layer the English output translates from; `translations` still merges zh over it.
+const translationsEn = { ...mapsEn, ...tasksEn, ...itemsEn, ...tradersEn };
 const translations = Object.assign(
   {},
-  (await read('maps_en.json')).data,
-  (await read('tasks_en.json')).data,
+  mapsEn,
+  tasksEn,
   (await read('maps_zh.json')).data,
   (await read('tasks_zh.json')).data,
-  (await read('items_en.json')).data,
+  itemsEn,
   (await read('items_zh.json')).data,
-  (await read('traders_en.json')).data,
+  tradersEn,
   (await read('traders_zh.json')).data,
 );
 const iconMapping = await read('tarkov-dev-icons/mapping.json');
@@ -70,11 +75,27 @@ const iconAliases = {
 // table only covers values upstream ships untranslated (an identity entry such as Hazard).
 const hazardNames = { hazard: '危险区' };
 const factionNames = { pmc: 'PMC', scav: 'Scav', shared: '共享', sniper_scav: '狙击手 Scav' };
+const factionNamesEn = { pmc: 'PMC', scav: 'Scav', shared: 'Shared', sniper_scav: 'Sniper Scav' };
 const adaptationData = JSON.parse(
   await readFile(path.join(root, 'scripts/config/map-adaptations.json'), 'utf8'),
 );
 const adaptations = adaptationData.maps;
 const text = (value) => translations[value] || value || '';
+// The English counterpart of `text`: upstream values are already English, so an untranslated
+// value passes through and a missing one falls back to whatever the caller supplied.
+const en = (value) => translationsEn[value] || value || '';
+// The per-language projection: the build carries `name` (zh) and `nameEn` side by side, and each
+// generated file keeps only one — `nameEn` wins for `en` when present, and the build-only field
+// never reaches disk.
+const project = (value, lang) => {
+  if (Array.isArray(value)) return value.map((entry) => project(entry, lang));
+  if (!value || typeof value !== 'object') return value;
+  const out = {};
+  for (const [key, child] of Object.entries(value))
+    if (key !== 'nameEn') out[key] = project(child, lang);
+  if (Object.hasOwn(value, 'nameEn') && lang === 'en') out.name = value.nameEn ?? value.name;
+  return out;
+};
 // Every file under assets, as paths relative to it; sticker references are validated against this.
 async function walkFiles(directory, prefix = '') {
   const files = [];
@@ -182,6 +203,7 @@ if (unknownFields.size || missingFields.size)
     }`,
   );
 const summaries = [];
+const summariesEn = [];
 const mapOrder = [
   'groundzero',
   'factory',
@@ -280,6 +302,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
     const floors = meta.svg.floors.map((f) => ({
       id: f,
       name: f.replaceAll('_', ' '),
+      nameEn: f.replaceAll('_', ' '),
       svgGroups: groupIds.includes(groupFor(f)) ? [groupFor(f)] : [],
     }));
     const requiredGroups = [meta.rule.svgLayer, ...meta.layers.map((l) => l.svgLayer)].filter(
@@ -330,12 +353,17 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
     const layerRules = meta.layers.flatMap((layer) => {
       const floorId = layer.id;
       const floor = floors.find((f) => f.id === floorId);
-      if (floor) floor.name = mapTranslations[layer.name] || layer.name;
+      if (floor) {
+        floor.name = mapTranslations[layer.name] || layer.name;
+        floor.nameEn = layer.name;
+      }
       return floorIds.has(floorId) ? [{ floorId, extents: layer.extents || [] }] : [];
     });
     const base = floors.find((f) => f.id === baseFloor);
-    if (base && !meta.layers.some((layer) => layer.id === baseFloor))
+    if (base && !meta.layers.some((layer) => layer.id === baseFloor)) {
       base.name = mapTranslations['1st Floor'] || base.name;
+      base.nameEn = '1st Floor';
+    }
     if (floors.length > 1)
       for (const floor of floors) {
         if (floor.id !== baseFloor && !layerRules.some((r) => r.floorId === floor.id))
@@ -392,7 +420,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
     const categories = new Map(),
       markers = [],
       mapTasks = new Map();
-    const category = (key, name, groupId, color, symbol) => {
+    const category = (key, name, groupId, color, symbol, nameEn) => {
       const icon =
         iconMapping[
           iconAliases[key] || (key.startsWith('loose/') ? 'loose_loot' : key.replaceAll('/', '_'))
@@ -401,6 +429,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
         categories.set(key, {
           id: key,
           name,
+          nameEn: nameEn ?? en(name),
           groupId,
           color,
           symbol,
@@ -408,7 +437,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
         });
       return key;
     };
-    function add(entry, categoryId, name, taskId = '', explicit) {
+    function add(entry, categoryId, name, taskId = '', explicit, nameEn) {
       const p = entry.position;
       if (!explicit && (!p || ![p.x, p.z].every(Number.isFinite))) {
         warn('missing coordinates');
@@ -445,6 +474,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
       markers.push({
         id: markerId,
         name: text(name),
+        nameEn: nameEn ?? en(name),
         categoryId,
         // Normalised so the primary always leads and nothing repeats. The `used` union, the
         // conservation accounting and the dashboard's visibility predicate all rely on both, and an
@@ -475,6 +505,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
           'extracts',
           green,
           'exit',
+          factionNamesEn[e.faction] || 'Shared',
         ),
         e.name,
       );
@@ -482,8 +513,11 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
     for (const e of apiMap?.transits || [])
       add(
         e,
-        category('transit', '转移点', 'extracts', green, 'exit'),
+        category('transit', '转移点', 'extracts', green, 'exit', 'Transit'),
         e.description || `前往 ${text(raw.maps[e.map]?.name)}`,
+        '',
+        undefined,
+        en(e.description) || `To ${en(raw.maps[e.map]?.name || '')}`,
       );
     count('spawns', (apiMap?.spawns || []).length);
     for (const e of apiMap?.spawns || []) {
@@ -514,8 +548,18 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
       if (side)
         add(
           e,
-          category(`spawn/${side}`, factionNames[side], 'spawns', blue, 'spawn'),
+          category(
+            `spawn/${side}`,
+            factionNames[side],
+            'spawns',
+            blue,
+            'spawn',
+            factionNamesEn[side],
+          ),
           `${factionNames[side]} 出生点`,
+          '',
+          undefined,
+          `${factionNamesEn[side] || side} spawn`,
         );
       else counts.unclassified++;
     }
@@ -540,28 +584,35 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
               'spawns',
               red,
               'boss',
+              specific ? en(mob.name) : 'Boss',
             ),
             text(raw.mobs[boss.mob]?.name || boss.mob),
+            '',
+            undefined,
+            en(raw.mobs[boss.mob]?.name || boss.mob),
           );
     }
-    for (const [key, label, symbol] of [
-      ['locks', '锁', 'lock'],
-      ['switches', '开关', 'switch'],
-      ['stationaryWeapons', '固定机枪', 'weapon'],
+    for (const [key, label, symbol, labelEn] of [
+      ['locks', '锁', 'lock', 'Lock'],
+      ['switches', '开关', 'switch', 'Switch'],
+      ['stationaryWeapons', '固定机枪', 'weapon', 'Stationary Gun'],
     ]) {
       count(key, (apiMap?.[key] || []).length);
       for (const e of apiMap?.[key] || [])
         add(
           e.position ? e : { ...e, position: e },
-          category(key, label, 'usable', blue, symbol),
+          category(key, label, 'usable', blue, symbol, labelEn),
           e.name || label,
+          '',
+          undefined,
+          en(e.name) || labelEn,
         );
     }
     count('btrStops', (apiMap?.btrStops || []).length);
     for (const stop of apiMap?.btrStops || [])
       add(
         { ...stop, position: stop },
-        category('btrStops', 'BTR 停车点', 'landmarks', blue, 'btr'),
+        category('btrStops', 'BTR 停车点', 'landmarks', blue, 'btr', 'BTR Stop'),
         stop.name,
       );
     count('hazards', (apiMap?.hazards || []).length);
@@ -575,13 +626,21 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
           'hazards',
           red,
           'hazard',
+          en(e.name) || e.hazardType,
         ),
         e.name || e.hazardType,
       );
     }
     count('artillery zones', (apiMap?.artillery?.zones || []).length);
     for (const zone of apiMap?.artillery?.zones || [])
-      add(zone, category('hazard/mortar', '迫击炮', 'hazards', red, 'hazard'), '迫击炮轰击区域');
+      add(
+        zone,
+        category('hazard/mortar', '迫击炮', 'hazards', red, 'hazard', 'Mortar'),
+        '迫击炮轰击区域',
+        '',
+        undefined,
+        'Mortar',
+      );
     count('lootContainers', (apiMap?.lootContainers || []).length);
     for (const e of apiMap?.lootContainers || []) {
       const c = raw.lootContainers[e.lootContainer];
@@ -594,8 +653,12 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
           'containers',
           gold,
           'container',
+          en(c?.name) || 'Container',
         ),
         text(c?.name || '容器'),
+        '',
+        undefined,
+        en(c?.name) || 'Container',
       );
     }
     count('lootLoose', (apiMap?.lootLoose || []).length);
@@ -620,7 +683,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
       // never exist and the dashboard would have nothing to resolve it against.
       for (const [index, id] of categoryIds.entries()) {
         const group = itemsData.handbookCategories[groups[index]];
-        category(id, group ? text(group.name) : id, 'loose', gold, 'loot');
+        category(id, group ? text(group.name) : id, 'loose', gold, 'loot', en(group?.name) || id);
         if (group && itemImages.has(group.imageLink))
           categories.get(id).iconUrl = itemImages.get(group.imageLink);
       }
@@ -640,6 +703,9 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
         // The primary only steers symbol, colour and the popup label; membership is the whole list.
         categoryIds[0],
         items.length ? items.map((i) => text(i.name)).join('、') : '散落物资',
+        '',
+        undefined,
+        items.length ? items.map((i) => en(i.name)).join(', ') : 'Loose Loot',
       );
     }
     for (const task of tasks)
@@ -650,7 +716,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
           'tasks',
           gold,
           'task',
-          true,
+          objective.type === 'findQuestItem' ? 'Item' : 'Objective',
         );
         const before = markers.length;
         const zones = (objective.zones || []).filter((zone) => zone.map === meta.tdevId);
@@ -661,7 +727,8 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
         );
         count('task positions', positions.length);
         for (const position of positions) add({ position }, key, objective.description, task.id);
-        if (markers.length > before) mapTasks.set(task.id, { id: task.id, name: text(task.name) });
+        if (markers.length > before)
+          mapTasks.set(task.id, { id: task.id, name: text(task.name), nameEn: en(task.name) });
       }
     for (const [key, entries] of Object.entries(staticMarkers[meta.ruleMap] || {})) {
       count(`static ${key}`, entries.length);
@@ -674,6 +741,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
             'spawns',
             blue,
             'spawn',
+            factionNamesEn[key.replace('spawn_', '')] || key.replaceAll('_', ' '),
           ),
           entry.name,
         );
@@ -718,8 +786,11 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
           labelSize,
           labelRotation,
         },
-        category('landmark', '地名', 'landmarks', '#C8C2A6', 'label'),
+        category('landmark', '地名', 'landmarks', '#C8C2A6', 'label', 'Place Names'),
         mapTranslations[label.text] || label.text,
+        '',
+        undefined,
+        en(label.text) || label.text,
       );
     }
     closeSite();
@@ -763,7 +834,8 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
       schemaVersion: 1,
       id,
       name: text(apiMap?.name) || meta.locale.en,
-      subtitle: mapNamesEn[apiMap?.name] || meta.locale.en,
+      nameEn: en(apiMap?.name) || meta.locale.en,
+      subtitle: mapsEn[apiMap?.name] || meta.locale.en,
       iconUrl: mapIcons[meta.ruleMap] || '',
       defaultFloor: meta.svg.defaultFloor,
       baseFloor: meta.svg.baseFloor,
@@ -795,10 +867,18 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
         path.join(source, 'current-svg', meta.svg.file),
         path.join(upstream, 'assets', 'maps', 'svg', meta.svg.file),
       );
-    await writeFile(path.join(output, 'maps', `${id}.json`), JSON.stringify(map));
+    await writeFile(path.join(output, 'maps', `${id}_zh.json`), JSON.stringify(project(map, 'zh')));
+    await writeFile(path.join(output, 'maps', `${id}_en.json`), JSON.stringify(project(map, 'en')));
     summaries.push({
       id,
       name: map.name,
+      subtitle: map.subtitle,
+      iconUrl: map.iconUrl,
+      defaultFloor: map.defaultFloor,
+    });
+    summariesEn.push({
+      id,
+      name: map.nameEn || map.name,
       subtitle: map.subtitle,
       iconUrl: map.iconUrl,
       defaultFloor: map.defaultFloor,
@@ -828,20 +908,26 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
     report.omittedMaps.push({ id, reason: String(error) });
   }
 }
-// Remove only previously generated maps that the current SVG catalog no longer supports.
+// Remove previously generated maps the current SVG catalog no longer supports, plus the
+// unsuffixed single-language files earlier versions of this script wrote.
 for (const file of await readdir(path.join(output, 'maps'))) {
-  if (
-    file.endsWith('.json') &&
-    Object.hasOwn(previousBaseline, file.slice(0, -5)) &&
-    !Object.hasOwn(baseline, file.slice(0, -5))
-  )
-    await unlink(path.join(output, 'maps', file));
+  const localized = /^(.+?)_(zh|en)\.json$/.exec(file);
+  if (localized) {
+    if (!Object.hasOwn(baseline, localized[1])) await unlink(path.join(output, 'maps', file));
+    continue;
+  }
+  if (file.endsWith('.json')) await unlink(path.join(output, 'maps', file));
 }
 summaries.sort(
   (a, b) => (mapRanks.get(a.id) ?? mapOrder.length) - (mapRanks.get(b.id) ?? mapOrder.length),
 );
-await writeFile(path.join(output, 'catalog.json'), JSON.stringify(summaries));
-await writeFile(path.join(upstream, 'catalog.json'), JSON.stringify(summaries));
+summariesEn.sort(
+  (a, b) => (mapRanks.get(a.id) ?? mapOrder.length) - (mapRanks.get(b.id) ?? mapOrder.length),
+);
+await writeFile(path.join(output, 'catalog_zh.json'), JSON.stringify(summaries));
+await writeFile(path.join(output, 'catalog_en.json'), JSON.stringify(summariesEn));
+await writeFile(path.join(upstream, 'catalog_zh.json'), JSON.stringify(summaries));
+await writeFile(path.join(upstream, 'catalog_en.json'), JSON.stringify(summariesEn));
 // The game log identifies locations by EFT scene/name ids rather than our stable map id. Keep the
 // lookup table mode-local so a mode can evolve independently without changing the public map shape.
 const locations = {};

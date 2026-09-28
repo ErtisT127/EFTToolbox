@@ -30,8 +30,17 @@ internal sealed class MapTextRasterizer : IDisposable
                 }
                 return cached.Face;
             }
-            var bold = request.Role != "annotation";
-            using var latin = new SKPaint { Typeface = Face(request.Role == "named" ? MapDisplay.NamedFont : bold ? MapDisplay.LandmarkFont : MapDisplay.AnnotationFont), TextSize = request.Size * request.Dpi, IsAntialias = true, Color = SKColor.Parse(request.Color) };
+            // Prices read as numbers, so they take the monospaced face the dashboard's tables use;
+            // everything else keeps the condensed face the map is drawn with.
+            var bold = request.Role is not ("annotation" or "price");
+            var latinFace = request.Role switch
+            {
+                "named" => MapDisplay.NamedFont,
+                "price" => MapDisplay.MonoFont,
+                "annotation" => MapDisplay.AnnotationFont,
+                _ => MapDisplay.LandmarkFont,
+            };
+            using var latin = new SKPaint { Typeface = Face(latinFace), TextSize = request.Size * request.Dpi, IsAntialias = true, Color = SKColor.Parse(request.Color) };
             using var cjk = new SKPaint { Typeface = Face(bold ? MapDisplay.CjkBoldFont : MapDisplay.CjkRegularFont), TextSize = latin.TextSize, IsAntialias = true, Color = latin.Color };
             using var latinFont = new SKFont(latin.Typeface, latin.TextSize);
             IEnumerable<(string Text, SKPaint Paint)> Runs(string text)

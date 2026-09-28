@@ -31,7 +31,7 @@ import type {
 import { isUsableMapData, request, workspace, useWorkspace } from '../../stores/workspaceStore';
 import { useOverlay } from '../../stores/overlayStore';
 import { CalibrationViewport, MIN_REGION_SIZE } from './CalibrationViewport';
-import { useLocale } from '../../hooks/useLocale';
+import { useLocale, type LocaleKey } from '../../hooks/useLocale';
 import { NumericField } from '../../components/NumericField';
 import { NumberStepper } from '../../components/NumberStepper';
 import { CalibrationRegionLimits } from '../../../../contracts/ts/ipc.gen';
@@ -143,7 +143,7 @@ function calibrationKey(mapId: string, basemap: Basemap) {
 }
 
 export function CalibratorPage() {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const w = useWorkspace(workspace);
   const overlay = useOverlay();
   const [tool, setTool] = useState<Tool>('select');
@@ -232,7 +232,7 @@ export function CalibratorPage() {
       try {
         mapEntries = await Promise.all(
           w.catalog.map(async (map) => {
-            const data = await request<unknown>(`/api/maps/${map.id}?locale=zh-CN`);
+            const data = await request<unknown>(`/api/maps/${map.id}?locale=${locale}`);
             if (!isUsableMapData(data))
               throw new DataLoadError('errors.map_data_invalid', 'calibrator');
             return [map.id, data] as const;
@@ -292,7 +292,7 @@ export function CalibratorPage() {
     return () => {
       cancelled = true;
     };
-  }, [w.catalog, t, reloadToken]);
+  }, [w.catalog, t, locale, reloadToken]);
   useEffect(() => {
     const next = calibrationData.get(activeCalibrationKey);
     if (!next) return;
@@ -428,7 +428,11 @@ export function CalibratorPage() {
               replaceCalibration(confirmed);
             notices.push(t(message));
             notices.push(
-              t(refreshError instanceof Error ? refreshError.message : 'errors.request_failed'),
+              t(
+                refreshError instanceof Error
+                  ? (refreshError.message as LocaleKey)
+                  : 'errors.request_failed',
+              ),
             );
           }
           return;
@@ -443,7 +447,7 @@ export function CalibratorPage() {
             replaceCalibration(confirmed);
           }
         }
-        notices.push(t(message));
+        notices.push(t(message as LocaleKey));
       });
   };
   const scheduleSave = (value: CalibrationDocument, immediate = false) => {
@@ -705,7 +709,9 @@ export function CalibratorPage() {
       })
       .catch((error: unknown) => {
         if (!cancelled)
-          notices.push(t(error instanceof Error ? error.message : 'errors.calibration_invalid'));
+          notices.push(
+            t(error instanceof Error ? (error.message as LocaleKey) : 'errors.calibration_invalid'),
+          );
       });
     return () => {
       cancelled = true;
@@ -779,7 +785,9 @@ export function CalibratorPage() {
     void request('/api/data/reset-calibration', { method: 'POST' })
       .then(() => window.location.reload())
       .catch((error: unknown) =>
-        notices.push(t(error instanceof Error ? error.message : 'errors.data_reset_failed')),
+        notices.push(
+          t(error instanceof Error ? (error.message as LocaleKey) : 'errors.data_reset_failed'),
+        ),
       );
   };
   const openDataDirectory = () => {

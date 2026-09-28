@@ -18,7 +18,7 @@ import (
 
 func TestTileCacheAndValidation(t *testing.T) {
 	root, handler := mapFixture(t)
-	name := filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture.json")
+	name := filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture_zh.json")
 	var m contracts.MapData
 	if err := readJSON(name, &m); err != nil {
 		t.Fatal(err)

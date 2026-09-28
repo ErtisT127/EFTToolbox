@@ -51,7 +51,7 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 			defer func() { _ = r.Body.Close() }()
 			var entry clientLog
 			if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&entry); err != nil {
-				http.Error(w, "invalid log entry", http.StatusBadRequest)
+				apiError(w, http.StatusBadRequest, "log_entry_invalid")
 				return
 			}
 			entry.Component = strings.TrimSpace(entry.Component)
@@ -62,7 +62,7 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 				entry.Level = "error"
 			}
 			if err := logWriter.write(entry); err != nil {
-				http.Error(w, "log unavailable", http.StatusServiceUnavailable)
+				apiError(w, http.StatusServiceUnavailable, "log_unavailable")
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)

@@ -14,12 +14,23 @@ import (
 
 var errUserSettingsInvalid = errors.New("invalid saved user settings")
 
+var languages = []string{"zh-CN", "en-US"}
+
+// A missing or unknown language (an older settings file, a newer frontend) falls back to the
+// default instead of failing validation, so the rest of the settings still load.
+func normalizeLanguage(value *contracts.UserSettings) {
+	if !slices.Contains(languages, value.Language) {
+		value.Language = "zh-CN"
+	}
+}
+
 func defaultUserSettings() contracts.UserSettings {
 	return contracts.UserSettings{
 		SchemaVersion: 1,
 		Overlay:       defaultOverlaySettings(),
 		GameMonitor:   defaultGameMonitorSettings(),
 		Recognition:   defaultRecognitionSettings(),
+		Language:      "zh-CN",
 	}
 }
 
@@ -73,6 +84,7 @@ func readUserSettings(root string) (contracts.UserSettings, error) {
 	if value == nil {
 		return defaults, errUserSettingsInvalid
 	}
+	normalizeLanguage(value)
 	if decoder.Decode(new(any)) != io.EOF {
 		return *value, errUserSettingsInvalid
 	}
@@ -97,6 +109,7 @@ func (h *overlayHub) userSettings() (contracts.UserSettings, error) {
 }
 
 func (h *overlayHub) prepareUserSettings(value *contracts.UserSettings, checkMode bool) (*modeRepository, string) {
+	normalizeLanguage(value)
 	if value.SchemaVersion != 1 || !validGameMonitorSettings(value.GameMonitor) || !normalizeRecognition(&value.Recognition) {
 		return nil, "game_monitor_settings_invalid"
 	}

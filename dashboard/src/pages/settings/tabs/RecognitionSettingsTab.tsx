@@ -2,11 +2,12 @@ import {
   RecognitionSettingsLimits,
   type NumericLimit,
   type RecognitionSettings,
-} from '../../../../contracts/ts/ipc.gen';
-import { HintTooltip } from '../../components/HintTooltip';
-import { RangeSlider } from '../../components/RangeSlider';
-import { useOverlay } from '../../stores/overlayStore';
-import { useLocale } from '../../hooks/useLocale';
+} from '../../../../../contracts/ts/ipc.gen';
+import { HintTooltip } from '../../../components/HintTooltip';
+import { RecognitionTuningFields } from '../../../components/RecognitionTuningFields';
+import { RangeSlider } from '../../../components/RangeSlider';
+import { useOverlay } from '../../../stores/overlayStore';
+import { useLocale } from '../../../hooks/useLocale';
 
 /**
  * Every parameter that changes what the recognition finds, grouped by the step it belongs to. The
@@ -31,38 +32,12 @@ export function RecognitionSettingsTab() {
     <>
       <fieldset>
         <legend>{t('settings.recognitionGroup.thresholds')}</legend>
-        <div className="settings-field">
-          {label(
-            'recognition-ocr',
-            t('items.ocrConfidence'),
-            t('items.recognitionOcrConfidenceHint'),
-          )}
-          <RangeSlider
-            id="recognition-ocr"
-            value={settings.ocrConfidence}
-            min={limits.ocrConfidence.min}
-            max={limits.ocrConfidence.max}
-            step={limits.ocrConfidence.step}
-            format={(value) => value.toFixed(2)}
-            onChange={(value) => save({ ocrConfidence: value })}
-          />
-        </div>
-        <div className="settings-field">
-          {label(
-            'recognition-name',
-            t('items.nameSimilarity'),
-            t('items.recognitionNameSimilarityHint'),
-          )}
-          <RangeSlider
-            id="recognition-name"
-            value={settings.nameSimilarity}
-            min={limits.nameSimilarity.min}
-            max={limits.nameSimilarity.max}
-            step={limits.nameSimilarity.step}
-            format={(value) => value.toFixed(2)}
-            onChange={(value) => save({ nameSimilarity: value })}
-          />
-        </div>
+        <RecognitionTuningFields
+          settings={settings}
+          fields={['ocrConfidence', 'nameSimilarity']}
+          layout="settings"
+          onChange={save}
+        />
       </fieldset>
       <fieldset>
         <legend>{t('settings.recognitionGroup.ocr')}</legend>
@@ -114,24 +89,12 @@ export function RecognitionSettingsTab() {
             {t('items.templateStrict')}
           </HintTooltip>
         </label>
-        <div className="settings-field">
-          {label(
-            'recognition-template',
-            t('items.templateSimilarity'),
-            t('items.recognitionTemplateSimilarityHint'),
-          )}
-          <RangeSlider
-            id="recognition-template"
-            value={settings.templateSimilarity}
-            min={limits.templateSimilarity.min}
-            max={limits.templateSimilarity.max}
-            step={limits.templateSimilarity.step}
-            // Without the icon check this threshold decides nothing.
-            disabled={!settings.templateMatching}
-            format={(value) => value.toFixed(2)}
-            onChange={(value) => save({ templateSimilarity: value })}
-          />
-        </div>
+        <RecognitionTuningFields
+          settings={settings}
+          fields={['templateSimilarity']}
+          layout="settings"
+          onChange={save}
+        />
         <div className="settings-field">
           {label(
             'recognition-candidates',
@@ -202,22 +165,12 @@ export function RecognitionSettingsTab() {
       </fieldset>
       <fieldset>
         <legend>{t('settings.recognitionGroup.capture')}</legend>
-        <div className="settings-field">
-          {label(
-            'recognition-capture',
-            t('items.recognitionCaptureSize'),
-            t('items.recognitionCaptureSizeHint'),
-          )}
-          <RangeSlider
-            id="recognition-capture"
-            value={settings.captureWidth}
-            min={limits.captureWidth.min}
-            max={limits.captureWidth.max}
-            step={limits.captureWidth.step}
-            format={(value) => `${value}×${value}`}
-            onChange={(value) => save({ captureWidth: value, captureHeight: value })}
-          />
-        </div>
+        <RecognitionTuningFields
+          settings={settings}
+          fields={['captureWidth']}
+          layout="settings"
+          onChange={save}
+        />
       </fieldset>
       <fieldset>
         <legend>{t('settings.recognitionGroup.window')}</legend>

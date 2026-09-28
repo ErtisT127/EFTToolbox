@@ -151,17 +151,23 @@ export function MapCanvas(props: Props) {
       const positionKey = self
         ? `${self.playerId}:${self.mapPosition.x}:${self.mapPosition.y}`
         : '';
-      if (self && p.playerFollow !== false && positionKey !== followedPosition) {
-        followedPosition = positionKey;
-        const zoom = p.playerAutoZoom?.enabled ? p.playerAutoZoom.zoomLevel : map.getZoom();
-        map.setView(latLng(self.mapPosition), zoom, { animate: false });
+      if (self && positionKey !== followedPosition) {
+        // Centre and zoom follow independently: the settings expose them as separate switches, so
+        // either one is allowed to be on alone. A position that follows neither is left alone.
+        const center = p.playerFollow === false ? undefined : latLng(self.mapPosition);
+        const zoom = p.playerAutoZoom?.enabled ? p.playerAutoZoom.zoomLevel : undefined;
+        if (center || zoom !== undefined) {
+          followedPosition = positionKey;
+          map.setView(center ?? map.getCenter(), zoom ?? map.getZoom(), { animate: false });
+        }
       }
       for (const player of players.values()) {
         if (player.mapId !== p.data.id) continue;
         const element = document.createElement('div');
         element.className = 'player-marker';
-        // Teammates tint their own arrow; the local player keeps the accent colour.
-        if (!player.isSelf && player.color) element.style.background = player.color;
+        // Every arrow carries its owner's multiplayer colour — your own included, so the panel's
+        // choice is what you see; the CSS keeps the accent for an unset one.
+        if (player.color) element.style.background = player.color;
         // The arrow tip points up at zero degrees; rotate it to the player's heading.
         element.style.transform = `rotate(${player.heading}deg)`;
         element.style.opacity =
@@ -206,6 +212,17 @@ export function MapCanvas(props: Props) {
     let gesture: Gesture | null = null;
     let brushFrame = 0;
     let brushPreview: L.Polyline | null = null;
+    let dragFrame = 0;
+    let pendingDragDraft: Annotation[] | null = null;
+    const scheduleDragPaint = (draft: Annotation[]) => {
+      pendingDragDraft = draft;
+      if (dragFrame) return;
+      dragFrame = requestAnimationFrame(() => {
+        dragFrame = 0;
+        if (pendingDragDraft) paint(pendingDragDraft);
+        pendingDragDraft = null;
+      });
+    };
     function clearBrush() {
       cancelAnimationFrame(brushFrame);
       brushFrame = 0;
@@ -348,7 +365,7 @@ export function MapCanvas(props: Props) {
               ? { ...a, points: a.points.map((v) => ({ x: v.x + dx, y: v.y + dy })) }
               : a,
           );
-          paint(g.draft);
+          scheduleDragPaint(g.draft);
         } else {
           preview.clearLayers();
           L.rectangle([latLng(g.startPoint), latLng(p)], {
@@ -371,6 +388,9 @@ export function MapCanvas(props: Props) {
         if (g.accepted.distanceTo(endpoint) > 0) g.points.push(toPoint(endpoint));
       }
       clearBrush();
+      cancelAnimationFrame(dragFrame);
+      dragFrame = 0;
+      pendingDragDraft = null;
       gesture = null;
       host.classList.remove('panning');
       preview.clearLayers();

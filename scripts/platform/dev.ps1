@@ -11,7 +11,7 @@ $forceRebuild = $Rebuild -or ($args -contains '--rebuild')
 try {
     & pnpm.cmd install --frozen-lockfile
     if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
-    if (-not (Test-Path 'data/upstream/catalog.json')) { throw 'Map cache missing; run pnpm toolbox data refresh first.' }
+    if (-not (Test-Path 'data/upstream/catalog_zh.json')) { throw 'Map cache missing; run pnpm toolbox data refresh first.' }
     & pnpm.cmd toolbox data fonts --check
     if ($LASTEXITCODE -ne 0) { throw 'Display resources missing or changed; run pnpm toolbox data fonts.' }
     $env:EFT_TOOLBOX_DASHBOARD_DEV = '1'

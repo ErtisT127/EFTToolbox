@@ -6,7 +6,7 @@ import type { Tool, ToolOptions } from './MapCanvas';
 import { resolvePick, type ResolvedPick } from './StickerPicker';
 import { ColorPicker } from '../../components/ColorPicker';
 import { RangeSlider } from '../../components/RangeSlider';
-import { useLocale } from '../../hooks/useLocale';
+import { useLocale, type LocaleKey } from '../../hooks/useLocale';
 
 type Props = {
   tool: Tool;
@@ -117,7 +117,7 @@ export function ToolOptionsPanel({
                   const label =
                     pick.kind === 'image'
                       ? pick.sticker.name
-                      : t(`map.stickers.emoji.${pick.emojiKey}`);
+                      : t(`map.stickers.emoji.${pick.emojiKey}` as LocaleKey);
                   return (
                     <button
                       key={pick.id}

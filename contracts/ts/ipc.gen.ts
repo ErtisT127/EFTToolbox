@@ -532,6 +532,7 @@ export interface UserSettings {
   overlay: OverlaySettings;
   gameMonitor: GameMonitorSettings;
   recognition: RecognitionSettings;
+  language: "zh-CN" | "en-US";
 }
 
 export interface OverlayBootstrap {

@@ -495,3 +495,18 @@
   color: var(--muted);
   font-family: var(--font-mono);
 }
+
+/* Shown while a language switch persists and the document reloads, so the swap never flashes
+   half-translated data. */
+.language-reload-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-3);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  color: var(--muted);
+  font-size: var(--text-base);
+}

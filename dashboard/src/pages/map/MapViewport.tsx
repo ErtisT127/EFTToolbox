@@ -3,7 +3,7 @@ import L from 'leaflet';
 import type { MapData, MapPreference } from '../../../../contracts/ts/ipc.gen';
 import { latLng } from './lib/annotations';
 import { zoomRange } from './lib/zoom';
-import { useLocale } from '../../hooks/useLocale';
+import { useLocale, type LocaleKey } from '../../hooks/useLocale';
 import { notices } from '../../stores/noticeStore';
 
 type Props = {
@@ -32,7 +32,7 @@ export function MapViewport(props: Props) {
     else setError(message);
   };
   useEffect(() => {
-    if (error) notices.push(t(error), () => setRetry((n) => n + 1));
+    if (error) notices.push(t(error as LocaleKey), () => setRetry((n) => n + 1));
   }, [error, t]);
   useEffect(() => {
     const host = container.current!;

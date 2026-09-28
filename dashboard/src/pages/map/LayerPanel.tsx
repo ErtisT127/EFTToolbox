@@ -1,7 +1,7 @@
 import { ChevronRight, X } from 'lucide-react';
 import type { Annotation, MapData, MapPreference } from '../../../../contracts/ts/ipc.gen';
 import { selectableFloors } from '../../stores/workspaceStore';
-import { useLocale } from '../../hooks/useLocale';
+import { useLocale, type LocaleKey } from '../../hooks/useLocale';
 
 type OwnerRow = {
   ownerId: string;
@@ -82,9 +82,11 @@ export function LayerPanel({
         {data.svgUrl && data.tiles.length > 0 && (
           <div className="basemap-section">
             {[
-              ...(data.svgUrl ? [{ id: 'svg' as const, label: 'map.layers.abstract' }] : []),
+              ...(data.svgUrl
+                ? [{ id: 'svg' as const, label: 'map.layers.abstract' as const }]
+                : []),
               ...(data.tiles.length
-                ? [{ id: 'tiles' as const, label: 'map.layers.satellite' }]
+                ? [{ id: 'tiles' as const, label: 'map.layers.satellite' as const }]
                 : []),
             ].map((mode) => (
               <label className="check-row" key={mode.id}>
@@ -201,7 +203,7 @@ export function LayerPanel({
                 <input
                   type="checkbox"
                   aria-label={t('map.layers.toggleGroup', {
-                    group: t(`map.groups.${groupId}`),
+                    group: t(`map.groups.${groupId}` as LocaleKey),
                   })}
                   ref={(input) => {
                     if (!input) return;
@@ -227,7 +229,7 @@ export function LayerPanel({
                   }}
                 />
                 <ChevronRight className="group-chevron" size={16} aria-hidden="true" />
-                {t(`map.groups.${groupId}`)}
+                {t(`map.groups.${groupId}` as LocaleKey)}
               </summary>
               {data.categories
                 .filter((c) => c.groupId === groupId)

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMultiplayer, MultiplayerError, multiplayer } from '../../stores/multiplayerStore';
 import { MemberList, memberRows, type MemberRow } from '../../components/MemberList';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
-import { useLocale } from '../../hooks/useLocale';
+import { useLocale, type LocaleKey } from '../../hooks/useLocale';
 import { notices } from '../../stores/noticeStore';
 
 // Quick preview on the map page: fed by the /ws push (zero polling) and the same row mapper as the
@@ -26,7 +26,7 @@ export function MembersPanel() {
       notices.push(t('multiplayer.kicked'), undefined, 'success');
     } catch (failure) {
       const code = failure instanceof MultiplayerError ? failure.code : 'request_failed';
-      notices.push(t(`multiplayer.errors.${code}`), undefined, 'error');
+      notices.push(t(`multiplayer.errors.${code}` as LocaleKey), undefined, 'error');
     } finally {
       setPending(false);
     }

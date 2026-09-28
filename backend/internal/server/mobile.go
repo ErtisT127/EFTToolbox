@@ -5,20 +5,40 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	contracts "efttoolbox/contracts"
 )
 
 const mobileCookie = "eft_mobile_token"
+
+// Sentinel errors whose Error() doubles as the API error code; the start handler maps them to
+// responses so a raw listen failure never reaches the client.
+var (
+	errMobileAddressInvalid = errors.New("mobile_address_invalid")
+	errMobilePortInvalid    = errors.New("mobile_port_invalid")
+	errMobilePortInUse      = errors.New("mobile_port_in_use")
+	errMobileStartFailed    = errors.New("mobile_start_failed")
+)
+
+// Windows reports an occupied port as WSAEADDRINUSE (10048), not the generic syscall.EADDRINUSE,
+// and Hyper-V's reserved port ranges surface as WSAEACCES (10013); both mean "pick another port".
+func isPortUnavailable(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE) ||
+		errors.Is(err, syscall.Errno(10048)) ||
+		errors.Is(err, syscall.Errno(10013))
+}
 
 type mobilePacket struct {
 	event string
@@ -107,18 +127,23 @@ func hostPort(host string) string {
 func (m *mobileManager) start(address, port string) (contracts.MobileStatus, error) {
 	ip := net.ParseIP(strings.TrimSpace(address))
 	if ip == nil || ip.To4() == nil {
-		return contracts.MobileStatus{}, fmt.Errorf("mobile_address_invalid")
+		return contracts.MobileStatus{}, errMobileAddressInvalid
 	}
 	if _, err := strconv.Atoi(port); err != nil {
-		return contracts.MobileStatus{}, fmt.Errorf("mobile_port_invalid")
+		return contracts.MobileStatus{}, errMobilePortInvalid
 	}
 	token, err := randomToken()
 	if err != nil {
-		return contracts.MobileStatus{}, err
+		log.Printf("mobile cast token: %v", err)
+		return contracts.MobileStatus{}, errMobileStartFailed
 	}
 	listener, err := net.Listen("tcp4", net.JoinHostPort(ip.String(), port))
 	if err != nil {
-		return contracts.MobileStatus{}, err
+		if isPortUnavailable(err) {
+			return contracts.MobileStatus{}, errMobilePortInUse
+		}
+		log.Printf("mobile cast listen %s: %v", port, err)
+		return contracts.MobileStatus{}, errMobileStartFailed
 	}
 	m.stop()
 	m.mu.Lock()
@@ -210,7 +235,7 @@ func (m *mobileManager) serveAsset(w http.ResponseWriter, r *http.Request, name 
 func (m *mobileManager) serveLAN(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		apiError(w, http.StatusMethodNotAllowed, "mobile_method_not_allowed")
 		return
 	}
 	if !m.authorized(r) {
@@ -219,7 +244,7 @@ func (m *mobileManager) serveLAN(w http.ResponseWriter, r *http.Request) {
 			m.writeEventStream(w, r, packet.event, packet.data, nil)
 			return
 		}
-		http.Error(w, "session expired", http.StatusGone)
+		apiError(w, http.StatusGone, "mobile_session_expired")
 		return
 	}
 	if r.URL.Path == "/cast" || r.URL.Path == "/cast/" {
@@ -243,7 +268,7 @@ func (m *mobileManager) writeEventStream(w http.ResponseWriter, r *http.Request,
 	w.Header().Set("Connection", "keep-alive")
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "stream unsupported", http.StatusInternalServerError)
+		apiError(w, http.StatusInternalServerError, "mobile_stream_unsupported")
 		return
 	}
 	write := func(name string, payload []byte) bool {
@@ -398,7 +423,14 @@ func (m *mobileManager) register(mux *http.ServeMux) {
 		}
 		status, err := m.start(body.Address, hostPort(r.Host))
 		if err != nil {
-			apiError(w, http.StatusBadRequest, err.Error())
+			switch {
+			case errors.Is(err, errMobilePortInUse):
+				apiErrorDetail(w, http.StatusBadRequest, err.Error(), hostPort(r.Host))
+			case errors.Is(err, errMobileAddressInvalid), errors.Is(err, errMobilePortInvalid):
+				apiError(w, http.StatusBadRequest, err.Error())
+			default:
+				apiError(w, http.StatusInternalServerError, errMobileStartFailed.Error())
+			}
 			return
 		}
 		jsonResponse(w, status)

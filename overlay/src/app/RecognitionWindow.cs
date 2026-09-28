@@ -10,8 +10,7 @@ namespace EFTToolbox.Overlay;
 /// the wheel and closed from the corner. Its geometry is the contract's window fields, so whatever
 /// the reader drags lands in the same settings the dashboard shows.
 ///
-/// The panel's chrome strings are Chinese literals: the overlay has no locale layer of its own and
-/// this window mirrors the dashboard's recognition page, which is the localized surface.
+/// The panel's chrome strings come from OverlayText, whose language follows the user settings.
 /// </summary>
 internal sealed class RecognitionWindow : IDisposable
 {
@@ -26,10 +25,10 @@ internal sealed class RecognitionWindow : IDisposable
     private readonly Func<RecognitionSettings, Task> save;
     private RecognitionSettings settings = new()
     {
-        SchemaVersion = 1, OcrConfidence = 0.65, NameSimilarity = 0.72, TemplateSimilarity = 0.7,
+        SchemaVersion = 1, OcrConfidence = 0.5, NameSimilarity = 0.65, TemplateSimilarity = 0.6,
         CaptureWidth = 640, CaptureHeight = 640, AutoPush = true, TemplateMatching = true, TemplateStrict = false,
-        OcrUpscale = 2, OcrMinLength = 3, CandidateLimit = 5,
-        TemplateMinScale = 0.6, TemplateMaxScale = 1.6, IconWindowRatio = 1.3,
+        OcrUpscale = 2, OcrMinLength = 3, CandidateLimit = 8,
+        TemplateMinScale = 0.5, TemplateMaxScale = 1.8, IconWindowRatio = 1.6,
         AutoClose = true, AutoCloseSeconds = 5, WindowWidth = 440, WindowHeight = 512,
         Opacity = 100,
     };
@@ -44,6 +43,7 @@ internal sealed class RecognitionWindow : IDisposable
     private Native.CursorPoint dragStart;
     private Native.Rect dragBounds;
     private int saveQueued;
+    private int saveDirty;
 
     internal RecognitionWindow(nint hwnd, Func<string, CancellationToken, Task<byte[]?>> fetch, Func<RecognitionSettings, Task> save, Action wake)
     {
@@ -70,6 +70,8 @@ internal sealed class RecognitionWindow : IDisposable
     {
         if (assetDirectory is null) return;
         renderer.SetAssetDirectory(assetDirectory);
+        renderer.Images.Clear();
+        renderer.Texts.Clear();
         assets.SetAssets(assetDirectory);
     }
 
@@ -206,10 +208,13 @@ internal sealed class RecognitionWindow : IDisposable
     {
         if (!visible) return null;
         var m = new PanelMetrics(Scale());
-        var x = (short)((long)lParam & 65535);
-        var y = (short)(((long)lParam >> 16) & 65535);
+        var x = (int)(short)((long)lParam & 65535);
+        var y = (int)(short)(((long)lParam >> 16) & 65535);
         if (message == Native.WmNcHitTest)
         {
+            Native.GetWindowRect(hwnd, out var rect);
+            x -= rect.Left;
+            y -= rect.Top;
             SetCursor(Zone(m, x, y));
             return 1;
         }
@@ -352,6 +357,7 @@ internal sealed class RecognitionWindow : IDisposable
 
     private void QueueSave()
     {
+        Interlocked.Exchange(ref saveDirty, 1);
         if (Interlocked.Exchange(ref saveQueued, 1) != 0) return;
         _ = SaveAsync();
     }
@@ -360,11 +366,19 @@ internal sealed class RecognitionWindow : IDisposable
     {
         try
         {
-            await Task.Delay(100);
-            await save(settings);
+            do
+            {
+                Interlocked.Exchange(ref saveDirty, 0);
+                await Task.Delay(100);
+                await save(settings);
+            } while (Volatile.Read(ref saveDirty) != 0);
         }
         catch (Exception e) { OverlayDiagnostics.Log("warn", "recognition_geometry_save_failed", e.Message); }
-        finally { Interlocked.Exchange(ref saveQueued, 0); }
+        finally
+        {
+            Interlocked.Exchange(ref saveQueued, 0);
+            if (Volatile.Read(ref saveDirty) != 0) QueueSave();
+        }
     }
 
     private void Render()
@@ -395,7 +409,7 @@ internal sealed class RecognitionWindow : IDisposable
         var message = loading
             ? OverlayText.Get("recognition.loading")
             : failed
-                ? OverlayText.Get("recognition.failed", result!.Error)
+                ? OverlayText.RecognitionError(result!.Error)
                 : rows.Length == 0
                     ? OverlayText.Get("recognition.empty")
                     : "";
@@ -419,8 +433,8 @@ internal sealed class RecognitionWindow : IDisposable
             // Prices carry their currency; which market they belong to is the header's job.
             var trader = row.TraderPrice is null ? "" : $"{row.TraderPrice.Value:N0} ₽";
             var flea = row.FleaPrice is null ? "" : $"{row.FleaPrice.Value:N0} ₽";
-            var traderText = trader.Length == 0 ? new RecognitionText(0, Vector2.Zero) : Text(target, trader, scale, "annotation", PanelMetrics.PriceSize, PriceColor);
-            var fleaText = flea.Length == 0 ? new RecognitionText(0, Vector2.Zero) : Text(target, flea, scale, "annotation", PanelMetrics.PriceSize, PriceColor);
+            var traderText = trader.Length == 0 ? new RecognitionText(0, Vector2.Zero) : Text(target, trader, scale, "price", PanelMetrics.PriceSize, PriceColor);
+            var fleaText = flea.Length == 0 ? new RecognitionText(0, Vector2.Zero) : Text(target, flea, scale, "price", PanelMetrics.PriceSize, PriceColor);
             items.Add(new RecognitionPanelItem(
                 Image(target, row.Image, avatar: false, pixels: (int)(2 * metrics.Thumb)),
                 row.Trader is { Image.Length: > 0 } portrait ? Image(target, portrait.Image, avatar: true, pixels: (int)(2 * metrics.Avatar)) : null,

@@ -1,4 +1,4 @@
-import type { ItemsCatalogItem } from '../../../../contracts/ts/ipc.gen';
+import type { ItemsCatalogItem } from '../../../../../contracts/ts/ipc.gen';
 
 export const itemCategories = [
   'headsets',

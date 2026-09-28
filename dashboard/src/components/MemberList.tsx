@@ -1,5 +1,5 @@
 import { Crown, UserRoundX } from 'lucide-react';
-import { useLocale } from '../hooks/useLocale';
+import { useLocale, type Translate } from '../hooks/useLocale';
 import type { MultiplayerStatus } from '../../../contracts/ts/ipc.gen';
 
 export type MemberRow = {
@@ -97,6 +97,6 @@ function latencyClass(latencyMs?: number) {
   return 'bad';
 }
 
-function latencyLabel(latencyMs: number | undefined, t: (key: string) => string) {
+function latencyLabel(latencyMs: number | undefined, t: Translate) {
   return latencyMs === undefined || latencyMs >= 997 ? t('multiplayer.timeout') : `${latencyMs}ms`;
 }

@@ -13,20 +13,13 @@ if (args.some((arg) => !['--all', '--count', '--verify'].includes(arg)))
 const allZooms = args.includes('--all');
 const verify = args.includes('--verify');
 
-// Tile rules and projection are shared resources. Read one generated catalog so mode switches do
-// not multiply identical basemap requests.
-let dataRoot = new URL('modes/pvp/', upstream);
-let catalog;
-try {
-  catalog = JSON.parse(await readFile(new URL('catalog.json', dataRoot), 'utf8'));
-} catch {
-  // A partially prepared checkout may only have the legacy single-mode data.
-  dataRoot = upstream;
-  catalog = JSON.parse(await readFile(new URL('catalog.json', dataRoot), 'utf8'));
-}
+// Tile rules and projection are shared resources. Read the pvp catalog so mode switches do not
+// multiply identical basemap requests; a missing catalog means data refresh has not run yet.
+const dataRoot = new URL('modes/pvp/', upstream);
+const catalog = JSON.parse(await readFile(new URL('catalog_zh.json', dataRoot), 'utf8'));
 const jobs = new Set();
 for (const summary of catalog) {
-  const map = JSON.parse(await readFile(new URL(`maps/${summary.id}.json`, dataRoot), 'utf8'));
+  const map = JSON.parse(await readFile(new URL(`maps/${summary.id}_zh.json`, dataRoot), 'utf8'));
   for (const url of tileUrls(map, allZooms)) jobs.add(url);
 }
 console.log(`${jobs.size} tile URLs (${allZooms ? 'all zooms' : 'lowest zoom per floor'}).`);

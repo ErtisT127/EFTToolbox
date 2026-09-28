@@ -55,7 +55,7 @@ func mapStoreFixture(t *testing.T) (string, *mapStore, *overlayHub) {
 	}
 	m := contracts.MapData{SchemaVersion: 1, Id: "fixture", Name: "Fixture", DefaultFloor: "ground", Projection: contracts.Projection{ViewBox: []float64{0, 0, 100, 100}, Bounds: []contracts.WorldXZ{{X: 0, Z: 0}, {X: 100, Z: 100}}}, Floors: []contracts.Floor{{Id: "ground", Name: "Ground", SvgGroups: []string{"ground"}}}, Categories: []contracts.Category{}, Markers: []contracts.BuiltinMarker{}, Tasks: []contracts.MapTask{}, Warnings: []string{}}
 	data, _ := json.Marshal(m)
-	if err := os.WriteFile(filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture.json"), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture_zh.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	store := &mapStore{root: root}
@@ -120,6 +120,29 @@ func TestShareText(t *testing.T) {
 		if !strings.Contains(stun, want) {
 			t.Fatalf("stun share text missing %q: %s", want, stun)
 		}
+	}
+}
+
+func TestRemoteAnnotationCacheRejectsInvalidAndExcessDocuments(t *testing.T) {
+	_, _, _, manager := multiplayerFixture(t)
+	invalid := []contracts.Annotation{{Id: "bad", FloorId: "missing"}}
+	if manager.applyRemoteAnnotations("peer-id", "fixture", invalid) {
+		t.Fatal("invalid annotations were accepted")
+	}
+	if len(manager.remoteDocs) != 0 {
+		t.Fatal("invalid annotations remained cached")
+	}
+	for i := range multiplayerMaxRemoteDocuments {
+		mapID := "remote-map-" + strconv.Itoa(i)
+		if !manager.applyRemoteAnnotations("peer-id", mapID, []contracts.Annotation{}) {
+			t.Fatalf("valid remote document %d was rejected", i)
+		}
+	}
+	if manager.applyRemoteAnnotations("peer-id", "overflow", []contracts.Annotation{}) {
+		t.Fatal("remote document cache exceeded its limit")
+	}
+	if manager.applyRemoteAnnotations("peer-id", "../invalid", []contracts.Annotation{}) {
+		t.Fatal("invalid map id was accepted")
 	}
 }
 

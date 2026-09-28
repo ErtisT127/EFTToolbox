@@ -14,10 +14,12 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
     private readonly Dictionary<string, long> failed = new();
     private Dictionary<string, Sticker> stickers = new();
     private readonly SemaphoreSlim workers = new(4);
+    private readonly CancellationTokenSource stop = new();
+    private readonly ConcurrentBag<Task> running = new();
     private readonly MapTextRasterizer textRasterizer = new();
     private string assetRoot = "";
     private int generation, catalogGeneration;
-    internal void CancelPending() { Interlocked.Increment(ref generation); requested.Clear(); ready.Clear(); failed.Clear(); }
+    internal void CancelPending() { Interlocked.Increment(ref generation); lock (requested) { requested.Clear(); failed.Clear(); } ready.Clear(); }
     internal void SetAssets(string root, string stickersFile)
     {
         assetRoot = root; CancelPending(); stickers = new();
@@ -36,19 +38,23 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
         while (timer.Elapsed.TotalMilliseconds < 4 && ready.TryDequeue(out var item))
         {
             if (item.Generation != generation) continue;
-            requested.Remove(item.Key);
-            if (item.Image is null) { failed[item.Key] = Environment.TickCount64; continue; }
+            lock (requested) requested.Remove(item.Key);
+            if (item.Image is null) { lock (requested) failed[item.Key] = Environment.TickCount64; continue; }
             try { (item.Text ? texts : images).Put(item.Key, item.Image); }
-            catch (Exception e) { failed[item.Key] = Environment.TickCount64; OverlayDiagnostics.Log("warn", "marker_upload_failed", e.Message); }
+            catch (Exception e) { lock (requested) failed[item.Key] = Environment.TickCount64; OverlayDiagnostics.Log("warn", "marker_upload_failed", e.Message); }
         }
         if (!ready.IsEmpty) wake();
     }
     private void Request(string key, bool text, Func<string, RasterizedSvg> render, Operation? operation)
     {
-        if (assetRoot == "" || requested.Contains(key) || failed.TryGetValue(key, out var at) && Environment.TickCount64 - at < 10_000) return;
-        requested.Add(key); var root = assetRoot; var version = generation;
-        _ = Task.Run(async () => {
-            await workers.WaitAsync();
+        lock (requested)
+        {
+            if (assetRoot == "" || requested.Contains(key) || failed.TryGetValue(key, out var at) && Environment.TickCount64 - at < 10_000) return;
+            requested.Add(key);
+        }
+        var root = assetRoot; var version = generation;
+        var task = Task.Run(async () => {
+            await workers.WaitAsync(stop.Token);
             try {
                 if (version != Volatile.Read(ref generation)) return;
                 var image = render(root);
@@ -58,6 +64,7 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
                 OverlayDiagnostics.Log("warn", "marker_asset_failed", e.Message, operation);
             } finally { workers.Release(); }
         });
+        running.Add(task);
     }
     private static uint Color(string hex, float opacity = 1)
     {
@@ -68,6 +75,10 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
         "extract/scav" => MapDisplay.ExtractScav, "extract/shared" => MapDisplay.ExtractShared,
         "transit" => MapDisplay.Transit, "btrStops" => MapDisplay.LabelColor, _ => MapDisplay.ExtractPmc,
     };
+    // The dashboard's `.player-marker` clip-path (map.css): a 28px box whose arrow is the polygon
+    // 50%/6% (tip), 91%/91% and 9%/91% (base), 50%/72% (notch) — the same shape here, as offsets
+    // from the marker's centre, so both surfaces draw the same arrow.
+    private static readonly Vector2[] PlayerArrow = [new(0, -12.32f), new(11.48f, 11.48f), new(0, 6.16f), new(-11.48f, 11.48f)];
     internal void Draw(ImDrawListPtr draw, MapScene scene, TextureCache images, TextureCache texts, Operation? operation)
     {
         var map = scene.Map!; var dpi = scene.Dpi;
@@ -103,7 +114,9 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
                     else image = SvgRasterizer.Decode(File.ReadAllBytes(path));
                     return SvgRasterizer.Artwork(image, size, dpi, art, rim);
                 }, operation);
-                if (placeholder && failed.ContainsKey(key)) Text("?", "annotation", 15, 0, MapDisplay.LabelColor, p);
+                var unavailable = false;
+                lock (requested) unavailable = failed.ContainsKey(key);
+                if (placeholder && unavailable) Text("?", "annotation", 15, 0, MapDisplay.LabelColor, p);
             }
         }
         var annotations = scene.Preference.ShowAnnotations ? scene.Annotations.Where(a => a.FloorId == scene.Floor).ToArray() : [];
@@ -147,21 +160,32 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
         foreach (var player in scene.Players.Values.Where(p => p.MapId == map.Id)) {
             var p = scene.Screen(player.MapPosition); if (!InView(p, new Vector2(14 * dpi))) continue;
             var angle = (float)(player.Heading * Math.PI / 180); var c = MathF.Cos(angle); var s = MathF.Sin(angle);
+            // Every arrow carries its owner's multiplayer colour — your own included, so the panel's
+            // choice is what you see; an unset one falls back to the accent, as the dashboard does.
             var tint = string.IsNullOrEmpty(player.Color) ? MapDisplay.Accent : player.Color;
-            var color = Color(tint, player.Resolution.FloorId == scene.Floor ? 1 : MapDisplay.OtherFloorPlayerOpacity);
+            // Only a resolved player on another floor is dimmed: an unresolved one has no floor to
+            // compare, and with follow-floor off the backend reports "skipped" for every player, which
+            // is what keeps the whole set at full opacity while the reader browses. The dashboard's
+            // map applies the same three conditions.
+            var otherFloor = player.Resolution.Status == "resolved"
+                && player.Resolution.FloorId is { Length: > 0 } playerFloor
+                && playerFloor != scene.Floor;
+            var opacity = otherFloor ? MapDisplay.OtherFloorPlayerOpacity : 1f;
+            var color = Color(tint, opacity);
             var point = (float x, float y) => p + new Vector2((x * c - y * s) * dpi, (x * s + y * c) * dpi);
             draw.PathClear();
-            draw.PathLineTo(point(0, -13));
-            draw.PathLineTo(point(13, 13));
-            draw.PathLineTo(point(0, 7));
-            draw.PathLineTo(point(-13, 13));
+            for (var i = 0; i < PlayerArrow.Length; i++) draw.PathLineTo(point(PlayerArrow[i].X, PlayerArrow[i].Y));
             draw.PathFillConvex(color);
-            draw.PathStroke(Color("#0A0A0A", player.Resolution.FloorId == scene.Floor ? 1 : MapDisplay.OtherFloorPlayerOpacity), ImDrawFlags.Closed, 1.5f * dpi);
+            draw.PathStroke(Color("#0A0A0A", opacity), ImDrawFlags.Closed, 1.5f * dpi);
         }
     }
     public void Dispose()
     {
         CancelPending();
-        _ = Task.Run(async () => { for (var i = 0; i < 4; i++) await workers.WaitAsync(); textRasterizer.Dispose(); });
+        stop.Cancel();
+        try { Task.WaitAll(running.ToArray(), 1000); } catch (AggregateException) { }
+        textRasterizer.Dispose();
+        workers.Dispose();
+        stop.Dispose();
     }
 }

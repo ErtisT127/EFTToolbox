@@ -1,0 +1,18 @@
+export const hotkeyKeys = [
+  'toggleEdit',
+  'toggleVisible',
+  'zoomIn',
+  'zoomOut',
+  'floorUp',
+  'floorDown',
+  'toggleBasemap',
+  'panUp',
+  'panDown',
+  'panLeft',
+  'panRight',
+  'recognition',
+] as const;
+
+export type HotkeyKey = (typeof hotkeyKeys)[number];
+export type SettingsTab = 'system' | 'map' | 'recognition' | 'hotkeys';
+export const settingsTabs = ['system', 'map', 'recognition', 'hotkeys'] as const;

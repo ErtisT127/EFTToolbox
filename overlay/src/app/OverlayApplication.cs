@@ -20,9 +20,10 @@ internal sealed class OverlayApplication : IDisposable
     private readonly MapScene scene = new();
     private readonly ConcurrentQueue<Action> completions = new();
     private readonly SemaphoreSlim svgWorker = new(1);
+    private readonly SemaphoreSlim recognitionStart = new(1);
     private readonly SvgRasterizer rasterizer = new();
     private OverlaySettings settings = OverlaySettingsStore.Defaults;
-    private RecognitionSettings recognitionSettings = new() { SchemaVersion = 1, OcrConfidence = 0.65, NameSimilarity = 0.72, TemplateSimilarity = 0.7, CaptureWidth = 640, CaptureHeight = 640, AutoPush = true, AutoClose = true, AutoCloseSeconds = 5, Opacity = 100, WindowWidth = 760, WindowHeight = 180 };
+    private RecognitionSettings recognitionSettings = new() { SchemaVersion = 1, OcrConfidence = 0.5, NameSimilarity = 0.65, TemplateSimilarity = 0.6, CaptureWidth = 640, CaptureHeight = 640, AutoPush = true, TemplateMatching = true, TemplateStrict = false, OcrUpscale = 2, OcrMinLength = 3, CandidateLimit = 8, TemplateMinScale = 0.5, TemplateMaxScale = 1.8, IconWindowRatio = 1.6, AutoClose = true, AutoCloseSeconds = 5, Opacity = 100, WindowWidth = 440, WindowHeight = 512 };
     // One run at a time: the hotkey supersedes whatever is in flight, and the superseded run stops
     // producing anything the moment its token is cancelled.
     private CancellationTokenSource? recognitionRun;
@@ -126,7 +127,7 @@ internal sealed class OverlayApplication : IDisposable
     private void Begin(string source, string? id = null, bool resources = false)
     {
         if (operation is null) operation = new(source, scene.Map?.Id ?? "", scene.Floor, scene.Basemap, generation, settings.SvgResolution, id);
-        else if (resources) operation = new(operation.Source, scene.Map?.Id ?? "", scene.Floor, scene.Basemap, generation, settings.SvgResolution, operation.Id, operation.Started) { Timing = operation.Timing, ResourceLoad = true };
+        else if (resources) { var previous = operation; operation = new(previous.Source, scene.Map?.Id ?? "", scene.Floor, scene.Basemap, generation, settings.SvgResolution, previous.Id, previous.Started) { ResourceLoad = true }; operation.UpdateTiming(_ => previous.Timing); }
         if (resources && operation is not null) operation.ResourceLoad = true;
         dirty = true;
     }
@@ -237,16 +238,23 @@ internal sealed class OverlayApplication : IDisposable
         OverlayDiagnostics.Log("info", "recognition_capture", $"Captured {width}x{height} at {left},{top}");
         // Pressing the hotkey again always starts a new run: the previous pipeline is cancelled and
         // the screen is grabbed again right away, so the newest press is the one that counts.
-        var run = StartRecognition(Guid.NewGuid().ToString("N"), announce: true);
-        _ = Task.Run(() =>
+        var run = StartRecognition(Guid.NewGuid().ToString("N"), announce: false);
+        _ = Task.Run(async () =>
         {
             try
             {
+                await recognitionStart.WaitAsync(run.Token);
+                try
+                {
+                    if (run.Token.IsCancellationRequested) return;
+                    await client.PostRecognitionStartedAsync(run.RequestId, run.Token);
+                }
+                finally { recognitionStart.Release(); }
                 using var bitmap = new System.Drawing.Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
                 using (var graphics = System.Drawing.Graphics.FromImage(bitmap)) graphics.CopyFromScreen(left, top, 0, 0, bitmap.Size);
                 using var stream = new MemoryStream(); bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
                 var image = "data:image/png;base64," + Convert.ToBase64String(stream.ToArray());
-                RunRecognition(run.RequestId, image, run.Token).GetAwaiter().GetResult();
+                await RunRecognition(run, image);
             }
             catch (Exception error) { FailRecognition(run, error); }
         });
@@ -260,7 +268,7 @@ internal sealed class OverlayApplication : IDisposable
         var cancellation = new CancellationTokenSource();
         recognitionRun = cancellation;
         recognitionRequestId = requestId;
-        var run = new RecognitionRun(requestId, cancellation.Token);
+        var run = new RecognitionRun(requestId, cancellation.Token, recognitionSettings);
         recognitionWindow.ApplySettings(recognitionSettings);
         // The backend's "started" event already raised the window for an import; this only covers the
         // capture path, which the backend hears about afterwards.
@@ -270,21 +278,22 @@ internal sealed class OverlayApplication : IDisposable
     }
 
     /// <summary>The request a run works on, plus the token that supersedes it.</summary>
-    private readonly record struct RecognitionRun(string RequestId, CancellationToken Token);
+    private readonly record struct RecognitionRun(string RequestId, CancellationToken Token, RecognitionSettings Settings);
 
-    private async Task RunRecognition(string requestId, string imageData, CancellationToken token)
+    private async Task RunRecognition(RecognitionRun run, string imageData)
     {
+        var token = run.Token;
         var comma = imageData.IndexOf(',');
         var bytes = Convert.FromBase64String(comma >= 0 ? imageData[(comma + 1)..] : imageData);
-        var blocks = recognition.Scan(bytes, recognitionSettings, token, out var image, out var error);
+        var blocks = recognition.Scan(bytes, run.Settings, token, out var image, out var error);
         using (image)
         {
             if (token.IsCancellationRequested) return;
-            var (rows, resolved) = await VerifyRecognitionAsync(image, blocks, error, token);
+            var (rows, resolved) = await VerifyRecognitionAsync(image, blocks, error, run.Settings, token);
             if (token.IsCancellationRequested) return;
             await client.PostRecognitionResultAsync(new RecognitionResult
             {
-                RequestId = requestId,
+                RequestId = run.RequestId,
                 ImageData = imageData,
                 OcrText = [.. blocks.Select(block => block.Text)],
                 Rows = rows,
@@ -300,10 +309,10 @@ internal sealed class OverlayApplication : IDisposable
     /// correlated against the cell above the label, and the best candidate wins. Loose mode keeps the
     /// name result when the artwork cannot be found at all; strict mode drops the row instead.
     /// </summary>
-    private async Task<(RecognitionRow[] Rows, bool Resolved)> VerifyRecognitionAsync(Mat? image, IReadOnlyList<OcrBlock> blocks, string error, CancellationToken token)
+    private async Task<(RecognitionRow[] Rows, bool Resolved)> VerifyRecognitionAsync(Mat? image, IReadOnlyList<OcrBlock> blocks, string error, RecognitionSettings settings, CancellationToken token)
     {
         if (image is null || error.Length > 0 || blocks.Count == 0) return ([], false);
-        if (!recognitionSettings.TemplateMatching)
+        if (!settings.TemplateMatching)
         {
             // Without the icon check the rows are the backend's business: it still matches the text.
             OverlayDiagnostics.Log("info", "recognition_template_skipped", "Template matching is off");
@@ -311,8 +320,8 @@ internal sealed class OverlayApplication : IDisposable
         }
         var candidates = await client.CandidatesAsync([.. blocks.Select(block => block.Text)], token);
         if (candidates is null || token.IsCancellationRequested) return ([], false);
-        var strict = recognitionSettings.TemplateStrict;
-        var threshold = recognitionSettings.TemplateSimilarity;
+        var strict = settings.TemplateStrict;
+        var threshold = settings.TemplateSimilarity;
         var seen = new HashSet<string>();
         var rows = new List<RecognitionRow>();
         for (var index = 0; index < blocks.Count && index < candidates.Candidates.Length; index++)
@@ -327,7 +336,7 @@ internal sealed class OverlayApplication : IDisposable
                 if (token.IsCancellationRequested) break;
                 var artwork = await IconBytesAsync(candidate.Image, token);
                 if (artwork is null) continue;
-                var score = recognition.MatchIcon(image, blocks[index], artwork, recognitionSettings, token);
+                var score = recognition.MatchIcon(image, blocks[index], artwork, settings, token);
                 if (score > bestScore) { best = candidate; bestScore = score; }
                 if (bestScore >= 0.995) break;
             }
@@ -362,10 +371,10 @@ internal sealed class OverlayApplication : IDisposable
     private void FailRecognition(RecognitionRun run, Exception error)
     {
         if (run.Token.IsCancellationRequested) return;
-        // The dashboard owns the notification pipeline, so the failure travels back as a result
-        // rather than only reaching the log file.
+        // The dashboard owns the notification pipeline and translates stable short codes, so the
+        // failure travels back as a code rather than the exception text; the log keeps the message.
         OverlayDiagnostics.Log("warn", "recognition_failed", error.Message);
-        _ = client.PostRecognitionResultAsync(new RecognitionResult { RequestId = run.RequestId, Error = error.Message });
+        _ = client.PostRecognitionResultAsync(new RecognitionResult { RequestId = run.RequestId, Error = "recognition_failed" });
     }
     // Floor and basemap both re-rasterize the whole map, so they never run on the per-frame path.
     private bool ReloadCooldown()
@@ -470,6 +479,9 @@ internal sealed class OverlayApplication : IDisposable
     {
         var keepView = preserveView && scene.Map?.Id == id;
         var previousView = (scene.Center, scene.Zoom, scene.Floor, scene.Basemap);
+        // The language this load starts with; the reload below compares it against the live value so
+        // a change that arrives while the file is being read never leaves the old names baked in.
+        var language = OverlayText.Language;
         if (bootstrap is null) return; loading.Cancel(); loading.Dispose(); loading = new(); var token = loading.Token; var version = ++generation;
         tiles.Clear(); renderer.Tiles.Clear(); renderer.Svg.Clear(); scene.SvgRegion = null; resourceKey = ""; scene.Map = null; loadingScene = true; Begin("map", resources: true);
         var b = bootstrap;
@@ -477,7 +489,12 @@ internal sealed class OverlayApplication : IDisposable
         {
             try
             {
-                var map = OverlayStateClient.Read<MapData>(Path.Combine(b.MapDirectory, id + ".json")) ?? throw new InvalidDataException("Empty map");
+                // Map files are generated per language ({id}_zh.json / {id}_en.json); a missing
+                // English file falls back to the Chinese one until the data catches up.
+                var lang = language == "en-US" ? "en" : "zh";
+                var mapPath = Path.Combine(b.MapDirectory, $"{id}_{lang}.json");
+                if (!File.Exists(mapPath)) mapPath = Path.Combine(b.MapDirectory, $"{id}_zh.json");
+                var map = OverlayStateClient.Read<MapData>(mapPath) ?? throw new InvalidDataException("Empty map");
                 if (map.Projection is null || map.Projection.Bounds is null || map.Projection.ViewBox is null ||
                     map.Floors is null || map.Categories is null || map.Markers is null || map.Tasks is null ||
                     map.Warnings is null || map.Clock is null || map.Clock.Phases is null ||
@@ -501,6 +518,9 @@ internal sealed class OverlayApplication : IDisposable
                         scene.Basemap = previousView.Basemap; scene.ClampZoom();
                     }
                     else if (scene.Preference.Center.Length == 2) { scene.Center = new((float)scene.Preference.Center[1], (float)-scene.Preference.Center[0]); scene.Zoom = scene.Preference.Zoom; scene.ClampZoom(); } else scene.Fit();
+                    // The language moved while the file was being read: this map is already stale, so
+                    // hand the view over to a load in the current language instead of showing it.
+                    if (language != OverlayText.Language) { LoadMap(id, preference, follow, preserveView); return; }
                     loadingScene = false; LoadResources(); if (follow) FollowSelf();
                 }); Wake();
             }
@@ -540,7 +560,7 @@ internal sealed class OverlayApplication : IDisposable
                 {
                     if (version != generation) return;
                     var timer = Stopwatch.StartNew(); renderer.Svg.Put("map", image); scene.SvgRegion = region;
-                    if (op is not null) op.Timing = op.Timing with { QueueMs = queueMs, ReadMs = image.ReadMs, ParseMs = image.ParseMs, RasterMs = image.RasterMs, UploadMs = timer.Elapsed.TotalMilliseconds, Resource = path };
+                    if (op is not null) op.UpdateTiming(value => value with { QueueMs = queueMs, ReadMs = image.ReadMs, ParseMs = image.ParseMs, RasterMs = image.RasterMs, UploadMs = timer.Elapsed.TotalMilliseconds, Resource = path });
                     loadingScene = false; dirty = true;
                     if (error == "errors.overlay_resource_failed") error = "";
                 }); Wake();
@@ -582,6 +602,9 @@ internal sealed class OverlayApplication : IDisposable
         if (replacesResources) operation = null;
         Begin(e.Type, e.OperationId);
         if (e.OverlaySettings is { } s) ApplySettings(s);
+        // A language lives in the aggregate user settings: pick it up on the first snapshot and
+        // again whenever a settings write broadcasts one of its events.
+        if (e.Type is "snapshot" or "overlay_settings" or "recognition_settings" or "game_monitor_changed") _ = ApplyLanguageAsync();
         if (e.RecognitionSettings is { } recognition)
         {
             recognitionSettings = recognition;
@@ -600,7 +623,7 @@ internal sealed class OverlayApplication : IDisposable
             var run = StartRecognition(request.RequestId, announce: false);
             _ = Task.Run(async () =>
             {
-                try { await RunRecognition(request.RequestId, request.ImageData, run.Token); }
+                try { await RunRecognition(run, request.ImageData); }
                 catch (Exception error) { FailRecognition(run, error); }
             });
         }
@@ -631,6 +654,23 @@ internal sealed class OverlayApplication : IDisposable
             if (command.Kind == "view") { if (command.Center is { } c) scene.Center = new((float)c.X, (float)c.Y); if (command.Zoom is { } z) scene.Zoom = z; if (command.FloorId is { } f) scene.Floor = f; scene.ClampZoom(); LoadResources(); }
         }
     }
+    /// <summary>The panel labels rasterize from OverlayText and the map bakes its marker names
+    /// into textures, so a language change only needs the new value plus a map reload.</summary>
+    private async Task ApplyLanguageAsync()
+    {
+        var language = await client.GetLanguageAsync();
+        if (language is null || language == OverlayText.Language) return;
+        // This resumes on a worker thread, but the scene, the texture caches and every other map
+        // load belong to the frame loop, so the value is handed over instead of applied here.
+        completions.Enqueue(() =>
+        {
+            if (language == OverlayText.Language) return;
+            OverlayText.Language = language;
+            if (scene.Map is { } map) LoadMap(map.Id, scene.Preference, preserveView: true);
+        });
+        Wake();
+    }
+
     private static bool PositionChanged(PlayerState? previous, PlayerState current) => previous is null
         || previous.PlayerId != current.PlayerId || previous.IsSelf != current.IsSelf
         || previous.MapPosition != current.MapPosition || previous.WorldPosition != current.WorldPosition || previous.MapId != current.MapId || previous.Resolution.FloorId != current.Resolution.FloorId;
@@ -695,7 +735,7 @@ internal sealed class OverlayApplication : IDisposable
             markers.Upload(renderer.Images, renderer.Texts); tiles.Upload(renderer.Tiles);
             if (bootstrap is { } b3) tiles.Update(scene, b3.TileDirectory, renderer.Tiles, operation);
             var timer = Stopwatch.StartNew(); renderer.Render(scene, markers, tiles, settings.Shape == "circle", settings.Backdrop, settings.Opacity ?? 100, editing, operation); renderCount++;
-            if (operation is { } op) { op.Timing = op.Timing with { DrawMs = renderer.LastDrawMs, PresentMs = renderer.LastPresentMs }; if (!loadingScene && !tiles.Loading) { op.Complete(op.ResourceLoad); operation = null; } }
+            if (operation is { } op) { op.UpdateTiming(value => value with { DrawMs = renderer.LastDrawMs, PresentMs = renderer.LastPresentMs }); if (!loadingScene && !tiles.Loading) { op.Complete(op.ResourceLoad); operation = null; } }
             dirty = false; nextFrame = now + 17;
         }
         if (!settings.Visible) operation = null;

@@ -30,6 +30,7 @@ export const mapDisplay = {
   "landmarkFont": "barlow-condensed-600",
   "namedFont": "noto-sans-700",
   "annotationFont": "barlow-condensed-400",
+  "monoFont": "jetbrains-mono-400",
   "cjkRegularFont": "noto-sans-sc-400",
   "cjkBoldFont": "noto-sans-sc-700",
   "emoji": {

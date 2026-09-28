@@ -24,7 +24,7 @@ func mapFixtureWithBlockedUser(t *testing.T) (string, http.Handler) {
 	}
 	m := contracts.MapData{SchemaVersion: 1, Id: "fixture", Name: "Fixture", DefaultFloor: "ground", Projection: contracts.Projection{ViewBox: []float64{0, 0, 100, 100}, Bounds: []contracts.WorldXZ{{X: 0, Z: 0}, {X: 100, Z: 100}}}, Floors: []contracts.Floor{{Id: "ground", Name: "Ground", SvgGroups: []string{"ground"}}}, Categories: []contracts.Category{}, Markers: []contracts.BuiltinMarker{}, Tasks: []contracts.MapTask{}, Warnings: []string{}}
 	data, _ := json.Marshal(m)
-	if err := os.WriteFile(filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture.json"), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture_zh.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "user"), []byte("not a directory"), 0o644); err != nil {
@@ -41,7 +41,14 @@ func mapFixture(t *testing.T) (string, http.Handler) {
 	}
 	m := contracts.MapData{SchemaVersion: 1, Id: "fixture", Name: "Fixture", DefaultFloor: "ground", Projection: contracts.Projection{ViewBox: []float64{0, 0, 100, 100}, Bounds: []contracts.WorldXZ{{X: 0, Z: 0}, {X: 100, Z: 100}}}, Floors: []contracts.Floor{{Id: "ground", Name: "Ground", SvgGroups: []string{"ground"}}}, Categories: []contracts.Category{}, Markers: []contracts.BuiltinMarker{}, Tasks: []contracts.MapTask{}, Warnings: []string{}}
 	data, _ := json.Marshal(m)
-	if err := os.WriteFile(filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture.json"), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture_zh.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The English twin must not double the catalog entry: discovery is keyed by map id.
+	en := m
+	en.Name = "Fixture EN"
+	dataEn, _ := json.Marshal(en)
+	if err := os.WriteFile(filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture_en.json"), dataEn, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return root, New(context.Background(), "test", http.FS(fstest.MapFS{}), root)
@@ -90,6 +97,16 @@ func TestMapDiscoveryAndPersistence(t *testing.T) {
 	var maps []contracts.MapSummary
 	if err := json.Unmarshal(response.Body.Bytes(), &maps); err != nil || len(maps) != 1 || maps[0].Id != "fixture" {
 		t.Fatalf("map discovery: %s", response.Body.String())
+	}
+	// The language pair must not double the entry, and the English locale resolves English names.
+	if localized := callJSON(t, handler, "GET", "/api/maps?locale=en-US", nil); localized.Code != 200 ||
+		bytes.Count(localized.Body.Bytes(), []byte(`"id":"fixture"`)) != 1 ||
+		!bytes.Contains(localized.Body.Bytes(), []byte("Fixture EN")) {
+		t.Fatalf("english discovery: %s", localized.Body.String())
+	}
+	if localized := callJSON(t, handler, "GET", "/api/maps/fixture?locale=en-US", nil); localized.Code != 200 ||
+		!bytes.Contains(localized.Body.Bytes(), []byte("Fixture EN")) {
+		t.Fatalf("english map data: %s", localized.Body.String())
 	}
 	initial := callJSON(t, handler, "GET", "/api/maps/fixture/annotations", nil)
 	if initial.Code != 200 || !bytes.Contains(initial.Body.Bytes(), []byte(`"items":[]`)) {
@@ -341,7 +358,7 @@ func TestCorruptDataAndSaveFailure(t *testing.T) {
 	if response := callJSON(t, handler, "PUT", "/api/maps/fixture/annotations", contracts.Annotations{SchemaVersion: 1, Items: []contracts.Annotation{}}); response.Code != 500 {
 		t.Fatalf("save failure hidden: %d", response.Code)
 	}
-	if err := os.WriteFile(filepath.Join(root, "upstream", "modes", "pvp", "maps", "broken.json"), []byte("{"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "upstream", "modes", "pvp", "maps", "broken_zh.json"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if response := callJSON(t, handler, "GET", "/api/maps/broken", nil); response.Code != 500 {

@@ -280,6 +280,34 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const session = w.sessions.get(w.activeId);
   const preference = session ? w.preferenceFor(w.activeId) : undefined;
   const id = w.activeId;
+  // The minimap's "on position update" rules apply to this map too: it is the surface that persists
+  // the map preference, so following the floor here is also what the minimap and the cast view read
+  // back. Auto map switch is deliberately not part of it — that belongs to the detected-map path,
+  // while a manual coordinate update names the map it wants.
+  const followCenter = overlay.settings?.followCenter ?? true;
+  const followFloor = overlay.settings?.followFloor ?? true;
+  const followZoom = overlay.settings?.followZoom ?? true;
+  const followZoomLevel = !overlay.settings
+    ? 0
+    : overlay.settings.perMapZoom
+      ? (overlay.settings.mapZooms.find((entry) => entry.mapId === id)?.zoom ??
+        overlay.settings.targetZoom)
+      : overlay.settings.targetZoom;
+  const playerAutoZoom = useMemo(
+    () => ({ enabled: followZoom, zoomLevel: followZoomLevel }),
+    [followZoom, followZoomLevel],
+  );
+  const shownFloor = preference?.floorId;
+  useEffect(() => {
+    if (!followFloor || !session || shownFloor === undefined) return;
+    const self = [...players.values()].find(
+      (player) => player.isSelf && player.mapId === session.data.id,
+    );
+    const floor = self?.resolution.status === 'resolved' ? self.resolution.floorId : null;
+    if (!floor || floor === shownFloor) return;
+    if (!session.data.floors.some((entry) => entry.id === floor)) return;
+    w.updatePreference(session.data.id, { floorId: floor });
+  }, [followFloor, players, session, shownFloor, w]);
   // Teammate visibility: active members default visible, departed owners default hidden, and a
   // manual hide always wins. Rebuilt whenever the multiplayer store or the map session changes.
   const ownerVisibility = useMemo(() => {
@@ -445,7 +473,8 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
               stickers={stickerIndex}
               items={session.items}
               players={players}
-              playerFollow
+              playerFollow={followCenter}
+              playerAutoZoom={playerAutoZoom}
               tool={tool}
               options={options}
               onCommit={(items) => w.commit(id, items)}

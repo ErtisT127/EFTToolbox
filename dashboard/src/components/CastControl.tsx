@@ -137,9 +137,16 @@ export function CastControl() {
         body: JSON.stringify({ address: address.trim() } satisfies MobileStartRequest),
       });
       if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { code?: string } | null;
+        const body = (await response.json().catch(() => null)) as {
+          code?: string;
+          detail?: string;
+        } | null;
         notices.push(
-          t(body?.code === 'mobile_address_invalid' ? 'cast.addressInvalid' : 'cast.startFailed'),
+          body?.code === 'mobile_address_invalid'
+            ? t('cast.addressInvalid')
+            : body?.code === 'mobile_port_in_use'
+              ? t('cast.portInUse', { port: body.detail ?? '' })
+              : t('cast.startFailed'),
         );
         return;
       }

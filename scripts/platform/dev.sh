@@ -27,7 +27,7 @@ if [ ! -d node_modules/.pnpm ] || [ ! -d dashboard/node_modules ]; then
 else
   echo 'Using installed dependencies (run pnpm install --frozen-lockfile after dependency changes).'
 fi
-if [ ! -f data/upstream/catalog.json ]; then
+if [ ! -f data/upstream/catalog_zh.json ]; then
   echo 'Map cache missing; run pnpm toolbox data refresh first.' >&2
   exit 1
 fi

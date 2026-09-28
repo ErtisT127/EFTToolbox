@@ -22,11 +22,13 @@ internal sealed record PanelMetrics(float Scale)
     internal float CloseSize => 18 * Scale;
     internal float NameGap => 8 * Scale;
     internal float ColumnGap => 6 * Scale;
-    internal float TraderWidth => 128 * Scale;
-    internal float FleaWidth => 108 * Scale;
+    // The price columns are sized for the monospaced face the numbers use: a ten-million price is
+    // twelve glyphs, and every one of them is 0.6em wide where the condensed face was narrower.
+    internal float TraderWidth => 144 * Scale;
+    internal float FleaWidth => 124 * Scale;
     /// <summary>The price slot keeps one width for every row, so the portraits above each other line
     /// up while the prices read left-aligned inside their own column.</summary>
-    internal float PriceSlot => 108 * Scale;
+    internal float PriceSlot => 120 * Scale;
     internal float AvatarGap => 4 * Scale;
     internal float Edge => 8 * Scale;
     internal const int NameLines = 2;
@@ -143,6 +145,7 @@ internal sealed class RecognitionPanelAssets(Func<string, CancellationToken, Tas
     private readonly HashSet<string> requested = [];
     private readonly SemaphoreSlim workers = new(4);
     private readonly CancellationTokenSource stop = new();
+    private readonly ConcurrentBag<Task> running = new();
     private volatile string assetRoot = "";
     private int generation;
 
@@ -151,7 +154,8 @@ internal sealed class RecognitionPanelAssets(Func<string, CancellationToken, Tas
         if (assetRoot == root) return;
         assetRoot = root;
         Interlocked.Increment(ref generation);
-        requested.Clear(); ready.Clear();
+        lock (requested) requested.Clear();
+        ready.Clear();
     }
 
     internal string TextKey(string text, string role, float size, string color, float dpi, float width = 0, int maxLines = 0) =>
@@ -164,9 +168,9 @@ internal sealed class RecognitionPanelAssets(Func<string, CancellationToken, Tas
         var key = TextKey(text, role, size, color, dpi, width, maxLines);
         if (!Track(key)) return;
         var version = Volatile.Read(ref generation);
-        _ = Task.Run(async () =>
+        var task = Task.Run(async () =>
         {
-            await workers.WaitAsync();
+            await workers.WaitAsync(stop.Token);
             try
             {
                 if (version != Volatile.Read(ref generation)) return;
@@ -177,11 +181,13 @@ internal sealed class RecognitionPanelAssets(Func<string, CancellationToken, Tas
             }
             catch (Exception e)
             {
-                lock (requested) { requested.Remove(key); }
+                if (version == Volatile.Read(ref generation))
+                    lock (requested) { requested.Remove(key); }
                 OverlayDiagnostics.Log("warn", "recognition_text_failed", e.Message);
             }
             finally { workers.Release(); }
         });
+        running.Add(task);
     }
 
     internal string ImageKey(string url, int pixels) => $"{url}#{pixels}";
@@ -192,9 +198,10 @@ internal sealed class RecognitionPanelAssets(Func<string, CancellationToken, Tas
         var key = ImageKey(url, pixels);
         if (!Track(key)) return;
         var version = Volatile.Read(ref generation);
-        _ = Task.Run(async () =>
+        var task = Task.Run(async () =>
         {
-            await workers.WaitAsync();
+            await workers.WaitAsync(stop.Token);
+            var queued = false;
             try
             {
                 if (version != Volatile.Read(ref generation)) return;
@@ -202,15 +209,23 @@ internal sealed class RecognitionPanelAssets(Func<string, CancellationToken, Tas
                 if (bytes is null) return;
                 var image = Decode(bytes, Math.Max(AvatarPixels, pixels));
                 if (image is null) return;
-                if (version == Volatile.Read(ref generation)) { ready.Enqueue((key, image, false)); wake(); }
+                if (version != Volatile.Read(ref generation)) return;
+                ready.Enqueue((key, image, false));
+                queued = true;
+                wake();
             }
             catch (Exception e)
             {
-                lock (requested) { requested.Remove(key); }
                 OverlayDiagnostics.Log("warn", "recognition_image_failed", $"{url}: {e.Message}");
             }
-            finally { workers.Release(); }
+            finally
+            {
+                if (!queued && version == Volatile.Read(ref generation))
+                    lock (requested) { requested.Remove(key); }
+                workers.Release();
+            }
         });
+        running.Add(task);
     }
 
     private bool Track(string key)
@@ -274,6 +289,7 @@ internal sealed class RecognitionPanelAssets(Func<string, CancellationToken, Tas
     public void Dispose()
     {
         stop.Cancel();
+        try { Task.WaitAll(running.ToArray(), 1000); } catch (AggregateException) { }
         rasterizer.Dispose();
         workers.Dispose();
         stop.Dispose();

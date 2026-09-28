@@ -20,11 +20,13 @@ export function AppHeader({
   onModeChange: (mode: GameMode) => void;
 }) {
   const { t } = useLocale();
-  const modeMeta = {
-    pvp: { label: 'pvp' },
-    pve: { label: 'pve' },
-    'pvp-season': { label: 'season' },
-  }[mode];
+  const modeMeta = (
+    {
+      pvp: { label: 'pvp' },
+      pve: { label: 'pve' },
+      'pvp-season': { label: 'season' },
+    } as const
+  )[mode];
   return (
     <header className="topbar">
       <div className="brand">

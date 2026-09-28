@@ -1,13 +1,13 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import type { Sticker, StickerUsage } from '../../../../contracts/ts/ipc.gen';
-import { useLocale } from '../../hooks/useLocale';
+import { useLocale, type LocaleKey } from '../../hooks/useLocale';
 import { SearchInput } from '../../components/SearchInput';
 import { mapDisplay } from '../../../../contracts/ts/map-display.gen';
 
 // The built-in glyphs. They replace the old four emoji groups, so the picker has one curated set
 // rather than two overlapping ones.
-export const builtInEmoji: [string, string][] = [
+export const builtInEmoji = [
   ['📝', 'text'],
   ['👾', 'enemy'],
   ['📦', 'container'],
@@ -16,13 +16,13 @@ export const builtInEmoji: [string, string][] = [
   ['🚪', 'extract'],
   ['⚠️', 'caution'],
   ['📍', 'location'],
-];
+] as const;
 
 export type StickerPick = { emoji: string; imageId: string };
 
 export type ResolvedPick =
   | { kind: 'image'; id: string; sticker: Sticker }
-  | { kind: 'emoji'; id: string; emoji: string; emojiKey: string };
+  | { kind: 'emoji'; id: string; emoji: string; emojiKey: (typeof builtInEmoji)[number][1] };
 
 // A recent-usage id is either a catalogue sticker or one of the built-in glyphs, and only this
 // module knows the glyph set. Ids the catalogue no longer carries resolve to null.
@@ -34,7 +34,7 @@ export function resolvePick(id: string, stickers: Map<string, Sticker>): Resolve
   return null;
 }
 
-type Category = { id: string; label: string; group?: string };
+type Category = { id: string; label: LocaleKey; group?: string };
 
 // The single ordering source: the rail renders this list, and "all" concatenates the same groups
 // in the same order, so the two can never disagree.

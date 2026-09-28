@@ -149,11 +149,11 @@ func defaultOverlaySettings() contracts.OverlaySettings {
 
 func defaultRecognitionSettings() contracts.RecognitionSettings {
 	return contracts.RecognitionSettings{
-		SchemaVersion: 1, OcrConfidence: 0.65, NameSimilarity: 0.72, TemplateSimilarity: 0.7,
+		SchemaVersion: 1, OcrConfidence: 0.5, NameSimilarity: 0.65, TemplateSimilarity: 0.6,
 		CaptureWidth: 640, CaptureHeight: 640, AutoPush: true,
 		TemplateMatching: true, TemplateStrict: false,
-		OcrUpscale: 2, OcrMinLength: 3, CandidateLimit: 5,
-		TemplateMinScale: 0.6, TemplateMaxScale: 1.6, IconWindowRatio: 1.3,
+		OcrUpscale: 2, OcrMinLength: 3, CandidateLimit: 8,
+		TemplateMinScale: 0.5, TemplateMaxScale: 1.8, IconWindowRatio: 1.6,
 		AutoClose: true, AutoCloseSeconds: 5,
 		Opacity: 100,
 		// A tall strip reads better than a wide bar: the rows stack in one column and the list scrolls.
@@ -686,6 +686,15 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 			return
 		}
 		h.mu.Lock()
+		if requestID := r.URL.Query().Get("requestId"); requestID != "" {
+			started := h.recognitionStart != nil && h.recognitionStart.RequestId == requestID
+			result := h.recognition != nil && h.recognition.RequestId == requestID
+			if !started && !result {
+				h.mu.Unlock()
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
 		h.recognition = nil
 		h.recognitionStart = nil
 		h.recognitionAt = time.Time{}
@@ -709,7 +718,7 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 			dataError(w, err)
 			return
 		}
-		catalog, ok := recognitionCatalog(h.store)
+		catalog, ok := recognitionCatalog(h.store, mapLang(user.Language))
 		if !ok {
 			apiError(w, http.StatusNotFound, "items_not_available")
 			return
@@ -726,12 +735,19 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 			return
 		}
 		settings := defaultRecognitionSettings()
+		locale := "zh"
 		if user, settingsErr := h.userSettings(); settingsErr == nil {
 			settings = user.Recognition
+			locale = mapLang(user.Language)
 		}
 		value.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		value.Rows = enrichRecognitionRows(h.store, value, settings)
+		value.Rows = enrichRecognitionRows(h.store, value, settings, locale)
 		h.mu.Lock()
+		if h.recognitionStart == nil || h.recognitionStart.RequestId != value.RequestId {
+			h.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		h.recognition = &value
 		h.recognitionAt = time.Now()
 		h.recognitionStart = nil
@@ -828,22 +844,23 @@ func (h *overlayHub) startRecognitionLocked(requestId string, operationID *strin
 	h.logRecognition("info", "recognition_started", fmt.Sprintf("clearedResultAge=%s", age))
 }
 
-// The items catalog the mode's recognition runs against; the prices and names in the result all
-// come from here, whichever client resolved the row.
-func recognitionCatalog(store *mapStore) (contracts.ItemsCatalog, bool) {
+// The items catalog the mode's recognition runs against, in the interface language: the reader
+// screenshots the game they play, so the text being matched and the names it shows are that
+// language too. Prices and picture paths are locale-independent.
+func recognitionCatalog(store *mapStore, locale string) (contracts.ItemsCatalog, bool) {
 	var catalog contracts.ItemsCatalog
 	mode := "pvp"
 	if repo := store.repository(); repo != nil {
 		mode = repo.mode
 	}
-	if readJSON(filepath.Join(store.root, "upstream", "items", mode, "items_zh.json"), &catalog) != nil {
+	if readJSON(filepath.Join(store.root, "upstream", "items", mode, "items_"+locale+".json"), &catalog) != nil {
 		return catalog, false
 	}
 	return catalog, true
 }
 
-func enrichRecognitionRows(store *mapStore, result contracts.RecognitionResult, settings contracts.RecognitionSettings) []contracts.RecognitionRow {
-	catalog, ok := recognitionCatalog(store)
+func enrichRecognitionRows(store *mapStore, result contracts.RecognitionResult, settings contracts.RecognitionSettings, locale string) []contracts.RecognitionRow {
+	catalog, ok := recognitionCatalog(store, locale)
 	if !ok {
 		return result.Rows
 	}

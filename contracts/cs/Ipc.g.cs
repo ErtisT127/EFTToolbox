@@ -535,6 +535,7 @@ public sealed record UserSettings {
   [JsonPropertyName("overlay")] public OverlaySettings Overlay { get; init; } = new();
   [JsonPropertyName("gameMonitor")] public GameMonitorSettings GameMonitor { get; init; } = new();
   [JsonPropertyName("recognition")] public RecognitionSettings Recognition { get; init; } = new();
+  [JsonPropertyName("language")] public string Language { get; init; } = "";
 }
 
 public sealed record OverlayBootstrap {

@@ -37,6 +37,21 @@ internal sealed class OverlayStateClient : IDisposable
             if (!Path.IsPathFullyQualified(p)) throw new InvalidDataException("Bootstrap path is not absolute");
         Bootstrap = b; Watch(b); Interlocked.Exchange(ref resourcesChanged, 1); wake();
     }
+    /// <summary>The interface language lives in the aggregate user settings. A null result keeps
+    /// the current one: the endpoint is unreachable exactly while the socket is down, and the next
+    /// settings event retries.</summary>
+    internal async Task<string?> GetLanguageAsync()
+    {
+        try
+        {
+            var settings = await http.GetFromJsonAsync<UserSettings>("api/user-settings", stop.Token);
+            return string.IsNullOrEmpty(settings?.Language) ? null : settings.Language;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
     private void Watch(OverlayBootstrap b)
     {
         lock (watcherLock)
@@ -156,9 +171,9 @@ internal sealed class OverlayStateClient : IDisposable
     }
     /// <summary>A run starts by telling the backend, which clears the last result and puts both
     /// displays into their loading state before any pixel work happens.</summary>
-    internal async Task PostRecognitionStartedAsync(string requestId)
+    internal async Task PostRecognitionStartedAsync(string requestId, CancellationToken? token = null)
     {
-        try { using var response = await http.PostAsJsonAsync("api/recognition/started", new RecognitionStart { RequestId = requestId }, OverlaySettingsStore.Json, stop.Token); response.EnsureSuccessStatusCode(); }
+        try { using var response = await http.PostAsJsonAsync("api/recognition/started", new RecognitionStart { RequestId = requestId }, OverlaySettingsStore.Json, token ?? stop.Token); response.EnsureSuccessStatusCode(); }
         catch (Exception e) when (e is HttpRequestException or OperationCanceledException) { OverlayDiagnostics.Log("warn", "recognition_started_failed", e.Message); }
     }
     /// <summary>The candidate shortlist per OCR text, resolved by the backend so the name and

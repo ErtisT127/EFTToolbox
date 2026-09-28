@@ -60,7 +60,10 @@ internal sealed class RecognitionEngine : IDisposable
         {
             image?.Dispose();
             image = null;
-            error = exception.Message;
+            // The dashboard translates stable short codes; the exception text itself only goes to
+            // the log file.
+            OverlayDiagnostics.Log("warn", "ocr_failed", exception.Message);
+            error = "ocr_failed";
             return [];
         }
     }

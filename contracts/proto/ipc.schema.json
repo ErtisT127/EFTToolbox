@@ -1666,12 +1666,13 @@
     "UserSettings": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "overlay", "gameMonitor", "recognition"],
+      "required": ["schemaVersion", "overlay", "gameMonitor", "recognition", "language"],
       "properties": {
         "schemaVersion": { "type": "integer", "const": 1 },
         "overlay": { "$ref": "#/$defs/OverlaySettings" },
         "gameMonitor": { "$ref": "#/$defs/GameMonitorSettings" },
-        "recognition": { "$ref": "#/$defs/RecognitionSettings" }
+        "recognition": { "$ref": "#/$defs/RecognitionSettings" },
+        "language": { "type": "string", "enum": ["zh-CN", "en-US"] }
       }
     },
     "OverlayBootstrap": {

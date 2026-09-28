@@ -83,9 +83,10 @@ internal sealed class TileLayerRenderer : IDisposable
             }
         }
         Visible = visible.OrderByDescending(t => t.InViewport).ToArray();
-        viewport = Visible.Where(t => t.InViewport).Select(t => t.Key).ToHashSet(); var needed = Visible.Select(t => t.Key).ToHashSet();
         lock (gate)
         {
+            viewport = Visible.Where(t => t.InViewport).Select(t => t.Key).ToHashSet();
+            var needed = Visible.Select(t => t.Key).ToHashSet();
             foreach (var key in pending.Keys.Where(k => !needed.Contains(k)).ToArray()) { pending[key].Cancel(); pending.Remove(key); }
             foreach (var tile in Visible)
             {

@@ -1,8 +1,9 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
-import { useLocale } from '../hooks/useLocale';
+import { useLocale, type LocaleKey } from '../hooks/useLocale';
 import { ErrorState } from './ErrorState';
 import { DataLoadError, isDashboardDevelopment, isDataLoadError } from '../lib/errors';
+import { reportClientLog } from '../stores/workspaceStore';
 
 type ErrorBoundaryProps = {
   children: ReactNode;
@@ -46,7 +47,7 @@ function ErrorBoundaryView({
       icon={AlertTriangle}
       tone={dataError ? 'data' : 'network'}
       title={t(`errorBoundary.${module}.title`)}
-      description={t(dataError ? error.errorKey : 'errorBoundary.description')}
+      description={t(dataError ? (error.errorKey as LocaleKey) : 'errorBoundary.description')}
       actions={actions}
     />
   );
@@ -61,6 +62,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    reportClientLog('react_render_failed', error.message, errorInfo.componentStack || '');
     if (isDashboardDevelopment()) {
       console.error(error);
       console.error(errorInfo.componentStack);

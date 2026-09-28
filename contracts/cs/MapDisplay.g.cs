@@ -31,6 +31,7 @@ public static class MapDisplay {
   public const string LandmarkFont = "barlow-condensed-600";
   public const string NamedFont = "noto-sans-700";
   public const string AnnotationFont = "barlow-condensed-400";
+  public const string MonoFont = "jetbrains-mono-400";
   public const string CjkRegularFont = "noto-sans-sc-400";
   public const string CjkBoldFont = "noto-sans-sc-700";
   public static readonly System.Collections.Generic.IReadOnlyDictionary<string, string> Emoji = new System.Collections.Generic.Dictionary<string, string> {
