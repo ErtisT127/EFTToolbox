@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
 import {
   Hand,
   MousePointer2,
@@ -28,7 +29,7 @@ import type {
   WorldXZ,
   WorldRectXZ,
 } from '../../../../contracts/ts/ipc.gen';
-import { isUsableMapData, request, workspace, useWorkspace } from '../../stores/workspaceStore';
+import { isUsableMapData, workspace, useWorkspace } from '../../stores/workspaceStore';
 import { useOverlay } from '../../stores/overlayStore';
 import { CalibrationViewport, MIN_REGION_SIZE } from './CalibrationViewport';
 import { useLocale, type LocaleKey } from '../../hooks/useLocale';
@@ -42,7 +43,17 @@ import { HintTooltip } from '../../components/HintTooltip';
 import { MapUnavailableState } from '../../components/MapUnavailableState';
 import { ErrorState } from '../../components/ErrorState';
 import { ZOOM_BOUND_EPSILON } from '../map/lib/zoom';
-import { DataLoadError } from '../../lib/errors';
+import { DataLoadError, errorKeyOf } from '../../lib/errors';
+import { api, isRevisionConflict } from '../../stores/api';
+import { store, type RootState } from '../../stores/store';
+import {
+  clearCalibrationEditor,
+  clearConflict,
+  setCalibrationEditorDraft,
+  setCalibrationEditorHistory,
+  setCalibrationEditorSaveState,
+  setConflict,
+} from '../../stores/clientState';
 
 const emptyRect: WorldRectXZ = {
   minX: 0,
@@ -112,16 +123,28 @@ function findConflicts(regions: CalibrationRegion[]) {
   const cached = conflictCache.get(regions);
   if (cached) return cached;
   const conflicts = new Set<string>();
-  // ponytail: quadratic per document; use a spatial index only if region counts make this measurable.
-  for (let i = 0; i < regions.length; i++)
-    for (let j = i + 1; j < regions.length; j++) {
-      const a = regions[i],
-        b = regions[j];
+  const left = (region: CalibrationRegion) =>
+    region.coversEntireMap ? -Infinity : region.rectangle.minX;
+  const right = (region: CalibrationRegion) =>
+    region.coversEntireMap ? Infinity : region.rectangle.maxX;
+  const order = regions
+    .map((region, index) => ({ region, index }))
+    .sort((a, b) => left(a.region) - left(b.region));
+  const active: number[] = [];
+  for (const current of order) {
+    for (let i = active.length - 1; i >= 0; i--) {
+      if (right(regions[active[i]]) <= left(current.region)) active.splice(i, 1);
+    }
+    for (const index of active) {
+      const a = regions[index],
+        b = current.region;
       if (a.priority === b.priority && regionsOverlap(a, b)) {
         conflicts.add(a.id);
         conflicts.add(b.id);
       }
     }
+    active.push(current.index);
+  }
   conflictCache.set(regions, conflicts);
   return conflicts;
 }
@@ -147,21 +170,24 @@ export function CalibratorPage() {
   const w = useWorkspace(workspace);
   const overlay = useOverlay();
   const [tool, setTool] = useState<Tool>('select');
-  const [doc, setDoc] = useState<CalibrationDocument | null>(null);
   const [mapLoadError, setMapLoadError] = useState<string | null>(null);
   const [calibrationLoadError, setCalibrationLoadError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [confirmReset, setConfirmReset] = useState(false);
-  const [mapData, setMapData] = useState<Map<string, MapData>>(new Map());
-  const [calibrationData, setCalibrationData] = useState<Map<string, CalibrationDocument>>(
-    new Map(),
+  const mapData = useSelector(
+    (state: RootState) =>
+      new Map(
+        w.catalog.flatMap((map) => {
+          const data = api.endpoints.getMap.select({ id: map.id, locale })(state).data;
+          return data ? [[map.id, data] as const] : [];
+        }),
+      ),
+    (a, b) => a.size === b.size && [...a].every(([id, data]) => b.get(id) === data),
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState<CalibrationRegion | null>(null);
   const [cursor, setCursor] = useState<WorldXZ | null>(null);
-  const [past, setPast] = useState<CalibrationDocument[]>([]);
-  const [future, setFuture] = useState<CalibrationDocument[]>([]);
   const mapRef = useRef<L.Map | null>(null);
   const pageRef = useRef<HTMLElement>(null);
   const detailRef = useRef<HTMLDivElement>(null);
@@ -176,6 +202,7 @@ export function CalibratorPage() {
   const treeContentRef = useRef<HTMLDivElement>(null);
   const treeScrollTopRef = useRef(0);
   const floorButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const consumedReloadToken = useRef(0);
   const calibratorPreference = w.calibratorPreference;
   const collapsed = calibratorPreference.sidebarCollapsed;
   const calibratorMapId =
@@ -184,6 +211,36 @@ export function CalibratorPage() {
   const preference = currentMapData ? w.preferenceForData(calibratorMapId, currentMapData) : null;
   const basemap: Basemap = preference?.basemap === 'tiles' ? 'tiles' : 'svg';
   const activeCalibrationKey = calibrationKey(calibratorMapId, basemap);
+  const calibrationData = useSelector(
+    (state: RootState) =>
+      new Map(
+        w.catalog.flatMap((map) => {
+          const data = mapData.get(map.id);
+          if (!data) return [];
+          const basemaps: Basemap[] = [
+            ...(data.svgUrl ? ['svg' as const] : []),
+            ...(data.tiles.length ? ['tiles' as const] : []),
+          ];
+          return basemaps.flatMap((mapBasemap) => {
+            const value = api.endpoints.getCalibration.select({ id: map.id, basemap: mapBasemap })(
+              state,
+            ).data?.value;
+            return value ? [[calibrationKey(map.id, mapBasemap), value] as const] : [];
+          });
+        }),
+      ),
+    (a, b) => a.size === b.size && [...a].every(([key, value]) => b.get(key) === value),
+  );
+  const editor = useSelector(
+    (state: RootState) => state.client.calibrationEditors[activeCalibrationKey],
+  );
+  const calibrationConflictKey = `calibration:${activeCalibrationKey}`;
+  const calibrationConflict = useSelector((state: RootState) =>
+    state.client.conflicts.find((item) => item.key === calibrationConflictKey),
+  );
+  const doc = editor?.draft || calibrationData.get(activeCalibrationKey) || null;
+  const past = editor?.past || [];
+  const future = editor?.future || [];
   const treeSelection = useMemo<TreeSelection>(() => {
     if (calibratorPreference.selection?.type === 'floor' && calibratorPreference.selection.floorId)
       return {
@@ -219,12 +276,11 @@ export function CalibratorPage() {
   }, []);
   useEffect(() => {
     if (!w.catalog.length) return;
+    const forceReload = reloadToken > consumedReloadToken.current;
+    consumedReloadToken.current = reloadToken;
     let cancelled = false;
-    setDoc(null);
     setMapLoadError(null);
     setCalibrationLoadError(null);
-    setMapData(new Map());
-    setCalibrationData(new Map());
     docRef.current = null;
     confirmedDocRef.current = null;
     const load = async () => {
@@ -232,24 +288,27 @@ export function CalibratorPage() {
       try {
         mapEntries = await Promise.all(
           w.catalog.map(async (map) => {
-            const data = await request<unknown>(`/api/maps/${map.id}?locale=${locale}`);
+            const data = await store
+              .dispatch(
+                api.endpoints.getMap.initiate(
+                  { id: map.id, locale },
+                  { forceRefetch: forceReload },
+                ),
+              )
+              .unwrap();
             if (!isUsableMapData(data))
               throw new DataLoadError('errors.map_data_invalid', 'calibrator');
             return [map.id, data] as const;
           }),
         );
       } catch (error) {
-        if (!cancelled)
-          setMapLoadError(error instanceof Error ? error.message : 'errors.request_failed');
+        if (!cancelled) setMapLoadError(errorKeyOf(error, 'errors.request_failed'));
         return;
       }
       if (cancelled) return;
       const loadedMapData = new Map(mapEntries);
-      setMapData(loadedMapData);
-
-      let calibrationEntries: Array<readonly [string, CalibrationDocument]>;
       try {
-        calibrationEntries = await Promise.all(
+        await Promise.all(
           w.catalog.flatMap((map) => {
             const data = loadedMapData.get(map.id);
             const basemaps: Basemap[] = [
@@ -257,11 +316,15 @@ export function CalibratorPage() {
               ...(data?.tiles.length ? (['tiles'] as Basemap[]) : []),
             ];
             return basemaps.map(async (basemap) => {
-              const calibration = normalizeCalibrationDocument(
-                await request<CalibrationDocument>(
-                  `/api/maps/${map.id}/calibration?basemap=${basemap}`,
-                ),
-              );
+              const result = await store
+                .dispatch(
+                  api.endpoints.getCalibration.initiate(
+                    { id: map.id, basemap },
+                    { forceRefetch: forceReload },
+                  ),
+                )
+                .unwrap();
+              const calibration = normalizeCalibrationDocument(result.value);
               if (
                 calibration.mapId !== map.id ||
                 calibration.basemap !== basemap ||
@@ -286,7 +349,6 @@ export function CalibratorPage() {
         return;
       }
       if (cancelled) return;
-      setCalibrationData(new Map(calibrationEntries));
     };
     void load();
     return () => {
@@ -296,16 +358,15 @@ export function CalibratorPage() {
   useEffect(() => {
     const next = calibrationData.get(activeCalibrationKey);
     if (!next) return;
+    if (store.getState().client.calibrationEditors[activeCalibrationKey]?.draft) return;
     // calibrationData also contains optimistic local edits. Do not treat a
     // same-map update as a fresh remote load and confirm an unsaved document.
     if (doc && next.mapId === doc.mapId && next.basemap === doc.basemap) return;
-    setDoc(next);
     docRef.current = next;
     confirmedDocRef.current = structuredClone(next);
     setSelected(null);
     setDraft(null);
-    setPast([]);
-    setFuture([]);
+    store.dispatch(clearCalibrationEditor(activeCalibrationKey));
   }, [activeCalibrationKey, calibrationData, calibratorMapId, doc]);
   useEffect(() => {
     if (!mapData.size || mapData.has(calibratorMapId)) return;
@@ -324,13 +385,13 @@ export function CalibratorPage() {
     () => activeDoc?.regions.filter((r) => r.floorId === floorId) || [],
     [activeDoc, floorId],
   );
-  const conflictsByCalibration = useMemo(
-    () =>
-      new Map(
-        [...calibrationData].map(([key, calibration]) => [key, findConflicts(calibration.regions)]),
-      ),
-    [calibrationData],
-  );
+  const conflictsByCalibration = useMemo(() => {
+    const calibration = calibrationData.get(activeCalibrationKey);
+    if (!calibration) return new Map<string, Set<string>>();
+    return new Map([
+      [activeCalibrationKey, findConflicts(doc ? doc.regions : calibration.regions)],
+    ]);
+  }, [activeCalibrationKey, calibrationData, doc]);
   const conflictIds = conflictsByCalibration.get(activeCalibrationKey);
   const updateTreeSelection = (selection: TreeSelection) => {
     workspace.updateCalibratorPreference({ selection });
@@ -355,18 +416,20 @@ export function CalibratorPage() {
     const next = normalizeCalibrationDocument(value);
     docRef.current = next;
     confirmedDocRef.current = structuredClone(next);
-    setCalibrationData((previous) => {
-      const updated = new Map(previous);
-      updated.set(calibrationKey(next.mapId, next.basemap as Basemap), next);
-      return updated;
-    });
-    setDoc(next);
+    store.dispatch(clearCalibrationEditor(calibrationKey(next.mapId, next.basemap as Basemap)));
     const restored = next.regions.find((region) => region.id === selected);
     setSelected(restored ? restored.id : null);
     setDraft(restored ? structuredClone(restored) : null);
   };
-  const saveNow = (value: CalibrationDocument) => {
+  const saveNow = (value: CalibrationDocument, allowConflict = false) => {
     if (!value.regions.every((region) => isValidRegion(region))) return;
+    const key = calibrationKey(value.mapId, value.basemap as Basemap);
+    if (
+      !allowConflict &&
+      store.getState().client.conflicts.some((item) => item.key === `calibration:${key}`)
+    )
+      return;
+    store.dispatch(setCalibrationEditorSaveState({ key, changes: { saving: true } }));
     saveQueue.current = saveQueue.current
       .catch(() => undefined)
       .then(async () => {
@@ -378,14 +441,26 @@ export function CalibratorPage() {
             : value;
         if (!payload.regions.every((region) => isValidRegion(region))) return;
         if (sameCalibration(confirmedDocRef.current || undefined, payload)) return;
-        const next = await request<CalibrationDocument>(
-          `/api/maps/${payload.mapId}/calibration?basemap=${payload.basemap}`,
-          {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          },
-        );
+        const key = calibrationKey(payload.mapId, payload.basemap as Basemap);
+        if (
+          !allowConflict &&
+          store.getState().client.conflicts.some((item) => item.key === `calibration:${key}`)
+        )
+          return;
+        const current = api.endpoints.getCalibration.select({
+          id: payload.mapId,
+          basemap: payload.basemap,
+        })(store.getState()).data;
+        const saved = await store
+          .dispatch(
+            api.endpoints.updateCalibration.initiate({
+              value: payload,
+              revision: current?.revision || '',
+              etag: current?.etag || '',
+            }),
+          )
+          .unwrap();
+        const next = saved.value;
         const latest = docRef.current;
         const synchronized =
           latest &&
@@ -395,45 +470,54 @@ export function CalibratorPage() {
             : next;
         docRef.current = synchronized;
         confirmedDocRef.current = structuredClone(next);
-        setCalibrationData((previous) => {
-          const updated = new Map(previous);
-          updated.set(
-            calibrationKey(synchronized.mapId, synchronized.basemap as Basemap),
-            synchronized,
+        store.dispatch(
+          api.util.updateQueryData(
+            'getCalibration',
+            { id: next.mapId, basemap: next.basemap },
+            () => saved,
+          ),
+        );
+        if (
+          JSON.stringify(store.getState().client.calibrationEditors[key]?.draft) ===
+          JSON.stringify(payload)
+        )
+          store.dispatch(clearCalibrationEditor(key));
+        else
+          store.dispatch(
+            setCalibrationEditorSaveState({
+              key,
+              changes: {
+                savedRevision: store.getState().client.calibrationEditors[key]?.editRevision || 0,
+              },
+            }),
           );
-          return updated;
-        });
-        setDoc(synchronized);
+        store.dispatch(clearConflict(`calibration:${key}`));
       })
       .catch(async (error: unknown) => {
-        const message = error instanceof Error ? error.message : 'errors.calibration_save_failed';
-        if (message === 'errors.calibration_revision_conflict') {
+        const message = errorKeyOf(error, 'errors.calibration_save_failed');
+        if (isRevisionConflict(error)) {
           try {
-            const latest = normalizeCalibrationDocument(
-              await request<CalibrationDocument>(
-                `/api/maps/${value.mapId}/calibration?basemap=${value.basemap}`,
-              ),
-            );
+            const latestResult = await store
+              .dispatch(
+                api.endpoints.getCalibration.initiate(
+                  { id: value.mapId, basemap: value.basemap },
+                  { forceRefetch: true },
+                ),
+              )
+              .unwrap();
+            const latest = normalizeCalibrationDocument(latestResult.value);
             if (latest.mapId !== value.mapId || latest.basemap !== value.basemap)
               throw new Error('errors.calibration_invalid');
-            replaceCalibration(latest);
-            notices.push(t(message));
-          } catch (refreshError: unknown) {
-            const confirmed = confirmedDocRef.current;
-            if (
-              confirmed &&
-              calibrationKey(confirmed.mapId, confirmed.basemap as Basemap) ===
-                calibrationKey(value.mapId, value.basemap as Basemap)
-            )
-              replaceCalibration(confirmed);
-            notices.push(t(message));
-            notices.push(
-              t(
-                refreshError instanceof Error
-                  ? (refreshError.message as LocaleKey)
-                  : 'errors.request_failed',
-              ),
+            store.dispatch(
+              setConflict({
+                key: `calibration:${calibrationKey(value.mapId, value.basemap as Basemap)}`,
+                resource: 'calibration',
+                entityId: calibrationKey(value.mapId, value.basemap as Basemap),
+              }),
             );
+            notices.push(t('errors.revision_conflict'));
+          } catch (refreshError: unknown) {
+            notices.push(t(errorKeyOf(refreshError, 'errors.request_failed') as LocaleKey));
           }
           return;
         }
@@ -448,9 +532,21 @@ export function CalibratorPage() {
           }
         }
         notices.push(t(message as LocaleKey));
-      });
+      })
+      .finally(() =>
+        store.dispatch(setCalibrationEditorSaveState({ key, changes: { saving: false } })),
+      );
   };
   const scheduleSave = (value: CalibrationDocument, immediate = false) => {
+    if (
+      store
+        .getState()
+        .client.conflicts.some(
+          (item) =>
+            item.key === `calibration:${calibrationKey(value.mapId, value.basemap as Basemap)}`,
+        )
+    )
+      return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     if (immediate) {
       saveNow(value);
@@ -468,15 +564,11 @@ export function CalibratorPage() {
     persistence: 'debounce' | 'immediate' | 'none',
     record = true,
   ) => {
-    if (record && docRef.current) setPast((items) => [...items, docRef.current!].slice(-50));
-    if (record) setFuture([]);
+    const key = calibrationKey(next.mapId, next.basemap as Basemap);
+    store.dispatch(
+      setCalibrationEditorDraft({ key, draft: next, record, base: docRef.current || undefined }),
+    );
     docRef.current = next;
-    setCalibrationData((previous) => {
-      const updated = new Map(previous);
-      updated.set(calibrationKey(next.mapId, next.basemap as Basemap), next);
-      return updated;
-    });
-    setDoc(next);
     if (persistence === 'immediate') saveNow(next);
     if (persistence === 'debounce') scheduleSave(next);
   };
@@ -607,8 +699,13 @@ export function CalibratorPage() {
     const current = docRef.current;
     const previous = past[past.length - 1];
     if (!current || !previous) return;
-    setPast((items) => items.slice(0, -1));
-    setFuture((items) => [current, ...items]);
+    store.dispatch(
+      setCalibrationEditorHistory({
+        key: activeCalibrationKey,
+        past: past.slice(0, -1),
+        future: [current, ...future],
+      }),
+    );
     applyDocument({ ...previous, revision: current.revision }, 'immediate', false);
     const region = previous.regions.find((item) => item.id === selected);
     if (region) setDraft(structuredClone(region));
@@ -617,8 +714,13 @@ export function CalibratorPage() {
     const current = docRef.current;
     const next = future[0];
     if (!current || !next) return;
-    setFuture((items) => items.slice(1));
-    setPast((items) => [...items, current].slice(-50));
+    store.dispatch(
+      setCalibrationEditorHistory({
+        key: activeCalibrationKey,
+        past: [...past, current].slice(-50),
+        future: future.slice(1),
+      }),
+    );
     applyDocument({ ...next, revision: current.revision }, 'immediate', false);
     const region = next.regions.find((item) => item.id === selected);
     if (region) setDraft(structuredClone(region));
@@ -660,13 +762,11 @@ export function CalibratorPage() {
     if (previousContextKey.current === activeCalibrationKey) return;
     previousContextKey.current = activeCalibrationKey;
     flushSave();
-    setDoc(null);
     docRef.current = null;
     confirmedDocRef.current = null;
     setSelected(null);
     setDraft(null);
-    setPast([]);
-    setFuture([]);
+    store.dispatch(clearCalibrationEditor(activeCalibrationKey));
     setConfirmDelete(false);
     rectangleHistory.current = false;
     if (treeSelection.mapId !== calibratorMapId)
@@ -688,30 +788,28 @@ export function CalibratorPage() {
           ? (workspace.preferenceForData(mapId, map).basemap as Basemap)
           : 'svg';
     let cancelled = false;
-    void request<CalibrationDocument>(`/api/maps/${mapId}/calibration?basemap=${changedBasemap}`)
-      .then((value) => {
+    void store
+      .dispatch(
+        api.endpoints.getCalibration.initiate(
+          { id: mapId, basemap: changedBasemap },
+          { forceRefetch: true },
+        ),
+      )
+      .unwrap()
+      .then((result) => {
+        const value = result.value;
         const next = normalizeCalibrationDocument(value);
         if (next.mapId !== mapId || next.basemap !== changedBasemap)
           throw new Error('errors.calibration_invalid');
         if (cancelled) return;
-        setCalibrationData((previous) => {
-          if (sameCalibration(previous.get(calibrationKey(mapId, changedBasemap)), next))
-            return previous;
-          const updated = new Map(previous);
-          updated.set(calibrationKey(mapId, changedBasemap), next);
-          return updated;
-        });
         if (mapId === calibratorMapId && changedBasemap === basemap && !draft) {
-          setDoc(next);
           docRef.current = next;
           confirmedDocRef.current = structuredClone(next);
         }
       })
       .catch((error: unknown) => {
         if (!cancelled)
-          notices.push(
-            t(error instanceof Error ? (error.message as LocaleKey) : 'errors.calibration_invalid'),
-          );
+          notices.push(t(errorKeyOf(error, 'errors.calibration_invalid') as LocaleKey));
       });
     return () => {
       cancelled = true;
@@ -782,19 +880,18 @@ export function CalibratorPage() {
   };
   const resetCalibration = () => {
     setConfirmReset(false);
-    void request('/api/data/reset-calibration', { method: 'POST' })
+    void store
+      .dispatch(api.endpoints.resetData.initiate('calibration'))
+      .unwrap()
       .then(() => window.location.reload())
       .catch((error: unknown) =>
-        notices.push(
-          t(error instanceof Error ? (error.message as LocaleKey) : 'errors.data_reset_failed'),
-        ),
+        notices.push(t(errorKeyOf(error, 'errors.data_reset_failed') as LocaleKey)),
       );
   };
   const openDataDirectory = () => {
-    void fetch('/api/data/open')
-      .then((response) => {
-        if (!response.ok) throw new Error('errors.data_directory_open_failed');
-      })
+    void store
+      .dispatch(api.endpoints.openDataDirectory.initiate('data'))
+      .unwrap()
       .catch(() => notices.push(t('errors.data_directory_open_failed')));
   };
   const calibrationDataError =
@@ -844,6 +941,66 @@ export function CalibratorPage() {
     );
   return (
     <section ref={pageRef} className={`calibrator-page ${collapsed ? 'tree-collapsed' : ''}`}>
+      {calibrationConflict && (
+        <div className="calibrator-conflict" role="alert">
+          <span>{t('errors.revision_conflict')}</span>
+          <button
+            type="button"
+            onClick={() => store.dispatch(setConflict({ ...calibrationConflict, paused: true }))}
+          >
+            {t('errors.conflict_keep_local')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void store
+                .dispatch(
+                  api.endpoints.getCalibration.initiate(
+                    { id: calibratorMapId, basemap },
+                    { forceRefetch: true },
+                  ),
+                )
+                .unwrap()
+                .then((remote) => {
+                  const next = normalizeCalibrationDocument(remote.value);
+                  docRef.current = next;
+                  confirmedDocRef.current = structuredClone(next);
+                  store.dispatch(clearCalibrationEditor(activeCalibrationKey));
+                  store.dispatch(clearConflict(calibrationConflictKey));
+                });
+            }}
+          >
+            {t('errors.conflict_load_remote')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void store
+                .dispatch(
+                  api.endpoints.getCalibration.initiate(
+                    { id: calibratorMapId, basemap },
+                    { forceRefetch: true },
+                  ),
+                )
+                .unwrap()
+                .then((remote) => {
+                  const local =
+                    store.getState().client.calibrationEditors[activeCalibrationKey]?.draft;
+                  if (local) {
+                    const updated = { ...local, revision: remote.value.revision };
+                    docRef.current = updated;
+                    store.dispatch(
+                      setCalibrationEditorDraft({ key: activeCalibrationKey, draft: updated }),
+                    );
+                    saveNow(updated, true);
+                  }
+                });
+            }}
+          >
+            {t('errors.conflict_retry')}
+          </button>
+        </div>
+      )}
       <aside id="calibrator-tree" className={`calibrator-tree ${collapsed ? 'collapsed' : ''}`}>
         {!collapsed && (
           <div ref={treeContentRef} className="tree-content">
@@ -1071,8 +1228,15 @@ export function CalibratorPage() {
             }
           }}
           onChangeRectangle={(id, rectangle) => {
-            if (!rectangleHistory.current && docRef.current)
-              setPast((items) => [...items, docRef.current!].slice(-50));
+            if (!rectangleHistory.current && docRef.current) {
+              store.dispatch(
+                setCalibrationEditorHistory({
+                  key: activeCalibrationKey,
+                  past: [...past, docRef.current].slice(-50),
+                  future: [],
+                }),
+              );
+            }
             rectangleHistory.current = true;
             updateRectangle(id, rectangle);
           }}

@@ -1,10 +1,22 @@
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import type zhCN from '../i18n/locales/zh-CN';
+import {
+  defaultLocale,
+  locales,
+  type Locale,
+  type MessageTree,
+} from '../../../contracts/ts/messages.gen.ts';
 
 export function useLocale() {
   const { t, i18n } = useTranslation();
-  return { t, locale: i18n.language };
+  // i18next accepts arbitrary language tags; narrow to the contract locales with the default as
+  // fallback so locale-consuming APIs keep their generated union type.
+  return {
+    t,
+    locale: (locales as readonly string[]).includes(i18n.language)
+      ? (i18n.language as Locale)
+      : defaultLocale,
+  };
 }
 
 // Declare this when a component takes t as a prop; inner calls get the same key checking.
@@ -17,5 +29,6 @@ type NestedKeyOf<T> = T extends object
   : never;
 
 // Every zh-CN leaf key; runtime-only keys (store error keys, backend error codes, data-derived
-// keys) get narrowed with this at the call site. en-US key parity is enforced by i18n:check.
-export type LocaleKey = NestedKeyOf<typeof zhCN>;
+// keys) get narrowed with this at the call site. en-US key parity is enforced by the contracts
+// generator.
+export type LocaleKey = NestedKeyOf<MessageTree>;

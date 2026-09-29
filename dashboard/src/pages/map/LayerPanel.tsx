@@ -41,6 +41,9 @@ export function LayerPanel({
 }: Props) {
   const { t } = useLocale();
   const ownerToggle = (ownerId: string, checked: boolean) => {
+    // The per-owner boxes read off while the group master is off, so switching one back on has to
+    // bring the group with it: the switch always produces the state it shows.
+    if (checked && !preference.showAnnotations) onPreference({ showAnnotations: true });
     owners?.onToggle(ownerId, checked);
   };
   const floorItems = items.filter((a) => a.floorId === preference.floorId);
@@ -145,23 +148,32 @@ export function LayerPanel({
             </summary>
             {owners ? (
               <>
-                <label className="check-row">
-                  <input
-                    type="checkbox"
-                    checked={!owners.hiddenOwners.includes(owners.selfId)}
-                    onChange={(e) => ownerToggle(owners.selfId, e.target.checked)}
-                  />
-                  {t('map.layers.myMarkers')}
-                  <span className="count">{selfCount}</span>
-                </label>
+                {/* The group switch is the master: while it is off every user marker is hidden, so the
+                    per-owner boxes read as off too instead of claiming markers nobody can see. */}
+                {owners.selfId !== '' && (
+                  <label className="check-row">
+                    <input
+                      type="checkbox"
+                      disabled={readOnly}
+                      checked={
+                        preference.showAnnotations && !owners.hiddenOwners.includes(owners.selfId)
+                      }
+                      onChange={(e) => ownerToggle(owners.selfId, e.target.checked)}
+                    />
+                    {t('map.layers.myMarkers')}
+                    <span className="count">{selfCount}</span>
+                  </label>
+                )}
                 {ownerRows.map((row) => (
                   <label className="check-row" key={row.ownerId}>
                     <input
                       type="checkbox"
+                      disabled={readOnly}
                       checked={
-                        row.active
+                        preference.showAnnotations &&
+                        (row.active
                           ? !owners.hiddenOwners.includes(row.ownerId)
-                          : owners.shownOwners.includes(row.ownerId)
+                          : owners.shownOwners.includes(row.ownerId))
                       }
                       onChange={(e) => ownerToggle(row.ownerId, e.target.checked)}
                     />
@@ -203,7 +215,7 @@ export function LayerPanel({
                 <input
                   type="checkbox"
                   aria-label={t('map.layers.toggleGroup', {
-                    group: t(`map.groups.${groupId}` as LocaleKey),
+                    group: t(`data.mapGroups.${groupId}` as LocaleKey),
                   })}
                   ref={(input) => {
                     if (!input) return;
@@ -229,7 +241,7 @@ export function LayerPanel({
                   }}
                 />
                 <ChevronRight className="group-chevron" size={16} aria-hidden="true" />
-                {t(`map.groups.${groupId}` as LocaleKey)}
+                {t(`data.mapGroups.${groupId}` as LocaleKey)}
               </summary>
               {data.categories
                 .filter((c) => c.groupId === groupId)

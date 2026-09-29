@@ -1,16 +1,21 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://efttoolbox.local/ipc.schema.json",
+  "$id": "https://efttoolbox.local/data.schema.json",
   "$defs": {
+    "SchemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "ProtocolVersion": {
+      "type": "string",
+      "const": "1"
+    },
     "Status": {
       "type": "object",
       "additionalProperties": false,
       "required": ["protocolVersion", "appVersion", "startedAt"],
       "properties": {
-        "protocolVersion": {
-          "type": "string",
-          "const": "1"
-        },
+        "protocolVersion": { "$ref": "#/$defs/ProtocolVersion" },
         "appVersion": {
           "type": "string"
         },
@@ -95,6 +100,7 @@
             "basemap_changed",
             "center_changed",
             "filters_changed",
+            "marker_preferences_changed",
             "mode_applied",
             "player_upsert",
             "player_remove",
@@ -165,6 +171,9 @@
         "filtersChanged": {
           "$ref": "#/$defs/MobileFiltersChanged"
         },
+        "markerPreferences": {
+          "$ref": "#/$defs/MarkerPreferences"
+        },
         "overlaySettings": {
           "$ref": "#/$defs/OverlaySettings"
         },
@@ -191,6 +200,15 @@
         },
         "recognitionStart": {
           "$ref": "#/$defs/RecognitionStart"
+        },
+        "language": {
+          "description": "The interface language the app is running in. The cast page runs on another device and cannot read user settings, so the snapshot carries it to keep the phone in the same language.",
+          "type": "string",
+          "enum": ["zh-CN", "en-US"]
+        },
+        "ownerId": {
+          "description": "The local machine's annotation owner id (the multiplayer player id). The cast and the overlay use it to keep their own markers visible under the shared owner-visibility rule.",
+          "type": "string"
         }
       }
     },
@@ -294,7 +312,7 @@
       "additionalProperties": false,
       "required": ["schemaVersion", "fetchedAt", "mode", "items"],
       "properties": {
-        "schemaVersion": { "type": "integer", "const": 1 },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "fetchedAt": { "type": "string" },
         "mode": { "type": "string", "enum": ["pvp", "pve", "pvp-season"] },
         "items": { "type": "array", "items": { "$ref": "#/$defs/ItemsCatalogItem" } }
@@ -313,7 +331,7 @@
         "descending"
       ],
       "properties": {
-        "schemaVersion": { "type": "integer", "const": 1 },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "autoUpdate": { "type": "boolean" },
         "intervalMinutes": { "type": "integer", "enum": [60, 120, 240, 480, 720] },
         "includeImages": { "type": "boolean" },
@@ -373,7 +391,7 @@
         "mode"
       ],
       "properties": {
-        "schemaVersion": { "type": "integer", "const": 1 },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "screenshotDirectory": { "type": "string" },
         "logDirectory": { "type": "string" },
         "deleteScreenshots": { "type": "boolean" },
@@ -394,7 +412,7 @@
         "lastLogAt"
       ],
       "properties": {
-        "schemaVersion": { "type": "integer", "const": 1 },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "mode": { "type": "string", "enum": ["pvp", "pve", "pvp-season"] },
         "screenshotWatching": { "type": "boolean" },
         "logWatching": { "type": "boolean" },
@@ -585,7 +603,7 @@
       "additionalProperties": false,
       "required": ["schemaVersion", "mapId", "basemap", "revision", "nextRegionNumber", "regions"],
       "properties": {
-        "schemaVersion": { "type": "integer", "const": 1 },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "mapId": { "type": "string" },
         "basemap": { "type": "string", "enum": ["svg", "tiles"] },
         "revision": { "type": "integer", "minimum": 0 },
@@ -598,7 +616,7 @@
       "additionalProperties": false,
       "required": ["schemaVersion", "maps"],
       "properties": {
-        "schemaVersion": { "type": "integer", "const": 1 },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "maps": { "type": "array", "items": { "$ref": "#/$defs/CalibrationDocument" } }
       }
     },
@@ -805,9 +823,7 @@
         "iconUrl": {
           "type": "string"
         },
-        "schemaVersion": {
-          "type": "integer"
-        },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "id": {
           "type": "string"
         },
@@ -937,9 +953,7 @@
       "additionalProperties": false,
       "required": ["schemaVersion", "items"],
       "properties": {
-        "schemaVersion": {
-          "type": "integer"
-        },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "items": {
           "type": "array",
           "items": {
@@ -1034,7 +1048,7 @@
       "additionalProperties": false,
       "required": ["schemaVersion", "sidebarCollapsed", "collapsedMaps", "collapsedFloors"],
       "properties": {
-        "schemaVersion": { "type": "integer", "const": 1 },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "sidebarCollapsed": {
           "type": "boolean"
         },
@@ -1060,9 +1074,7 @@
       "additionalProperties": false,
       "required": ["schemaVersion", "selectedMap", "maps", "stickerUsage"],
       "properties": {
-        "schemaVersion": {
-          "type": "integer"
-        },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "selectedMap": {
           "type": "string"
         },
@@ -1238,7 +1250,7 @@
         "visible"
       ],
       "properties": {
-        "schemaVersion": { "type": "integer", "const": 1 },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "ocrConfidence": {
           "type": "number",
           "minimum": 0,
@@ -1574,10 +1586,7 @@
         "hotkeys"
       ],
       "properties": {
-        "schemaVersion": {
-          "type": "integer",
-          "const": 1
-        },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "visible": {
           "type": "boolean"
         },
@@ -1668,7 +1677,7 @@
       "additionalProperties": false,
       "required": ["schemaVersion", "overlay", "gameMonitor", "recognition", "language"],
       "properties": {
-        "schemaVersion": { "type": "integer", "const": 1 },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "overlay": { "$ref": "#/$defs/OverlaySettings" },
         "gameMonitor": { "$ref": "#/$defs/GameMonitorSettings" },
         "recognition": { "$ref": "#/$defs/RecognitionSettings" },
@@ -1689,12 +1698,11 @@
         "overlaySettingsFile",
         "websocketPath",
         "logPipeName",
-        "stickersFile"
+        "stickersFile",
+        "markerPreferencesFile"
       ],
       "properties": {
-        "schemaVersion": {
-          "type": "integer"
-        },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "mapDirectory": {
           "type": "string"
         },
@@ -1708,6 +1716,9 @@
           "type": "string"
         },
         "preferencesFile": {
+          "type": "string"
+        },
+        "markerPreferencesFile": {
           "type": "string"
         },
         "annotationsDirectory": {
@@ -1947,7 +1958,7 @@
       "additionalProperties": false,
       "required": ["schemaVersion", "hiddenOwners", "shownOwners"],
       "properties": {
-        "schemaVersion": { "type": "integer", "const": 1 },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "hiddenOwners": { "type": "array", "items": { "type": "string" } },
         "shownOwners": { "type": "array", "items": { "type": "string" } }
       }
@@ -1965,6 +1976,17 @@
         "state": { "type": "string", "enum": ["connected", "unstable", "lost"] }
       }
     },
+    "MultiplayerInvite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "host", "key"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["custom", "stun"] },
+        "host": { "type": "string" },
+        "stunServer": { "type": "string" },
+        "key": { "type": "string" }
+      }
+    },
     "MultiplayerStatus": {
       "type": "object",
       "additionalProperties": false,
@@ -1973,7 +1995,7 @@
         "enabled": { "type": "boolean" },
         "role": { "type": "string", "enum": ["host", "guest"] },
         "mode": { "type": "string", "enum": ["custom", "stun"] },
-        "shareText": { "type": "string" },
+        "invite": { "$ref": "#/$defs/MultiplayerInvite" },
         "port": { "type": "integer" },
         "self": { "$ref": "#/$defs/MultiplayerMember" },
         "members": { "type": "array", "items": { "$ref": "#/$defs/MultiplayerMember" } },
@@ -1986,7 +2008,7 @@
       "additionalProperties": false,
       "required": ["schemaVersion", "playerId", "playerName", "playerColor"],
       "properties": {
-        "schemaVersion": { "type": "integer", "const": 1 },
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "playerId": { "type": "string" },
         "playerName": { "type": "string" },
         "playerColor": { "type": "string" },

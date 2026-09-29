@@ -5,19 +5,20 @@ import { useGameMonitor } from '../../../stores/gameMonitorStore';
 import { notices } from '../../../stores/noticeStore';
 import { reportClientLog, updateUserSettings } from '../../../stores/workspaceStore';
 import { useLocale, type LocaleKey } from '../../../hooks/useLocale';
+import { errorKeyOf } from '../../../lib/errors';
 
 const gameModes: GameMode[] = ['pvp', 'pve', 'pvp-season'];
 const modeLabels: Record<GameMode, LocaleKey> = {
   pvp: 'mode.pvp',
   pve: 'mode.pve',
-  'pvp-season': 'mode.season',
+  'pvp-season': 'mode.pvpSeason',
 };
 
 type Language = 'zh-CN' | 'en-US';
 const languages: Language[] = ['zh-CN', 'en-US'];
 const languageLabels: Record<Language, LocaleKey> = {
-  'zh-CN': 'settings.languageOptionZh',
-  'en-US': 'settings.languageOptionEn',
+  'zh-CN': 'settings.language.zh',
+  'en-US': 'settings.language.en',
 };
 
 export function SystemSettingsTab() {
@@ -37,8 +38,7 @@ export function SystemSettingsTab() {
       })
       .catch((reason: unknown) => {
         setApplying(false);
-        const message =
-          reason instanceof Error ? (reason.message as LocaleKey) : 'errors.request_failed';
+        const message = errorKeyOf(reason, 'errors.request_failed') as LocaleKey;
         notices.push(t(message));
         reportClientLog('language_save_failed', 'Language could not be saved', String(reason));
       });
@@ -48,13 +48,13 @@ export function SystemSettingsTab() {
       {applying && (
         <div className="language-reload-mask" role="status" aria-live="polite">
           <span className="small-spinner" aria-hidden="true" />
-          {t('settings.applyingLanguage')}
+          {t('settings.language.applying')}
         </div>
       )}
       <fieldset>
-        <legend>{t('settings.general')}</legend>
+        <legend>{t('settings.sections.general')}</legend>
         <div className="settings-field">
-          <label htmlFor="system-language">{t('settings.language')}</label>
+          <label htmlFor="system-language">{t('settings.language.label')}</label>
           <select
             id="system-language"
             value={locale}
@@ -83,48 +83,50 @@ export function SystemSettingsTab() {
         </div>
       </fieldset>
       <fieldset>
-        <legend>{t('settings.gameMonitor')}</legend>
+        <legend>{t('settings.sections.gameMonitor')}</legend>
         <div className="settings-field settings-path-field">
-          <label htmlFor="monitor-screenshot-directory">{t('settings.screenshotDirectory')}</label>
+          <label htmlFor="monitor-screenshot-directory">
+            {t('gameMonitor.screenshotDirectory')}
+          </label>
           <input
             id="monitor-screenshot-directory"
             value={monitor.settings?.screenshotDirectory || ''}
             readOnly
-            placeholder={t('settings.monitorUnavailable')}
+            placeholder={t('gameMonitor.notConfigured')}
           />
           <button
             type="button"
             disabled={monitor.browsing.screenshots}
             onClick={() => void monitor.browse('screenshots')}
           >
-            {t('settings.browse')}
+            {t('gameMonitor.browse')}
           </button>
           <Check
             className={`monitor-ready${monitor.status?.screenshotWatching ? ' is-active' : ''}`}
             size={16}
-            aria-label={t('settings.monitorReady')}
+            aria-label={t('gameMonitor.directoryReady')}
             aria-hidden={!monitor.status?.screenshotWatching}
           />
         </div>
         <div className="settings-field settings-path-field">
-          <label htmlFor="monitor-log-directory">{t('settings.logDirectory')}</label>
+          <label htmlFor="monitor-log-directory">{t('gameMonitor.logDirectory')}</label>
           <input
             id="monitor-log-directory"
             value={monitor.settings?.logDirectory || ''}
             readOnly
-            placeholder={t('settings.monitorUnavailable')}
+            placeholder={t('gameMonitor.notConfigured')}
           />
           <button
             type="button"
             disabled={monitor.browsing.logs}
             onClick={() => void monitor.browse('logs')}
           >
-            {t('settings.browse')}
+            {t('gameMonitor.browse')}
           </button>
           <Check
             className={`monitor-ready${monitor.status?.logWatching ? ' is-active' : ''}`}
             size={16}
-            aria-label={t('settings.monitorReady')}
+            aria-label={t('gameMonitor.directoryReady')}
             aria-hidden={!monitor.status?.logWatching}
           />
         </div>

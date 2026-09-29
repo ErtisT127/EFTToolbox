@@ -1,0 +1,1134 @@
+openapi: 3.1.0
+info:
+  title: EFTToolbox HTTP API
+  version: 1.0.0
+  description: Go backend runtime is authoritative; clients consume generated operations and data schemas.
+servers:
+  - url: /
+paths:
+  /api/status:
+    get:
+      operationId: getStatus
+      responses:
+        '200':
+          {
+            description: Backend status,
+            content:
+              { application/json: { schema: { $ref: './proto/data.schema.json#/$defs/Status' } } },
+          }
+  /api/logs:
+    post:
+      operationId: appendLog
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json: { schema: { $ref: './proto/data.schema.json#/$defs/OverlayLog' } },
+            },
+        }
+      responses:
+        { '204': { description: Log accepted }, '400': { $ref: '#/components/responses/Error' } }
+  /ws:
+    get:
+      operationId: openEventsWebSocket
+      x-transport: websocket
+      responses: { '101': { description: Switching Protocols } }
+  /api/stickers:
+    get:
+      operationId: listStickers
+      responses:
+        {
+          '200':
+            {
+              description: Stickers,
+              content:
+                {
+                  application/json:
+                    {
+                      schema:
+                        { type: array, items: { $ref: './proto/data.schema.json#/$defs/Sticker' } },
+                    },
+                },
+            },
+        }
+  /api/maps:
+    get:
+      operationId: listMaps
+      parameters: [{ $ref: '#/components/parameters/Locale' }]
+      responses:
+        {
+          '200':
+            {
+              description: Map catalog,
+              content:
+                {
+                  application/json:
+                    {
+                      schema:
+                        {
+                          type: array,
+                          items: { $ref: './proto/data.schema.json#/$defs/MapSummary' },
+                        },
+                    },
+                },
+            },
+        }
+  /api/maps/{id}:
+    get:
+      operationId: getMap
+      parameters:
+        [{ $ref: '#/components/parameters/MapId' }, { $ref: '#/components/parameters/Locale' }]
+      responses:
+        {
+          '200':
+            {
+              description: Map data,
+              content:
+                {
+                  application/json: { schema: { $ref: './proto/data.schema.json#/$defs/MapData' } },
+                },
+            },
+          '404': { $ref: '#/components/responses/Error' },
+        }
+  /api/maps/{id}/annotations:
+    get:
+      operationId: getMapAnnotations
+      parameters: [{ $ref: '#/components/parameters/MapId' }]
+      responses: { '200': { $ref: '#/components/responses/VersionedAnnotations' } }
+    put:
+      operationId: putMapAnnotations
+      parameters:
+        [
+          { $ref: '#/components/parameters/MapId' },
+          { $ref: '#/components/parameters/ExpectedRevision' },
+        ]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json: { schema: { $ref: './proto/data.schema.json#/$defs/Annotations' } },
+            },
+        }
+      responses:
+        {
+          '200': { $ref: '#/components/responses/VersionedAnnotations' },
+          '409': { $ref: '#/components/responses/RevisionConflict' },
+          '428': { $ref: '#/components/responses/RevisionRequired' },
+        }
+  /api/maps/{id}/calibration:
+    get:
+      operationId: getMapCalibration
+      parameters:
+        [{ $ref: '#/components/parameters/MapId' }, { $ref: '#/components/parameters/Basemap' }]
+      responses: { '200': { $ref: '#/components/responses/VersionedCalibration' } }
+    put:
+      operationId: putMapCalibration
+      parameters:
+        [
+          { $ref: '#/components/parameters/MapId' },
+          { $ref: '#/components/parameters/Basemap' },
+          { $ref: '#/components/parameters/ExpectedRevision' },
+        ]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/CalibrationDocument' } },
+            },
+        }
+      responses:
+        {
+          '200': { $ref: '#/components/responses/VersionedCalibration' },
+          '409': { $ref: '#/components/responses/RevisionConflict' },
+          '428': { $ref: '#/components/responses/RevisionRequired' },
+        }
+  /api/map-preferences:
+    get:
+      operationId: getMapPreferences
+      responses: { '200': { $ref: '#/components/responses/VersionedPreferences' } }
+    put:
+      operationId: putMapPreferences
+      parameters: [{ $ref: '#/components/parameters/ExpectedRevision' }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json: { schema: { $ref: './proto/data.schema.json#/$defs/Preferences' } },
+            },
+        }
+      responses:
+        {
+          '200': { $ref: '#/components/responses/VersionedPreferences' },
+          '409': { $ref: '#/components/responses/RevisionConflict' },
+          '428': { $ref: '#/components/responses/RevisionRequired' },
+        }
+  /api/marker-preferences:
+    get:
+      operationId: getMarkerPreferences
+      responses: { '200': { $ref: '#/components/responses/VersionedMarkerPreferences' } }
+    put:
+      operationId: putMarkerPreferences
+      parameters: [{ $ref: '#/components/parameters/ExpectedRevision' }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/MarkerPreferences' } },
+            },
+        }
+      responses:
+        {
+          '200': { $ref: '#/components/responses/VersionedMarkerPreferences' },
+          '409': { $ref: '#/components/responses/RevisionConflict' },
+          '428': { $ref: '#/components/responses/RevisionRequired' },
+        }
+  /api/calibration-preferences:
+    get:
+      operationId: getCalibrationPreferences
+      responses: { '200': { $ref: '#/components/responses/VersionedCalibratorPreferences' } }
+    put:
+      operationId: putCalibrationPreferences
+      parameters: [{ $ref: '#/components/parameters/ExpectedRevision' }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/CalibratorPreferences' } },
+            },
+        }
+      responses:
+        {
+          '200': { $ref: '#/components/responses/VersionedCalibratorPreferences' },
+          '409': { $ref: '#/components/responses/RevisionConflict' },
+          '428': { $ref: '#/components/responses/RevisionRequired' },
+        }
+  /api/user-settings:
+    get:
+      operationId: getUserSettings
+      responses: { '200': { $ref: '#/components/responses/VersionedUserSettings' } }
+    put:
+      operationId: putUserSettings
+      parameters: [{ $ref: '#/components/parameters/ExpectedRevision' }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/UserSettings' } },
+            },
+        }
+      responses:
+        {
+          '200': { $ref: '#/components/responses/VersionedUserSettings' },
+          '409': { $ref: '#/components/responses/RevisionConflict' },
+          '428': { $ref: '#/components/responses/RevisionRequired' },
+        }
+  /api/overlay/bootstrap:
+    get:
+      operationId: getOverlayBootstrap
+      responses:
+        {
+          '200':
+            {
+              description: Overlay bootstrap,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/OverlayBootstrap' } },
+                },
+            },
+        }
+  /api/overlay-settings:
+    get:
+      operationId: getOverlaySettings
+      responses: { '200': { $ref: '#/components/responses/VersionedOverlaySettings' } }
+    put:
+      operationId: putOverlaySettings
+      parameters: [{ $ref: '#/components/parameters/ExpectedRevision' }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/OverlaySettings' } },
+            },
+        }
+      responses:
+        {
+          '200': { $ref: '#/components/responses/VersionedOverlaySettings' },
+          '409': { $ref: '#/components/responses/RevisionConflict' },
+          '428': { $ref: '#/components/responses/RevisionRequired' },
+        }
+  /api/overlay/state:
+    get:
+      operationId: getOverlayState
+      responses:
+        {
+          '200':
+            {
+              description: Overlay state,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/OverlayView' } },
+                },
+            },
+        }
+    put:
+      operationId: putOverlayState
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json: { schema: { $ref: './proto/data.schema.json#/$defs/OverlayView' } },
+            },
+        }
+      responses:
+        {
+          '200':
+            {
+              description: Overlay state,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/OverlayView' } },
+                },
+            },
+        }
+  /api/overlay/command:
+    post:
+      operationId: postOverlayCommand
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/OverlayCommand' } },
+            },
+        }
+      responses:
+        {
+          '204': { description: Command accepted },
+          '400': { $ref: '#/components/responses/Error' },
+        }
+  /api/recognition-settings:
+    get:
+      operationId: getRecognitionSettings
+      responses:
+        {
+          '200':
+            {
+              description: Recognition settings,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/RecognitionSettings' } },
+                },
+            },
+        }
+    put:
+      operationId: putRecognitionSettings
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/RecognitionSettings' } },
+            },
+        }
+      responses:
+        {
+          '200':
+            {
+              description: Recognition settings,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/RecognitionSettings' } },
+                },
+            },
+        }
+  /api/recognition/request:
+    post:
+      operationId: requestRecognition
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/RecognitionRequest' } },
+            },
+        }
+      responses: { '204': { description: Request accepted } }
+  /api/recognition/started:
+    post:
+      operationId: reportRecognitionStarted
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/RecognitionStart' } },
+            },
+        }
+      responses: { '204': { description: Started event accepted } }
+  /api/recognition-result:
+    delete:
+      operationId: deleteRecognitionResult
+      responses: { '204': { description: Result deleted } }
+  /api/recognition/candidates:
+    post:
+      operationId: postRecognitionCandidates
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/RecognitionCandidateRequest' } },
+            },
+        }
+      responses:
+        {
+          '200':
+            {
+              description: Candidates,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/RecognitionCandidates' } },
+                },
+            },
+        }
+  /api/recognition/result:
+    post:
+      operationId: postRecognitionResult
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/RecognitionResult' } },
+            },
+        }
+      responses: { '204': { description: Result accepted } }
+  /api/game-monitor/position:
+    post:
+      operationId: updateGameMonitorPosition
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/ManualPositionUpdate' } },
+            },
+        }
+      responses: { '204': { description: Position accepted } }
+  /api/game-monitor/settings:
+    get:
+      operationId: getGameMonitorSettings
+      responses:
+        {
+          '200':
+            {
+              description: Monitor settings,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/GameMonitorSettings' } },
+                },
+            },
+        }
+    put:
+      operationId: putGameMonitorSettings
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/GameMonitorSettings' } },
+            },
+        }
+      responses:
+        {
+          '200':
+            {
+              description: Monitor settings,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/GameMonitorSettings' } },
+                },
+            },
+        }
+  /api/game-monitor/status:
+    get:
+      operationId: getGameMonitorStatus
+      responses:
+        {
+          '200':
+            {
+              description: Monitor status,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/GameMonitorStatus' } },
+                },
+            },
+        }
+  /api/game-monitor/browse/{kind}:
+    post:
+      operationId: browseGameMonitor
+      parameters: [{ name: kind, in: path, required: true, schema: { type: string } }]
+      responses: { '204': { description: Browse request accepted } }
+  /api/items:
+    get:
+      operationId: getItemsCatalog
+      responses:
+        {
+          '200':
+            {
+              description: Items catalog,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/ItemsCatalog' } },
+                },
+            },
+        }
+  /api/items-settings:
+    get:
+      operationId: getItemsSettings
+      responses: { '200': { $ref: '#/components/responses/VersionedItemsSettings' } }
+    put:
+      operationId: putItemsSettings
+      parameters: [{ $ref: '#/components/parameters/ExpectedRevision' }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/ItemsSettings' } },
+            },
+        }
+      responses:
+        {
+          '200': { $ref: '#/components/responses/VersionedItemsSettings' },
+          '409': { $ref: '#/components/responses/RevisionConflict' },
+          '428': { $ref: '#/components/responses/RevisionRequired' },
+        }
+  /api/items/update:
+    get:
+      operationId: getItemsUpdateStatus
+      responses:
+        {
+          '200':
+            {
+              description: Update status,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/ItemsUpdateStatus' } },
+                },
+            },
+        }
+    post:
+      operationId: startItemsUpdate
+      requestBody:
+        {
+          required: false,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/ItemsUpdateRequest' } },
+            },
+        }
+      responses: { '202': { description: Update started } }
+  /api/items/update/cancel:
+    post:
+      operationId: cancelItemsUpdate
+      responses: { '204': { description: Update cancelled } }
+  /api/multiplayer/settings:
+    get:
+      operationId: getMultiplayerSettings
+      responses: { '200': { $ref: '#/components/responses/VersionedMultiplayerSettings' } }
+    put:
+      operationId: putMultiplayerSettings
+      parameters: [{ $ref: '#/components/parameters/ExpectedRevision' }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/MultiplayerSettings' } },
+            },
+        }
+      responses:
+        {
+          '200': { $ref: '#/components/responses/VersionedMultiplayerSettings' },
+          '409': { $ref: '#/components/responses/RevisionConflict' },
+          '428': { $ref: '#/components/responses/RevisionRequired' },
+        }
+  /api/multiplayer/status:
+    get:
+      operationId: getMultiplayerStatus
+      responses:
+        {
+          '200':
+            {
+              description: Multiplayer status,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/MultiplayerStatus' } },
+                },
+            },
+        }
+  /api/multiplayer/interfaces:
+    get:
+      operationId: getMultiplayerInterfaces
+      responses:
+        {
+          '200':
+            {
+              description: Interfaces,
+              content: { application/json: { schema: { type: array, items: { type: string } } } },
+            },
+        }
+  /api/multiplayer/host:
+    post:
+      operationId: hostMultiplayerRoom
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/MultiplayerHostRequest' } },
+            },
+        }
+      responses:
+        {
+          '200':
+            {
+              description: Hosted room,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/MultiplayerStatus' } },
+                },
+            },
+        }
+  /api/multiplayer/join:
+    post:
+      operationId: joinMultiplayerRoom
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/MultiplayerJoinRequest' } },
+            },
+        }
+      responses:
+        {
+          '200':
+            {
+              description: Joined room,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/MultiplayerStatus' } },
+                },
+            },
+        }
+  /api/multiplayer/leave:
+    post:
+      operationId: leaveMultiplayerRoom
+      responses:
+        {
+          '200':
+            {
+              description: Left room,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/MultiplayerStatus' } },
+                },
+            },
+        }
+  /api/multiplayer/kick:
+    post:
+      operationId: kickMultiplayerPeer
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/MultiplayerKickRequest' } },
+            },
+        }
+      responses:
+        {
+          '200':
+            {
+              description: Peer kicked,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/MultiplayerStatus' } },
+                },
+            },
+        }
+  /api/multiplayer/stun/servers:
+    get:
+      operationId: listStunServers
+      responses:
+        {
+          '200':
+            {
+              description: STUN servers,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/StunServerList' } },
+                },
+            },
+        }
+  /api/multiplayer/stun/refresh:
+    post:
+      operationId: refreshStunServers
+      responses: { '204': { description: Refresh accepted } }
+  /api/multiplayer/stun/probe:
+    post:
+      operationId: probeStunServers
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/StunProbeRequest' } },
+            },
+        }
+      responses:
+        {
+          '200':
+            {
+              description: Probe results,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/StunProbeResults' } },
+                },
+            },
+        }
+  /api/multiplayer/nat-check:
+    post:
+      operationId: checkMultiplayerNat
+      responses:
+        {
+          '200':
+            {
+              description: NAT result,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/NatCheckResult' } },
+                },
+            },
+        }
+  /signal:
+    post:
+      operationId: signalMultiplayer
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/signal.schema.json#/$defs/SignalRequest' } },
+            },
+        }
+      responses:
+        '200':
+          {
+            description: SDP answer,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: './proto/signal.schema.json#/$defs/SignalResponse' } },
+              },
+          }
+        '400': { $ref: '#/components/responses/SignalError' }
+        '403': { $ref: '#/components/responses/SignalError' }
+        '503': { $ref: '#/components/responses/SignalError' }
+  /api/cast/interfaces:
+    get:
+      operationId: getCastInterfaces
+      responses:
+        {
+          '200':
+            {
+              description: Interfaces,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/MobileInterfaces' } },
+                },
+            },
+        }
+  /api/cast/status:
+    get:
+      operationId: getCastStatus
+      responses:
+        {
+          '200':
+            {
+              description: Cast status,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/MobileStatus' } },
+                },
+            },
+        }
+  /api/cast/start:
+    post:
+      operationId: startCast
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: './proto/data.schema.json#/$defs/MobileStartRequest' } },
+            },
+        }
+      responses: { '204': { description: Cast started } }
+  /api/cast/stop:
+    post:
+      operationId: stopCast
+      responses: { '204': { description: Cast stopped } }
+  /api/data/open:
+    get:
+      operationId: openCalibrationData
+      responses: { '204': { description: Directory opened } }
+  /api/data/open-user-settings:
+    get:
+      operationId: openUserSettingsData
+      responses: { '204': { description: Directory opened } }
+  /api/data/reset-calibration:
+    post:
+      operationId: resetCalibration
+      responses:
+        {
+          '200':
+            {
+              description: Calibration reset,
+              content:
+                {
+                  application/json:
+                    {
+                      schema:
+                        { type: object, required: [ok], properties: { ok: { type: boolean } } },
+                    },
+                },
+            },
+        }
+  /api/data/reset-user-settings:
+    post:
+      operationId: resetUserSettings
+      responses: { '200': { $ref: '#/components/responses/VersionedUserSettings' } }
+  /api/data/reset/{kind}:
+    post:
+      operationId: resetData
+      parameters: [{ name: kind, in: path, required: true, schema: { type: string } }]
+      responses:
+        {
+          '200':
+            {
+              description: Data reset,
+              content:
+                {
+                  application/json:
+                    {
+                      schema:
+                        { type: object, required: [ok], properties: { ok: { type: boolean } } },
+                    },
+                },
+            },
+        }
+  /api/map-tiles/{map}/{layer}/{z}/{x}/{y}:
+    get:
+      operationId: getMapTile
+      parameters:
+        - { name: map, in: path, required: true, schema: { type: string } }
+        - { name: layer, in: path, required: true, schema: { type: string } }
+        - { name: z, in: path, required: true, schema: { type: integer } }
+        - { name: x, in: path, required: true, schema: { type: integer } }
+        - { name: y, in: path, required: true, schema: { type: integer } }
+      responses:
+        {
+          '200':
+            {
+              description: Tile,
+              content:
+                {
+                  image/png: { schema: { type: string, format: binary } },
+                  image/jpeg: { schema: { type: string, format: binary } },
+                },
+            },
+        }
+  /api/assets/{path}:
+    get:
+      operationId: getAsset
+      parameters: [{ name: path, in: path, required: true, schema: { type: string } }]
+      responses:
+        {
+          '200':
+            {
+              description: Static asset,
+              content: { '*/*': { schema: { type: string, format: binary } } },
+            },
+        }
+components:
+  parameters:
+    MapId: { name: id, in: path, required: true, schema: { type: string } }
+    Locale: { name: locale, in: query, required: false, schema: { type: string, enum: [zh, en] } }
+    Basemap: { name: basemap, in: query, required: true, schema: { type: string } }
+    ExpectedRevision:
+      name: If-Match
+      in: header
+      required: true
+      description: Use If-Match or the equivalent X-Expected-Revision header.
+      schema: { type: string, minLength: 1 }
+      x-alternatives: [{ $ref: '#/components/parameters/XExpectedRevision' }]
+    XExpectedRevision:
+      name: X-Expected-Revision
+      in: header
+      required: false
+      description: Alternative conditional revision header accepted by versioned PUT operations.
+      schema: { type: string, minLength: 1 }
+  headers:
+    ETag: { description: Strong content revision, schema: { type: string } }
+    X-Revision: { description: Content hash revision, schema: { type: string } }
+    X-Operation-ID: { description: Request operation identifier, schema: { type: string } }
+  schemas:
+    ErrorBody: { $ref: './proto/data.schema.json#/$defs/ErrorBody' }
+    ErrorCode:
+      type: string
+      description: Stable machine-readable code emitted by the Go backend.
+      enum:
+        - annotations_invalid
+        - annotations_save_failed
+        - calibration_basemap_invalid
+        - calibration_invalid
+        - calibration_preferences_invalid
+        - calibration_save_failed
+        - center_invalid
+        - data_dir_not_writable
+        - data_directory_open_failed
+        - data_reset_failed
+        - game_monitor_browse_failed
+        - game_monitor_browse_in_progress
+        - game_monitor_mode_unavailable
+        - game_monitor_path_invalid
+        - game_monitor_settings_invalid
+        - game_monitor_settings_save_failed
+        - items_not_available
+        - items_settings_invalid
+        - items_settings_save_failed
+        - items_update_in_progress
+        - json_encode_failed
+        - json_expected
+        - json_invalid
+        - json_multiple
+        - log_entry_invalid
+        - log_unavailable
+        - map_data_failed
+        - map_not_found
+        - map_unknown
+        - marker_preferences_invalid
+        - mobile_address_invalid
+        - mobile_method_not_allowed
+        - mobile_port_in_use
+        - mobile_port_invalid
+        - mobile_session_expired
+        - mobile_start_failed
+        - mobile_stream_unsupported
+        - mode_repository_unavailable
+        - multiplayer_address_invalid
+        - multiplayer_already_in_room
+        - multiplayer_connection_failed
+        - multiplayer_key_invalid
+        - multiplayer_kick_forbidden
+        - multiplayer_mode_invalid
+        - multiplayer_not_hosting
+        - multiplayer_peer_invalid
+        - multiplayer_peer_not_found
+        - multiplayer_port_in_use
+        - multiplayer_port_invalid
+        - multiplayer_port_unavailable
+        - multiplayer_reset_in_room
+        - multiplayer_room_full
+        - multiplayer_settings_invalid
+        - multiplayer_settings_save_failed
+        - multiplayer_share_invalid
+        - multiplayer_signal_invalid
+        - multiplayer_signaling_timeout
+        - multiplayer_stun_failed
+        - multiplayer_stun_probe_invalid
+        - multiplayer_stun_refresh_failed
+        - multiplayer_stun_required
+        - origin_rejected
+        - overlay_settings_invalid
+        - overlay_unavailable
+        - player_invalid
+        - position_update_failed
+        - preferences_invalid
+        - preferences_save_failed
+        - recognition_request_invalid
+        - recognition_result_invalid
+        - recognition_settings_invalid
+        - revision_conflict
+        - revision_required
+        - screenshot_name_invalid
+        - user_settings_invalid
+        - user_settings_reset_failed
+  responses:
+    Error:
+      {
+        description: Error body,
+        content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } },
+      }
+    SignalError:
+      {
+        description: Signaling error,
+        content:
+          {
+            application/json:
+              { schema: { $ref: './proto/signal.schema.json#/$defs/SignalResponse' } },
+          },
+      }
+    RevisionRequired:
+      description: Conditional revision header required.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } }
+      x-status-code: 428
+      x-error-code: revision_required
+    RevisionConflict:
+      description: Supplied revision is stale.
+      headers:
+        {
+          ETag: { $ref: '#/components/headers/ETag' },
+          X-Revision: { $ref: '#/components/headers/X-Revision' },
+        }
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorBody' } } }
+      x-status-code: 409
+      x-error-code: revision_conflict
+    VersionedAnnotations:
+      description: Versioned annotations
+      headers:
+        {
+          ETag: { $ref: '#/components/headers/ETag' },
+          X-Revision: { $ref: '#/components/headers/X-Revision' },
+        }
+      content:
+        { application/json: { schema: { $ref: './proto/data.schema.json#/$defs/Annotations' } } }
+    VersionedCalibration:
+      description: Versioned calibration
+      headers:
+        {
+          ETag: { $ref: '#/components/headers/ETag' },
+          X-Revision: { $ref: '#/components/headers/X-Revision' },
+        }
+      content:
+        {
+          application/json:
+            { schema: { $ref: './proto/data.schema.json#/$defs/CalibrationDocument' } },
+        }
+    VersionedPreferences:
+      description: Versioned preferences
+      headers:
+        {
+          ETag: { $ref: '#/components/headers/ETag' },
+          X-Revision: { $ref: '#/components/headers/X-Revision' },
+        }
+      content:
+        { application/json: { schema: { $ref: './proto/data.schema.json#/$defs/Preferences' } } }
+    VersionedMarkerPreferences:
+      description: Versioned marker preferences
+      headers:
+        {
+          ETag: { $ref: '#/components/headers/ETag' },
+          X-Revision: { $ref: '#/components/headers/X-Revision' },
+        }
+      content:
+        {
+          application/json:
+            { schema: { $ref: './proto/data.schema.json#/$defs/MarkerPreferences' } },
+        }
+    VersionedCalibratorPreferences:
+      description: Versioned calibration preferences
+      headers:
+        {
+          ETag: { $ref: '#/components/headers/ETag' },
+          X-Revision: { $ref: '#/components/headers/X-Revision' },
+        }
+      content:
+        {
+          application/json:
+            { schema: { $ref: './proto/data.schema.json#/$defs/CalibratorPreferences' } },
+        }
+    VersionedUserSettings:
+      description: Versioned user settings
+      headers:
+        {
+          ETag: { $ref: '#/components/headers/ETag' },
+          X-Revision: { $ref: '#/components/headers/X-Revision' },
+        }
+      content:
+        { application/json: { schema: { $ref: './proto/data.schema.json#/$defs/UserSettings' } } }
+    VersionedOverlaySettings:
+      description: Versioned overlay settings
+      headers:
+        {
+          ETag: { $ref: '#/components/headers/ETag' },
+          X-Revision: { $ref: '#/components/headers/X-Revision' },
+        }
+      content:
+        {
+          application/json: { schema: { $ref: './proto/data.schema.json#/$defs/OverlaySettings' } },
+        }
+    VersionedItemsSettings:
+      description: Versioned items settings
+      headers:
+        {
+          ETag: { $ref: '#/components/headers/ETag' },
+          X-Revision: { $ref: '#/components/headers/X-Revision' },
+        }
+      content:
+        { application/json: { schema: { $ref: './proto/data.schema.json#/$defs/ItemsSettings' } } }

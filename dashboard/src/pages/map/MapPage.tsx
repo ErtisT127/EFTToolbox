@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
 import {
   Brush,
   Check,
@@ -29,12 +30,18 @@ import { LayerPanel } from './LayerPanel';
 import { TaskPanel } from './TaskPanel';
 import { MinimapSettingsPanel } from './MinimapSettingsPanel';
 import { ToolOptionsPanel } from './ToolOptionsPanel';
-import { request, workspace, useWorkspace } from '../../stores/workspaceStore';
+import { workspace, useWorkspace } from '../../stores/workspaceStore';
+import { api } from '../../stores/api';
+import { store } from '../../stores/store';
+import { clearAnnotationDraft, clearConflict, pauseConflict } from '../../stores/clientState';
+import type { RootState } from '../../stores/store';
 import { multiplayer, useMultiplayer } from '../../stores/multiplayerStore';
 import { mapTimes, timePhase } from './lib/time';
 import { ZOOM_BOUND_EPSILON } from './lib/zoom';
+import { ownerVisibilityFor } from './lib/visibility';
 import type { MapClock } from '../../../../contracts/ts/ipc.gen';
 import { useLocale } from '../../hooks/useLocale';
+import { errorKeyOf } from '../../lib/errors';
 import { useOverlay } from '../../stores/overlayStore';
 import { notices } from '../../stores/noticeStore';
 import { ToolToolbar } from '../../components/ToolToolbar';
@@ -142,13 +149,16 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
     }
     setSubmittingPosition(true);
     try {
-      await request('/api/game-monitor/position', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mapId, screenshotName } satisfies ManualPositionUpdate),
-      });
+      await store
+        .dispatch(
+          api.endpoints.updateGameMonitorPosition.initiate({
+            mapId,
+            screenshotName,
+          } satisfies ManualPositionUpdate),
+        )
+        .unwrap();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'errors.request_failed';
+      const message = errorKeyOf(error, 'errors.request_failed');
       const errorKey = message.startsWith('errors.') ? message : `errors.${message}`;
       // Anything the API rejects lands in the shared notice host, like every other page.
       notices.push(t(errorKey, { defaultValue: t('errors.request_failed') }));
@@ -280,6 +290,9 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const session = w.sessions.get(w.activeId);
   const preference = session ? w.preferenceFor(w.activeId) : undefined;
   const id = w.activeId;
+  const annotationConflict = useSelector((state: RootState) =>
+    state.client.conflicts.find((item) => item.key === `annotations:${id}`),
+  );
   // The minimap's "on position update" rules apply to this map too: it is the surface that persists
   // the map preference, so following the floor here is also what the minimap and the cast view read
   // back. Auto map switch is deliberately not part of it — that belongs to the detected-map path,
@@ -310,16 +323,18 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   }, [followFloor, players, session, shownFloor, w]);
   // Teammate visibility: active members default visible, departed owners default hidden, and a
   // manual hide always wins. Rebuilt whenever the multiplayer store or the map session changes.
+  // The arrays are keyed by value: the store hands out a fresh fallback object on every read.
+  const ownerHiddenKey = mp.markerPreferences.hiddenOwners.join('\u0000');
+  const ownerShownKey = mp.markerPreferences.shownOwners.join('\u0000');
   const ownerVisibility = useMemo(() => {
-    if (!mp.selfId) return undefined;
-    const active = new Set((mp.status.members || []).map((member) => member.peerId));
-    return {
+    return ownerVisibilityFor({
       selfId: mp.selfId,
-      active,
-      visible: (ownerId: string) => multiplayer.ownerVisible(ownerId),
-    };
+      activeOwners: (mp.status.members || []).map((member) => member.peerId),
+      hiddenOwners: mp.markerPreferences.hiddenOwners,
+      shownOwners: mp.markerPreferences.shownOwners,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mpVersion, mp.selfId, mp.status.members]);
+  }, [mpVersion, mp.selfId, mp.status.members, ownerHiddenKey, ownerShownKey]);
   const layerOwners = useMemo(() => {
     if (!mp.selfId || !session) return undefined;
     const memberIds = new Set((mp.status.members || []).map((member) => member.peerId));
@@ -450,6 +465,32 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
         onPointerEnter={cancelCoordinateHide}
         onPointerLeave={scheduleCoordinateHide}
       >
+        {annotationConflict && id && (
+          <div className="calibrator-conflict" role="alert">
+            <span>{t('errors.revision_conflict')}</span>
+            <button
+              type="button"
+              onClick={() => store.dispatch(pauseConflict(annotationConflict.key))}
+            >
+              {t('errors.conflict_keep_local')}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                store.dispatch(clearAnnotationDraft(id));
+                store.dispatch(clearConflict(annotationConflict.key));
+                void store.dispatch(
+                  api.endpoints.getAnnotations.initiate(id, { forceRefetch: true }),
+                );
+              }}
+            >
+              {t('errors.conflict_load_remote')}
+            </button>
+            <button type="button" onClick={() => void workspace.retryAnnotations(id)}>
+              {t('errors.conflict_retry')}
+            </button>
+          </div>
+        )}
         {w.loading ? (
           <div className="empty-state" role="status">
             <span className="spinner" />
@@ -755,9 +796,9 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                 <div className="task-item">
                   <button
                     className={`task-trigger minimap-trigger ${overlay.view?.editing ? 'minimap-editing' : ''}`}
-                    aria-label={t('map.minimap.trigger')}
+                    aria-label={t('minimap.name')}
                     aria-controls="map-minimap-panel"
-                    title={t('map.minimap.trigger')}
+                    title={t('minimap.name')}
                     ref={minimapButton}
                     aria-pressed={minimapVisible}
                     aria-expanded={panel === 'minimap'}
@@ -785,7 +826,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                         ref={popup}
                         role="dialog"
                         aria-modal="false"
-                        aria-label={t('map.minimap.title')}
+                        aria-label={t('minimap.settingsTitle')}
                         onPointerDown={() => {
                           markPanelUsed();
                           panelPinned.current = true;

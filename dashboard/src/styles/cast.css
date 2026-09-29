@@ -67,7 +67,7 @@
   border-radius: var(--radius-md);
   background: var(--panel);
   backdrop-filter: blur(8px);
-  box-shadow: 0 16px 48px rgb(0 0 0 / 0.35);
+  box-shadow: var(--dialog-shadow);
 }
 
 .cast-dialog h2,
@@ -380,14 +380,32 @@ body:has(.cast-root),
 }
 
 .cast-control.active {
-  background: var(--selected);
+  background: var(--panel-2);
   border-color: var(--accent);
   color: var(--accent);
 }
 
 .cast-control.active:hover:not(:disabled) {
-  background: var(--selected-hover);
+  background: var(--control-hover);
   border-color: var(--accent);
+}
+
+/* Tile fetches after the first paint must never block the gesture that caused them: this appears
+   only once a batch has been in flight long enough to explain a blank patch of map. */
+.cast-busy {
+  position: fixed;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  z-index: 9;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
 }
 
 .cast-layer-panel {

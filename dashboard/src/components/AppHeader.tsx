@@ -24,7 +24,7 @@ export function AppHeader({
     {
       pvp: { label: 'pvp' },
       pve: { label: 'pve' },
-      'pvp-season': { label: 'season' },
+      'pvp-season': { label: 'pvpSeason' },
     } as const
   )[mode];
   return (

@@ -119,7 +119,11 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
                 if (placeholder && unavailable) Text("?", "annotation", 15, 0, MapDisplay.LabelColor, p);
             }
         }
-        var annotations = scene.Preference.ShowAnnotations ? scene.Annotations.Where(a => a.FloorId == scene.Floor).ToArray() : [];
+        // The owner filter is the shared rule (see OwnerVisibility); the overlay used to draw every
+        // owner's markers regardless of the dashboard's per-owner visibility.
+        var annotations = scene.Preference.ShowAnnotations
+            ? scene.Annotations.Where(a => a.FloorId == scene.Floor && scene.Owners.Allows(a.OwnerId)).ToArray()
+            : [];
         // Leaflet's vector pane sits below labels and symbols. Round caps also preserve a brush tap.
         foreach (var a in annotations.Where(a => a.Kind == "stroke")) {
             var thickness = (float)a.Width * dpi;

@@ -1,62 +1,51 @@
-import { useSyncExternalStore } from 'react';
+import { useSelector } from 'react-redux';
+import { clearNotices, dismissNotice, pushNotice, type ClientNotice } from './clientState';
+import { store, type RootState } from './store';
 
-export interface Notice {
-  id: number;
-  message: string;
-  severity: NoticeSeverity;
-  /** Present only when retrying the failed operation can actually change the outcome. */
-  retry?: () => void;
-}
+export type Notice = ClientNotice;
 
 export type NoticeSeverity = 'error' | 'warning' | 'success';
+
+const retryHandlers = new Map<number, () => void>();
 
 /**
  * Transient, actionable messages that belong to no single page. Anything a page can show next to
  * the control that caused it (a rejected shortcut, an invalid field) stays on the page instead.
  */
 class NoticeStore {
-  notices: Notice[] = [];
-  private version = 0;
-  private sequence = 0;
-  private listeners = new Set<() => void>();
-  subscribe = (listener: () => void) => {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  };
-  snapshot = () => this.version;
-  private changed() {
-    this.version++;
-    this.listeners.forEach((listener) => listener());
+  get notices() {
+    return store.getState().client.notices;
   }
   push(message: string, retry?: () => void, severity: NoticeSeverity = 'error') {
     if (!message) return;
-    const existing = this.notices.find((notice) => notice.message === message);
-    if (existing) {
-      // A newer retry for the same failure supersedes the one already on screen.
-      existing.retry = retry;
-      existing.severity = severity;
-      this.changed();
-      return;
-    }
-    this.notices = [...this.notices.slice(-2), { id: ++this.sequence, message, retry, severity }];
-    this.changed();
+    store.dispatch(pushNotice({ message, severity }));
+    const id = this.notices.find((notice) => notice.message === message)?.id;
+    if (id === undefined) return;
+    if (retry) retryHandlers.set(id, retry);
+    else retryHandlers.delete(id);
+  }
+  hasRetry(id: number) {
+    return retryHandlers.has(id);
+  }
+  retry(id: number) {
+    const handler = retryHandlers.get(id);
+    retryHandlers.delete(id);
+    handler?.();
+    this.dismiss(id);
   }
   dismiss(id: number) {
-    this.notices = this.notices.filter((notice) => notice.id !== id);
-    this.changed();
+    retryHandlers.delete(id);
+    store.dispatch(dismissNotice(id));
   }
   clear() {
-    if (!this.notices.length) return;
-    this.notices = [];
-    this.changed();
+    retryHandlers.clear();
+    store.dispatch(clearNotices());
   }
 }
 
 export const notices = new NoticeStore();
 
 export function useNotices() {
-  useSyncExternalStore(notices.subscribe, notices.snapshot);
+  useSelector((state: RootState) => state.client.notices);
   return notices;
 }

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { verifyDisplayResources } from '../lib/display-resources.mjs';
 import { tileUrls } from '../lib/tile-urls.mjs';
+import { ContractSchemaVersion } from '../../contracts/version.gen.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const upstream = path.join(root, 'data/upstream');
@@ -33,29 +34,39 @@ const copyIfPresent = async (source, destination) => {
     if (error.code !== 'ENOENT') throw error;
   }
 };
+// Map files carry their language in the name ("<id>_zh.json"), so the id has to drop both suffixes;
+// the backend reads them the same way (mapIDFromFile in internal/server/maps.go).
+const liteTileMaps = new Set(['lab', 'the-labyrinth', 'icebreaker']);
+const mapIdFromFile = (name) => {
+  if (!name.endsWith('.json')) return '';
+  const base = name.slice(0, -'.json'.length);
+  const index = base.lastIndexOf('_');
+  if (index <= 0) return '';
+  const language = base.slice(index + 1);
+  return language === 'zh' || language === 'en' ? base.slice(0, index) : '';
+};
 const simplifyMaps = async (modes) => {
-  const tileMaps = new Set(['lab', 'the-labyrinth', 'icebreaker']);
   for (const mode of await readdir(modes, { withFileTypes: true })) {
     if (!mode.isDirectory()) continue;
     const maps = path.join(modes, mode.name, 'maps');
     for (const file of await readdir(maps, { withFileTypes: true })) {
-      if (!file.isFile() || !file.name.endsWith('.json')) continue;
+      const id = file.isFile() ? mapIdFromFile(file.name) : '';
+      if (!id) continue;
       const name = path.join(maps, file.name);
       const map = JSON.parse(await readFile(name, 'utf8'));
-      if (!tileMaps.has(file.name.slice(0, -5))) map.tiles = [];
+      if (!liteTileMaps.has(id)) map.tiles = [];
       await writeFile(name, JSON.stringify(map));
     }
   }
 };
 const copyLiteTiles = async (modes, sourceRoot, destinationRoot) => {
-  const tileMaps = new Set(['lab', 'the-labyrinth', 'icebreaker']);
   const urls = new Set();
   for (const mode of await readdir(modes, { withFileTypes: true })) {
     if (!mode.isDirectory()) continue;
     const maps = path.join(modes, mode.name, 'maps');
     for (const file of await readdir(maps, { withFileTypes: true })) {
-      if (!file.isFile() || !tileMaps.has(file.name.slice(0, -5)) || !file.name.endsWith('.json'))
-        continue;
+      const id = file.isFile() ? mapIdFromFile(file.name) : '';
+      if (!id || !liteTileMaps.has(id)) continue;
       const map = JSON.parse(await readFile(path.join(maps, file.name), 'utf8'));
       for (const url of tileUrls(map)) urls.add(url);
     }
@@ -97,10 +108,11 @@ const copyLiteTiles = async (modes, sourceRoot, destinationRoot) => {
   }
   await writeFile(
     path.join(destinationRoot, 'manifest.json'),
-    JSON.stringify({ schemaVersion: 1, tiles: selectedManifest }) + '\n',
+    JSON.stringify({ schemaVersion: ContractSchemaVersion, tiles: selectedManifest }) + '\n',
   );
 };
 run(process.execPath, ['contracts/generate.mjs', '--check']);
+run(process.execPath, ['scripts/generate-defaults.mjs', '--check']);
 run(process.execPath, [
   'node_modules/typescript/bin/tsc',
   '--noEmit',

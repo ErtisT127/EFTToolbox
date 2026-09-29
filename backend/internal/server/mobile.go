@@ -326,6 +326,25 @@ func (m *mobileManager) events(w http.ResponseWriter, r *http.Request) {
 	m.writeEventStream(w, r, "snapshot", data, subscriber)
 }
 
+// publishSnapshot re-sends the authoritative snapshot to connected cast clients. The phone cannot
+// read user settings, so this is how a language change reaches an already-open cast page.
+func (m *mobileManager) publishSnapshot() {
+	data, err := json.Marshal(m.hub.mobileSnapshot())
+	if err != nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for subscriber := range m.subscribers {
+		select {
+		case subscriber <- mobilePacket{event: "snapshot", data: data}:
+		default:
+			delete(m.subscribers, subscriber)
+			close(subscriber)
+		}
+	}
+}
+
 func (m *mobileManager) publish(event contracts.ServerEvent) {
 	name := event.Type
 	if name == "preferences_changed" {
@@ -334,7 +353,9 @@ func (m *mobileManager) publish(event contracts.ServerEvent) {
 	if name == "overlay_status" {
 		name = "map_changed"
 	}
-	if name != "snapshot" && name != "map_changed" && name != "player_upsert" && name != "player_remove" && name != "annotation_upsert" && name != "annotation_remove" && name != "annotations_changed" && name != "session_end" {
+	// multiplayer_changed carries the roster the shared owner-visibility rule needs; resources_changed
+	// means the mode or the data root moved, so the cast has to reload what it mirrors.
+	if name != "snapshot" && name != "map_changed" && name != "player_upsert" && name != "player_remove" && name != "annotation_upsert" && name != "annotation_remove" && name != "annotations_changed" && name != "multiplayer_changed" && name != "resources_changed" && name != "session_end" {
 		return
 	}
 	names := []string{name}
@@ -361,6 +382,31 @@ func (m *mobileManager) publish(event contracts.ServerEvent) {
 				delete(m.subscribers, subscriber)
 				close(subscriber)
 			}
+		}
+	}
+}
+
+// publishMarkerPreferences pushes the owner-visibility lists so cast markers follow the
+// dashboard's hidden/shown owners without waiting for a reconnect.
+func (m *mobileManager) publishMarkerPreferences(value contracts.MarkerPreferences) {
+	payload := contracts.ServerEvent{
+		Type:              "marker_preferences_changed",
+		SentAt:            time.Now().UTC().Format(time.RFC3339Nano),
+		Status:            m.hub.status,
+		MarkerPreferences: &value,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for subscriber := range m.subscribers {
+		select {
+		case subscriber <- mobilePacket{event: "marker_preferences_changed", data: data}:
+		default:
+			delete(m.subscribers, subscriber)
+			close(subscriber)
 		}
 	}
 }

@@ -28,29 +28,29 @@ export function RecognitionTuningFields({
   const { t } = useLocale();
   const config = {
     ocrConfidence: {
-      label: t('items.ocrConfidence'),
-      hint: t('items.recognitionOcrConfidenceHint'),
+      label: t('recognition.ocrConfidence'),
+      hint: t('recognition.ocrConfidenceHint'),
       limit: RecognitionSettingsLimits.ocrConfidence,
       format: (value: number) => value.toFixed(2),
       changes: (value: number) => ({ ocrConfidence: value }),
     },
     nameSimilarity: {
-      label: t('items.nameSimilarity'),
-      hint: t('items.recognitionNameSimilarityHint'),
+      label: t('recognition.nameSimilarity'),
+      hint: t('recognition.nameSimilarityHint'),
       limit: RecognitionSettingsLimits.nameSimilarity,
       format: (value: number) => value.toFixed(2),
       changes: (value: number) => ({ nameSimilarity: value }),
     },
     templateSimilarity: {
-      label: t('items.templateSimilarity'),
-      hint: t('items.recognitionTemplateSimilarityHint'),
+      label: t('recognition.templateSimilarity'),
+      hint: t('recognition.templateSimilarityHint'),
       limit: RecognitionSettingsLimits.templateSimilarity,
       format: (value: number) => value.toFixed(2),
       changes: (value: number) => ({ templateSimilarity: value }),
     },
     captureWidth: {
-      label: t('items.recognitionCaptureSize'),
-      hint: t('items.recognitionCaptureSizeHint'),
+      label: t('recognition.captureSize'),
+      hint: t('recognition.captureSizeHint'),
       limit: RecognitionSettingsLimits.captureWidth,
       format: (value: number) => `${value}×${value}`,
       changes: (value: number) => ({ captureWidth: value, captureHeight: value }),

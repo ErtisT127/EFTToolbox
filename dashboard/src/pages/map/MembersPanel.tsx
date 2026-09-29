@@ -26,7 +26,7 @@ export function MembersPanel() {
       notices.push(t('multiplayer.kicked'), undefined, 'success');
     } catch (failure) {
       const code = failure instanceof MultiplayerError ? failure.code : 'request_failed';
-      notices.push(t(`multiplayer.errors.${code}` as LocaleKey), undefined, 'error');
+      notices.push(t(`errors.${code}` as LocaleKey), undefined, 'error');
     } finally {
       setPending(false);
     }

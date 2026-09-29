@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 
+	defaults "efttoolbox/backend/internal/defaults"
 	"efttoolbox/backend/internal/gamewatch"
 	"efttoolbox/backend/internal/mapper"
 	contracts "efttoolbox/contracts"
@@ -45,7 +46,7 @@ var assetExtensions = map[string]bool{".svg": true, ".png": true, ".webp": true,
 
 type mapStore struct {
 	root             string
-	mu               sync.Mutex
+	files            *VersionedFileStore
 	calibrationMu    sync.Mutex
 	modeMu           sync.RWMutex
 	repo             *modeRepository
@@ -53,11 +54,14 @@ type mapStore struct {
 	modeChanged      func()
 	calibrationReset func()
 	multiplayer      *multiplayerManager
+	items            *itemsManager
+	hub              *overlayHub
 }
 
 type modeRepository struct {
 	mode string
 	root string
+	ids  map[string]struct{}
 }
 
 func (s *mapStore) repository() *modeRepository {
@@ -91,7 +95,7 @@ func newModeRepository(root, mode string) (*modeRepository, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mode %q maps directory unreadable: %w", mode, err)
 	}
-	repo := &modeRepository{mode: mode, root: modeRoot}
+	repo := &modeRepository{mode: mode, root: modeRoot, ids: map[string]struct{}{}}
 	validMaps := 0
 	seen := map[string]bool{}
 	for _, entry := range entries {
@@ -106,6 +110,7 @@ func newModeRepository(root, mode string) (*modeRepository, error) {
 		if _, err := (&mapStore{}).loadFromRepository(id, repo, "zh"); err != nil {
 			return nil, fmt.Errorf("mode %q map %q invalid: %w", mode, id, err)
 		}
+		repo.ids[id] = struct{}{}
 		validMaps++
 	}
 	if validMaps == 0 {
@@ -140,7 +145,7 @@ func (s *mapStore) loadFromRepository(id string, repo *modeRepository, lang stri
 		return contracts.MapData{}, os.ErrNotExist
 	}
 	if repo == nil {
-		return contracts.MapData{}, errors.New("mode repository unavailable")
+		return contracts.MapData{}, errors.New("mode_repository_unavailable")
 	}
 	if lang == "zh" {
 		return readMapData(filepath.Join(repo.root, "maps", id+"_zh.json"), id)
@@ -158,7 +163,7 @@ func readMapData(name, id string) (contracts.MapData, error) {
 	if err := readJSON(name, &data); err != nil {
 		return data, err
 	}
-	if data.SchemaVersion != 1 || data.Id != id || len(data.Floors) == 0 || len(data.Projection.ViewBox) != 4 || len(data.Projection.Bounds) != 2 {
+	if data.SchemaVersion != contracts.ContractSchemaVersion || data.Id != id || len(data.Floors) == 0 || len(data.Projection.ViewBox) != 4 || len(data.Projection.Bounds) != 2 {
 		return data, fmt.Errorf("invalid map data: %s", id)
 	}
 	return data, nil
@@ -180,15 +185,22 @@ func readJSON(name string, value any) error {
 	return json.Unmarshal(data, value)
 }
 
-// load reads the Chinese map data: the geometry and existence checks never need a locale, and the
-// user-facing handlers use loadLocale instead.
+// load reads the Chinese map data: the geometry and existence checks never need a locale.
 func (s *mapStore) load(id string) (contracts.MapData, error) {
 	return s.loadFromRepository(id, s.repository(), "zh")
 }
 
-// loadLocale reads the map data in the requested interface language.
-func (s *mapStore) loadLocale(id, locale string) (contracts.MapData, error) {
-	return s.loadFromRepository(id, s.repository(), mapLang(locale))
+func (s *mapStore) hasMap(id string) bool {
+	repo := s.repository()
+	if repo == nil {
+		return false
+	}
+	if repo.ids != nil {
+		_, ok := repo.ids[id]
+		return ok
+	}
+	_, err := s.loadFromRepository(id, repo, "zh")
+	return err == nil
 }
 
 func (s *mapStore) activeUpstream() string {
@@ -223,7 +235,7 @@ func validBasemap(value string) bool { return value == "svg" || value == "tiles"
 
 // validMarkerPreferences gates the user-level owner visibility arrays: bounded length, deduped.
 func validMarkerPreferences(data contracts.MarkerPreferences) bool {
-	if data.SchemaVersion != 1 || data.HiddenOwners == nil || data.ShownOwners == nil || len(data.HiddenOwners) > 1000 || len(data.ShownOwners) > 1000 {
+	if data.SchemaVersion != contracts.ContractSchemaVersion || data.HiddenOwners == nil || data.ShownOwners == nil || len(data.HiddenOwners) > 1000 || len(data.ShownOwners) > 1000 {
 		return false
 	}
 	for _, list := range [][]string{data.HiddenOwners, data.ShownOwners} {
@@ -239,18 +251,138 @@ func validMarkerPreferences(data contracts.MarkerPreferences) bool {
 }
 
 func emptyCalibrationDocument(mapID, basemap string) contracts.CalibrationDocument {
-	return contracts.CalibrationDocument{
-		SchemaVersion:    1,
-		MapId:            mapID,
-		Basemap:          basemap,
-		Revision:         0,
-		NextRegionNumber: 1,
-		Regions:          []contracts.CalibrationRegion{},
-	}
+	document := defaults.CalibrationDocument()
+	document.MapId = mapID
+	document.Basemap = basemap
+	return document
 }
 
 func emptyCalibrationDocuments() contracts.CalibrationDocuments {
-	return contracts.CalibrationDocuments{SchemaVersion: 1, Maps: []contracts.CalibrationDocument{}}
+	return defaults.CalibrationDocuments()
+}
+
+func (s *mapStore) ensureCalibrationDefaults() error {
+	for _, file := range []struct {
+		path  string
+		value any
+	}{
+		{s.calibrationDocumentsPath(), defaults.CalibrationDocuments()},
+		{s.calibrationPreferencesPath(), defaults.CalibratorPreferences()},
+	} {
+		if _, err := os.Stat(file.path); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := s.saveTo(s.calibrationRoot(), filepath.Base(file.path), file.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *mapStore) resetCalibration() error {
+	if err := s.saveTo(s.calibrationRoot(), filepath.Base(s.calibrationDocumentsPath()), defaults.CalibrationDocuments()); err != nil {
+		return err
+	}
+	if err := s.saveTo(s.calibrationRoot(), filepath.Base(s.calibrationPreferencesPath()), defaults.CalibratorPreferences()); err != nil {
+		return err
+	}
+	if s.calibrationReset != nil {
+		s.calibrationReset()
+	}
+	return nil
+}
+
+func (s *mapStore) resetMapPreferences() error {
+	root := filepath.Join(s.root, "user", "modes")
+	modes, err := os.ReadDir(root)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, mode := range modes {
+		if !mode.IsDir() || !safeID.MatchString(mode.Name()) {
+			continue
+		}
+		modeRoot := filepath.Join(root, mode.Name())
+		for _, file := range []struct {
+			name  string
+			value any
+		}{
+			{"map-preferences.json", defaults.MapPreferences()},
+			{"game-monitor-state.json", gameMonitorState{SchemaVersion: contracts.ContractSchemaVersion}},
+		} {
+			if err := s.saveTo(modeRoot, file.name, file.value); err != nil {
+				return err
+			}
+		}
+	}
+	if s.repository() != nil {
+		if err := s.saveTo(s.userRoot(), "map-preferences.json", defaults.MapPreferences()); err != nil {
+			return err
+		}
+		if err := s.saveTo(s.userRoot(), "game-monitor-state.json", gameMonitorState{SchemaVersion: contracts.ContractSchemaVersion}); err != nil {
+			return err
+		}
+	}
+	if s.hub != nil {
+		s.hub.mu.Lock()
+		s.hub.appliedMapID = ""
+		s.hub.monitorStatus.MapId = ""
+		status := s.hub.monitorStatus
+		s.hub.publish(contracts.ServerEvent{Type: "game_monitor_changed", GameMonitorStatus: &status})
+		s.hub.publish(contracts.ServerEvent{Type: "resources_changed"})
+		s.hub.clearLocationCache()
+		s.hub.mu.Unlock()
+	}
+	if s.changed != nil {
+		s.changed("preferences_changed", "", "")
+	}
+	return nil
+}
+
+func (s *mapStore) resetAnnotations() error {
+	paths, err := filepath.Glob(filepath.Join(s.root, "user", "modes", "*", "maps", "*.annotations.json"))
+	if err != nil {
+		return err
+	}
+	if s.multiplayer != nil {
+		s.multiplayer.annoMu.Lock()
+		for id, timer := range s.multiplayer.annoTimers {
+			timer.Stop()
+			delete(s.multiplayer.annoTimers, id)
+		}
+		s.multiplayer.remoteDocs = map[string]map[string][]contracts.Annotation{}
+		s.multiplayer.sentOwn = map[string][]contracts.Annotation{}
+		s.multiplayer.sentOnce = map[string]bool{}
+	}
+	for _, path := range paths {
+		base := filepath.Base(path)
+		mapID := strings.TrimSuffix(base, ".annotations.json")
+		if !safeID.MatchString(mapID) {
+			continue
+		}
+		if err := s.saveTo(filepath.Dir(path), base, contracts.Annotations{SchemaVersion: contracts.ContractSchemaVersion, Items: []contracts.Annotation{}}); err != nil {
+			if s.multiplayer != nil {
+				s.multiplayer.annoMu.Unlock()
+			}
+			return err
+		}
+	}
+	if s.multiplayer != nil {
+		s.multiplayer.annoMu.Unlock()
+	}
+	for _, path := range paths {
+		base := filepath.Base(path)
+		mapID := strings.TrimSuffix(base, ".annotations.json")
+		if !safeID.MatchString(mapID) {
+			continue
+		}
+		if s.changed != nil {
+			s.changed("annotations_changed", mapID, "")
+		}
+	}
+	return nil
 }
 
 func normalizeMapPreferences(data *contracts.Preferences) {
@@ -278,13 +410,13 @@ func normalizeMapPreferences(data *contracts.Preferences) {
 }
 
 func validCalibrationDocuments(data contracts.CalibrationDocuments) bool {
-	if data.SchemaVersion != 1 || data.Maps == nil || len(data.Maps) > 2000 {
+	if data.SchemaVersion != contracts.ContractSchemaVersion || data.Maps == nil || len(data.Maps) > 2000 {
 		return false
 	}
 	ids := map[string]bool{}
 	for _, doc := range data.Maps {
 		key := doc.MapId + ":" + doc.Basemap
-		if !safeID.MatchString(doc.MapId) || len(doc.MapId) > 100 || !validBasemap(doc.Basemap) || ids[key] || doc.SchemaVersion != 1 || doc.Revision < 0 || doc.NextRegionNumber < 1 || len(doc.Regions) > 10000 {
+		if !safeID.MatchString(doc.MapId) || len(doc.MapId) > 100 || !validBasemap(doc.Basemap) || ids[key] || doc.SchemaVersion != contracts.ContractSchemaVersion || doc.Revision < 0 || doc.NextRegionNumber < 1 || len(doc.Regions) > 10000 {
 			return false
 		}
 		ids[key] = true
@@ -321,7 +453,7 @@ func (s *mapStore) readCalibrationDocument(mapID, basemap string) (contracts.Cal
 }
 
 func validCalibratorPreferences(data contracts.CalibratorPreferences) bool {
-	if data.SchemaVersion != 1 || data.CollapsedMaps == nil || data.CollapsedFloors == nil || len(data.CollapsedMaps) > 1000 || len(data.CollapsedFloors) > 1000 {
+	if data.SchemaVersion != contracts.ContractSchemaVersion || data.CollapsedMaps == nil || data.CollapsedFloors == nil || len(data.CollapsedMaps) > 1000 || len(data.CollapsedFloors) > 1000 {
 		return false
 	}
 	for _, id := range data.CollapsedMaps {
@@ -355,6 +487,34 @@ func jsonResponse(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func versionedJSONResponse(w http.ResponseWriter, value any, revision, etag string) {
+	w.Header().Set("X-Revision", revision)
+	w.Header().Set("ETag", etag)
+	jsonResponse(w, value)
+}
+
+func requireRevision(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if origin := r.Header.Get("Origin"); origin != "" {
+		u, err := url.Parse(origin)
+		if err != nil || u.Host != r.Host {
+			apiError(w, http.StatusForbidden, "origin_rejected")
+			return "", false
+		}
+	}
+	expected := expectedRevision(r.Header.Get("If-Match"), r.Header.Get("X-Expected-Revision"))
+	if expected == "" {
+		apiError(w, http.StatusPreconditionRequired, "revision_required")
+		return "", false
+	}
+	return expected, true
+}
+
+func versionedConflict(w http.ResponseWriter, revision, etag string) {
+	w.Header().Set("X-Revision", revision)
+	w.Header().Set("ETag", etag)
+	apiError(w, http.StatusConflict, "revision_conflict")
 }
 
 func cachedJSONResponse(w http.ResponseWriter, r *http.Request, value any) {
@@ -431,38 +591,22 @@ func (s *mapStore) saveGlobal(name string, value any) error {
 }
 
 func (s *mapStore) saveTo(dir, name string, value any) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	target := filepath.Join(dir, name)
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
+	return s.savePath(filepath.Join(dir, name), value)
+}
+
+func (s *mapStore) savePath(name string, value any) error {
+	if s.files == nil {
+		return errors.New("versioned file store is not initialized")
 	}
-	data, err := json.Marshal(value)
+	relative, err := filepath.Rel(s.root, name)
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(dir, ".saving-*")
-	if err != nil {
-		return err
-	}
-	temp := file.Name()
-	defer func() { _ = os.Remove(temp) }()
-	if _, err = file.Write(data); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err = file.Sync(); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err = file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(temp, target)
+	return s.files.Save(relative, value)
 }
 
 func validAnnotations(data contracts.Annotations, m contracts.MapData) bool {
-	if data.SchemaVersion != 1 || data.Items == nil || len(data.Items) > 10000 {
+	if data.SchemaVersion != contracts.ContractSchemaVersion || data.Items == nil || len(data.Items) > 10000 {
 		return false
 	}
 	ids := map[string]bool{}
@@ -522,14 +666,51 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		}
 		s.calibrationMu.Lock()
 		defer s.calibrationMu.Unlock()
-		for _, path := range []string{s.calibrationDocumentsPath(), s.calibrationPreferencesPath()} {
-			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-				apiError(w, http.StatusInternalServerError, "data_reset_failed")
-				return
-			}
+		if err := s.resetCalibration(); err != nil {
+			apiError(w, http.StatusInternalServerError, "data_reset_failed")
+			return
 		}
-		if s.calibrationReset != nil {
-			s.calibrationReset()
+		jsonResponse(w, map[string]bool{"ok": true})
+	})
+	mux.HandleFunc("POST /api/data/reset/{kind}", func(w http.ResponseWriter, r *http.Request) {
+		if !localRequest(w, r) {
+			return
+		}
+		var err error
+		switch r.PathValue("kind") {
+		case "map-preferences":
+			err = s.resetMapPreferences()
+		case "annotations":
+			err = s.resetAnnotations()
+		case "calibration":
+			s.calibrationMu.Lock()
+			defer s.calibrationMu.Unlock()
+			err = s.resetCalibration()
+		case "marker-preferences":
+			err = s.saveGlobal(filepath.Base(filepath.Join("user", "marker-preferences.json")), defaults.MarkerPreferences())
+		case "items-settings":
+			if s.items == nil {
+				err = errors.New("items unavailable")
+			} else {
+				err = s.items.resetSettings()
+			}
+		case "multiplayer":
+			if s.multiplayer == nil {
+				err = errors.New("multiplayer unavailable")
+			} else {
+				err = s.multiplayer.resetData()
+			}
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			if errors.Is(err, errMultiplayerResetInRoom) {
+				apiError(w, http.StatusConflict, err.Error())
+			} else {
+				apiError(w, http.StatusInternalServerError, "data_reset_failed")
+			}
+			return
 		}
 		jsonResponse(w, map[string]bool{"ok": true})
 	})
@@ -544,8 +725,13 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		cachedJSONResponse(w, r, data)
 	})
 	mux.HandleFunc("GET /api/maps", func(w http.ResponseWriter, r *http.Request) {
+		repo := s.repository()
+		if repo == nil {
+			dataError(w, errors.New("mode_repository_unavailable"))
+			return
+		}
 		lang := mapLang(r.URL.Query().Get("locale"))
-		files, err := os.ReadDir(filepath.Join(s.activeUpstream(), "maps"))
+		files, err := os.ReadDir(filepath.Join(repo.root, "maps"))
 		if err != nil {
 			dataError(w, err)
 			return
@@ -554,9 +740,9 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		seen := map[string]bool{}
 		// The catalog supplies data-defined ordering; newly added map files are discovered too.
 		var order []contracts.MapSummary
-		catalogFile := filepath.Join(s.activeUpstream(), "catalog_"+lang+".json")
+		catalogFile := filepath.Join(repo.root, "catalog_"+lang+".json")
 		if _, err := os.Stat(catalogFile); err != nil {
-			catalogFile = filepath.Join(s.activeUpstream(), "catalog_zh.json")
+			catalogFile = filepath.Join(repo.root, "catalog_zh.json")
 		}
 		_ = readJSON(catalogFile, &order)
 		for _, file := range files {
@@ -566,7 +752,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 				continue
 			}
 			seen[id] = true
-			m, err := s.loadFromRepository(id, s.repository(), lang)
+			m, err := s.loadFromRepository(id, repo, lang)
 			if err != nil {
 				log.Printf("skip map %s: %v", id, err)
 				continue
@@ -585,7 +771,8 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		cachedJSONResponse(w, r, summaries)
 	})
 	mux.HandleFunc("GET /api/maps/{id}", func(w http.ResponseWriter, r *http.Request) {
-		m, err := s.loadLocale(r.PathValue("id"), r.URL.Query().Get("locale"))
+		repo := s.repository()
+		m, err := s.loadFromRepository(r.PathValue("id"), repo, mapLang(r.URL.Query().Get("locale")))
 		if err != nil {
 			dataError(w, err)
 			return
@@ -630,24 +817,27 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		http.ServeFile(w, r, local)
 	})
 	mux.HandleFunc("GET /api/maps/{id}/annotations", func(w http.ResponseWriter, r *http.Request) {
-		m, err := s.load(r.PathValue("id"))
+		repo := s.repository()
+		m, err := s.loadFromRepository(r.PathValue("id"), repo, "zh")
 		if err != nil {
 			dataError(w, err)
 			return
 		}
-		data := contracts.Annotations{SchemaVersion: 1, Items: []contracts.Annotation{}}
-		err = readJSON(s.userPath(filepath.Join("maps", m.Id+".annotations.json")), &data)
+		data := contracts.Annotations{SchemaVersion: contracts.ContractSchemaVersion, Items: []contracts.Annotation{}}
+		path := filepath.Join("user", "modes", repo.mode, "maps", m.Id+".annotations.json")
+		var revision, etag string
+		data, revision, etag, err = ReadVersionedRepair(s.files, path, data, func(value *contracts.Annotations) error {
+			if !validAnnotations(*value, m) {
+				log.Printf("annotations treated as empty: map=%s", m.Id)
+				*value = contracts.Annotations{SchemaVersion: contracts.ContractSchemaVersion, Items: []contracts.Annotation{}}
+			}
+			return nil
+		})
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			dataError(w, err)
 			return
 		}
-		if !validAnnotations(data, m) {
-			// ownerId is part of the annotation contract now; a pre-multiplayer file validates as
-			// empty rather than failing the whole map.
-			log.Printf("annotations treated as empty: map=%s", m.Id)
-			data = contracts.Annotations{SchemaVersion: 1, Items: []contracts.Annotation{}}
-		}
-		cachedJSONResponse(w, r, data)
+		versionedJSONResponse(w, data, revision, etag)
 	})
 	mux.HandleFunc("GET /api/maps/{id}/calibration", func(w http.ResponseWriter, r *http.Request) {
 		basemap := r.URL.Query().Get("basemap")
@@ -655,22 +845,34 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			apiError(w, http.StatusBadRequest, "calibration_basemap_invalid")
 			return
 		}
-		m, err := s.load(r.PathValue("id"))
+		repo := s.repository()
+		m, err := s.loadFromRepository(r.PathValue("id"), repo, "zh")
 		if err != nil {
 			dataError(w, err)
 			return
 		}
-		data, err := s.readCalibrationDocument(m.Id, basemap)
+		documents, revision, etag, err := ReadVersioned(s.files, filepath.Join("user", "calibration", "maps.calibration.json"), emptyCalibrationDocuments())
 		if err != nil {
 			log.Printf("calibration data: %v", err)
 			apiError(w, http.StatusInternalServerError, "calibration_invalid")
 			return
 		}
+		if !validCalibrationDocuments(documents) {
+			apiError(w, http.StatusInternalServerError, "calibration_invalid")
+			return
+		}
+		data := emptyCalibrationDocument(m.Id, basemap)
+		for _, document := range documents.Maps {
+			if document.MapId == m.Id && document.Basemap == basemap {
+				data = document
+				break
+			}
+		}
 		if !mapper.ValidDocument(data, m) {
 			apiError(w, http.StatusInternalServerError, "calibration_invalid")
 			return
 		}
-		cachedJSONResponse(w, r, data)
+		versionedJSONResponse(w, data, revision, etag)
 	})
 	mux.HandleFunc("PUT /api/maps/{id}/calibration", func(w http.ResponseWriter, r *http.Request) {
 		basemap := r.URL.Query().Get("basemap")
@@ -678,9 +880,14 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			apiError(w, http.StatusBadRequest, "calibration_basemap_invalid")
 			return
 		}
+		expected, ok := requireRevision(w, r)
+		if !ok {
+			return
+		}
 		s.calibrationMu.Lock()
 		defer s.calibrationMu.Unlock()
-		m, err := s.load(r.PathValue("id"))
+		repo := s.repository()
+		m, err := s.loadFromRepository(r.PathValue("id"), repo, "zh")
 		if err != nil {
 			dataError(w, err)
 			return
@@ -706,8 +913,17 @@ func (s *mapStore) register(mux *http.ServeMux) {
 				break
 			}
 		}
+		currentRevision, currentETag, hashErr := revisionOf(documents)
+		if hashErr != nil {
+			apiError(w, http.StatusInternalServerError, "calibration_invalid")
+			return
+		}
 		if data.Revision != current.Revision {
-			apiError(w, http.StatusConflict, "calibration_revision_conflict")
+			versionedConflict(w, currentRevision, currentETag)
+			return
+		}
+		if strings.Trim(expected, `\"`) != currentRevision {
+			versionedConflict(w, currentRevision, currentETag)
 			return
 		}
 		data.Revision++
@@ -730,10 +946,16 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		if s.changed != nil {
 			s.changed("calibration_changed", m.Id, r.Header.Get("X-Operation-ID"))
 		}
-		jsonResponse(w, data)
+		newRevision, newETag, _ := revisionOf(documents)
+		versionedJSONResponse(w, data, newRevision, newETag)
 	})
 	mux.HandleFunc("PUT /api/maps/{id}/annotations", func(w http.ResponseWriter, r *http.Request) {
-		m, err := s.load(r.PathValue("id"))
+		expected, ok := requireRevision(w, r)
+		if !ok {
+			return
+		}
+		repo := s.repository()
+		m, err := s.loadFromRepository(r.PathValue("id"), repo, "zh")
 		if err != nil {
 			dataError(w, err)
 			return
@@ -745,8 +967,12 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		if s.multiplayer != nil {
 			// The multiplayer manager owns the merge (and the save): incoming items are
 			// authoritative for the local owner only, foreign owners always come from the cache.
-			merged, mergeErr := s.multiplayer.applyLocalAnnotations(m.Id, m, data)
+			merged, revision, etag, mergeErr := s.multiplayer.applyLocalAnnotations(repo, m.Id, m, data, expected)
 			if mergeErr != nil {
+				if errors.Is(mergeErr, errRevisionConflict) {
+					versionedConflict(w, revision, etag)
+					return
+				}
 				status := http.StatusBadRequest
 				if mergeErr.Error() == "annotations_save_failed" {
 					status = http.StatusInternalServerError
@@ -755,47 +981,74 @@ func (s *mapStore) register(mux *http.ServeMux) {
 				return
 			}
 			data = merged
+			if s.changed != nil {
+				s.changed("annotations_changed", m.Id, r.Header.Get("X-Operation-ID"))
+			}
+			// The merge already saved and returned the revision of the written document;
+			// re-reading here could race a concurrent remote-annotation write.
+			versionedJSONResponse(w, data, revision, etag)
+			return
 		} else {
 			if !validAnnotations(data, m) {
 				apiError(w, http.StatusBadRequest, "annotations_invalid")
 				return
 			}
-			if err = s.save(filepath.Join("maps", m.Id+".annotations.json"), data); err != nil {
+			path := filepath.Join("user", "modes", repo.mode, "maps", m.Id+".annotations.json")
+			revision, etag, updateErr := s.files.Update(path, expected, contracts.Annotations{SchemaVersion: contracts.ContractSchemaVersion, Items: []contracts.Annotation{}}, data, nil)
+			if errors.Is(updateErr, errRevisionConflict) {
+				versionedConflict(w, revision, etag)
+				return
+			}
+			if err = updateErr; err != nil {
 				log.Printf("save annotations: %v", err)
 				apiError(w, http.StatusInternalServerError, "annotations_save_failed")
 				return
 			}
+			versionedJSONResponse(w, data, revision, etag)
+			if s.changed != nil {
+				s.changed("annotations_changed", m.Id, r.Header.Get("X-Operation-ID"))
+			}
+			return
 		}
-		if s.changed != nil {
-			s.changed("annotations_changed", m.Id, r.Header.Get("X-Operation-ID"))
-		}
-		jsonResponse(w, data)
 	})
 	mux.HandleFunc("GET /api/map-preferences", func(w http.ResponseWriter, r *http.Request) {
-		data := contracts.Preferences{
-			SchemaVersion: 1,
-			Maps:          []contracts.MapPreference{},
-			StickerUsage:  []contracts.StickerUsage{},
+		repo := s.repository()
+		if repo == nil {
+			dataError(w, errors.New("mode_repository_unavailable"))
+			return
 		}
-		err := readJSON(s.userPath("map-preferences.json"), &data)
+		data := defaults.MapPreferences()
+		var revision, etag string
+		data, revision, etag, err := ReadVersionedRepair(s.files, filepath.Join("user", "modes", repo.mode, "map-preferences.json"), data, func(value *contracts.Preferences) error {
+			normalizeMapPreferences(value)
+			return nil
+		})
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			dataError(w, err)
 			return
 		}
-		normalizeMapPreferences(&data)
-		cachedJSONResponse(w, r, data)
+		versionedJSONResponse(w, data, revision, etag)
 	})
 	mux.HandleFunc("PUT /api/map-preferences", func(w http.ResponseWriter, r *http.Request) {
+		expected, ok := requireRevision(w, r)
+		if !ok {
+			return
+		}
+		repo := s.repository()
+		if repo == nil {
+			dataError(w, errors.New("mode_repository_unavailable"))
+			return
+		}
 		var data contracts.Preferences
 		if !decodeUpdate(w, r, &data) {
 			return
 		}
-		if data.SchemaVersion != 1 || data.Maps == nil || len(data.Maps) > 1000 || data.StickerUsage == nil || len(data.StickerUsage) > 1000 {
+		if data.SchemaVersion != contracts.ContractSchemaVersion || data.Maps == nil || len(data.Maps) > 1000 || data.StickerUsage == nil || len(data.StickerUsage) > 1000 {
 			apiError(w, http.StatusBadRequest, "preferences_invalid")
 			return
 		}
 		if data.SelectedMap != "" {
-			if _, err := s.load(data.SelectedMap); err != nil {
+			if _, err := s.loadFromRepository(data.SelectedMap, repo, "zh"); err != nil {
 				apiError(w, http.StatusBadRequest, "map_unknown")
 				return
 			}
@@ -812,34 +1065,46 @@ func (s *mapStore) register(mux *http.ServeMux) {
 				}
 			}
 		}
-		if err := s.save("map-preferences.json", data); err != nil {
+		relative := filepath.Join("user", "modes", repo.mode, "map-preferences.json")
+		revision, etag, err := s.files.Update(relative, expected, defaults.MapPreferences(), data, nil)
+		if errors.Is(err, errRevisionConflict) {
+			versionedConflict(w, revision, etag)
+			return
+		}
+		if err != nil {
 			log.Printf("save preferences: %v", err)
 			apiError(w, http.StatusInternalServerError, "preferences_save_failed")
 			return
 		}
-		if s.changed != nil {
+		if s.hub != nil {
+			s.hub.preferencesChanged(data, data.SelectedMap, r.Header.Get("X-Operation-ID"))
+		} else if s.changed != nil {
 			s.changed("preferences_changed", data.SelectedMap, r.Header.Get("X-Operation-ID"))
 		}
-		jsonResponse(w, data)
+		versionedJSONResponse(w, data, revision, etag)
 	})
 	mux.HandleFunc("GET /api/marker-preferences", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
 			return
 		}
-		data := contracts.MarkerPreferences{SchemaVersion: 1, HiddenOwners: []string{}, ShownOwners: []string{}}
-		path := filepath.Join(s.root, "user", "marker-preferences.json")
-		err := readJSON(path, &data)
+		data, revision, etag, err := ReadVersionedRepair(s.files, filepath.Join("user", "marker-preferences.json"), defaults.MarkerPreferences(), func(value *contracts.MarkerPreferences) error {
+			if !validMarkerPreferences(*value) {
+				*value = defaults.MarkerPreferences()
+			}
+			return nil
+		})
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			apiError(w, http.StatusInternalServerError, "marker_preferences_invalid")
 			return
 		}
-		if !validMarkerPreferences(data) {
-			data = contracts.MarkerPreferences{SchemaVersion: 1, HiddenOwners: []string{}, ShownOwners: []string{}}
-		}
-		jsonResponse(w, data)
+		versionedJSONResponse(w, data, revision, etag)
 	})
 	mux.HandleFunc("PUT /api/marker-preferences", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
+			return
+		}
+		expected, ok := requireRevision(w, r)
+		if !ok {
 			return
 		}
 		var data contracts.MarkerPreferences
@@ -850,20 +1115,23 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			apiError(w, http.StatusBadRequest, "preferences_invalid")
 			return
 		}
-		if err := s.saveGlobal("marker-preferences.json", data); err != nil {
+		revision, etag, err := s.files.Update(filepath.Join("user", "marker-preferences.json"), expected, defaults.MarkerPreferences(), data, nil)
+		if errors.Is(err, errRevisionConflict) {
+			versionedConflict(w, revision, etag)
+			return
+		}
+		if err != nil {
 			log.Printf("save marker preferences: %v", err)
 			apiError(w, http.StatusInternalServerError, "preferences_save_failed")
 			return
 		}
-		jsonResponse(w, data)
+		versionedJSONResponse(w, data, revision, etag)
+		if s.hub != nil {
+			s.hub.markerPreferencesChanged(data, r.Header.Get("X-Operation-ID"))
+		}
 	})
 	mux.HandleFunc("GET /api/calibration-preferences", func(w http.ResponseWriter, r *http.Request) {
-		data := contracts.CalibratorPreferences{
-			SchemaVersion:   1,
-			CollapsedMaps:   []string{},
-			CollapsedFloors: []string{},
-		}
-		err := readJSON(s.calibrationPreferencesPath(), &data)
+		data, revision, etag, err := ReadVersioned(s.files, filepath.Join("user", "calibration", "calibration-preferences.json"), defaults.CalibratorPreferences())
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			apiError(w, http.StatusInternalServerError, "calibration_preferences_invalid")
 			return
@@ -872,9 +1140,13 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			apiError(w, http.StatusInternalServerError, "calibration_preferences_invalid")
 			return
 		}
-		jsonResponse(w, data)
+		versionedJSONResponse(w, data, revision, etag)
 	})
 	mux.HandleFunc("PUT /api/calibration-preferences", func(w http.ResponseWriter, r *http.Request) {
+		expected, ok := requireRevision(w, r)
+		if !ok {
+			return
+		}
 		var data contracts.CalibratorPreferences
 		if !decodeUpdate(w, r, &data) {
 			return
@@ -885,11 +1157,16 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		}
 		s.calibrationMu.Lock()
 		defer s.calibrationMu.Unlock()
-		if err := s.saveTo(s.calibrationRoot(), "calibration-preferences.json", data); err != nil {
+		revision, etag, err := s.files.Update(filepath.Join("user", "calibration", "calibration-preferences.json"), expected, defaults.CalibratorPreferences(), data, nil)
+		if errors.Is(err, errRevisionConflict) {
+			versionedConflict(w, revision, etag)
+			return
+		}
+		if err != nil {
 			log.Printf("save calibration preferences: %v", err)
 			apiError(w, http.StatusInternalServerError, "preferences_save_failed")
 			return
 		}
-		jsonResponse(w, data)
+		versionedJSONResponse(w, data, revision, etag)
 	})
 }

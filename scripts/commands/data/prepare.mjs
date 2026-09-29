@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { DOMParser } from '@xmldom/xmldom';
 import { worldToPixel, tileTransform } from '../../../dashboard/src/pages/map/lib/geometry.ts';
+import { ContractSchemaVersion } from '../../../contracts/version.gen.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const upstream = path.join(root, 'data/upstream');
@@ -831,7 +832,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
         `已跳过 ${[...skipped.values()].reduce((a, b) => a + b, 0)} 个缺少可靠坐标或楼层归属的数据点，详见数据校验报告`,
       );
     const map = {
-      schemaVersion: 1,
+      schemaVersion: ContractSchemaVersion,
       id,
       name: text(apiMap?.name) || meta.locale.en,
       nameEn: en(apiMap?.name) || meta.locale.en,
@@ -1058,7 +1059,7 @@ await writeFile(
   path.join(output, 'versions.json'),
   JSON.stringify(
     {
-      schemaVersion: 1,
+      schemaVersion: ContractSchemaVersion,
       gameModes: [mode],
       ...(await read('versions.json')),
       rulesSource: (await read('versions.json')).sources.find((s) => s.file === 'map-rules.json')

@@ -39,7 +39,7 @@ export function MinimapSettingsPanel({
   return (
     <>
       <div className="panel-title">
-        <span>{t('map.minimap.title')}</span>
+        <span>{t('minimap.settingsTitle')}</span>
         <div className="panel-actions">
           <button
             className="minimap-action"
@@ -47,7 +47,7 @@ export function MinimapSettingsPanel({
             disabled={!view?.connected}
             onClick={() => setVisible(!visible)}
           >
-            {t(visible ? 'settings.hideMinimap' : 'settings.showMinimap')}
+            {t(visible ? 'minimap.hide' : 'minimap.show')}
           </button>
           <button
             className="minimap-action"
@@ -55,35 +55,35 @@ export function MinimapSettingsPanel({
             disabled={!view?.connected}
             onClick={setEditing}
           >
-            {t(editing ? 'settings.exitEdit' : 'settings.enterEdit')}
+            {t(editing ? 'minimap.exitEdit' : 'minimap.enterEdit')}
           </button>
-          <button className="icon-button" aria-label={t('map.minimap.close')} onClick={onClose}>
+          <button className="icon-button" aria-label={t('minimap.closeSettings')} onClick={onClose}>
             <X size={15} />
           </button>
         </div>
       </div>
       <div className="panel-scroll minimap-settings">
         <div className="segmented">
-          <span>{t('settings.shape')}</span>
+          <span>{t('minimap.shape')}</span>
           <div>
             <button
               className={settings.shape === 'square' ? 'active' : ''}
               aria-pressed={settings.shape === 'square'}
               onClick={() => update({ shape: 'square' })}
             >
-              {t('settings.square')}
+              {t('minimap.square')}
             </button>
             <button
               className={settings.shape === 'circle' ? 'active' : ''}
               aria-pressed={settings.shape === 'circle'}
               onClick={() => update({ shape: 'circle' })}
             >
-              {t('settings.circle')}
+              {t('minimap.circle')}
             </button>
           </div>
         </div>
         <RangeSlider
-          label={t('settings.opacity')}
+          label={t('minimap.opacity')}
           value={settings.opacity ?? OverlaySettingsLimits.opacity.max}
           min={OverlaySettingsLimits.opacity.min}
           max={OverlaySettingsLimits.opacity.max}
@@ -97,9 +97,9 @@ export function MinimapSettingsPanel({
             checked={settings.backdrop}
             onChange={(e) => update({ backdrop: e.target.checked })}
           />
-          {t('settings.backdrop')}
+          {t('minimap.backdrop')}
         </label>
-        <strong className="panel-section">{t('settings.follow')}</strong>
+        <strong className="panel-section">{t('minimap.follow')}</strong>
         <span
           className={`settings-check-wrap minimap-check-wrap${monitor.status?.screenshotWatching ? '' : ' is-disabled'}`}
         >
@@ -110,13 +110,13 @@ export function MinimapSettingsPanel({
                 checked={!!monitor.settings?.deleteScreenshots}
                 onChange={(e) => void monitor.update({ deleteScreenshots: e.target.checked })}
               />
-              {t('settings.deleteScreenshots')}
+              {t('gameMonitor.deleteScreenshots')}
             </label>
           ) : (
-            <AppTooltip content={t('settings.noMonitorDirectory')}>
+            <AppTooltip content={t('gameMonitor.noDirectory')}>
               <label className="check-row" aria-disabled="true">
                 <input type="checkbox" disabled checked={!!monitor.settings?.deleteScreenshots} />
-                {t('settings.deleteScreenshots')}
+                {t('gameMonitor.deleteScreenshots')}
               </label>
             </AppTooltip>
           )}
@@ -131,13 +131,13 @@ export function MinimapSettingsPanel({
                 checked={!!monitor.settings?.autoMapSwitch}
                 onChange={(e) => void monitor.update({ autoMapSwitch: e.target.checked })}
               />
-              {t('settings.autoMapSwitch')}
+              {t('gameMonitor.autoMapSwitch')}
             </label>
           ) : (
-            <AppTooltip content={t('settings.noMonitorDirectory')}>
+            <AppTooltip content={t('gameMonitor.noDirectory')}>
               <label className="check-row" aria-disabled="true">
                 <input type="checkbox" disabled checked={!!monitor.settings?.autoMapSwitch} />
-                {t('settings.autoMapSwitch')}
+                {t('gameMonitor.autoMapSwitch')}
               </label>
             </AppTooltip>
           )}
@@ -149,13 +149,13 @@ export function MinimapSettingsPanel({
               checked={settings[key]}
               onChange={(e) => update({ [key]: e.target.checked })}
             />
-            {t(`settings.${key}`)}
+            {t(`minimap.${key}`)}
           </label>
         ))}
         {/* Size, zoom and the rest live in the settings page; this is the way there. */}
         <button className="panel-footer-button" onClick={onOpenSettings}>
           <SlidersHorizontal size={15} aria-hidden="true" />
-          {t('settings.detail')}
+          {t('minimap.detail')}
         </button>
       </div>
     </>

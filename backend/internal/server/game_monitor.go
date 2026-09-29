@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	defaults "efttoolbox/backend/internal/defaults"
 	"efttoolbox/backend/internal/gamewatch"
 	contracts "efttoolbox/contracts"
 
@@ -17,15 +19,15 @@ import (
 )
 
 func defaultGameMonitorSettings() contracts.GameMonitorSettings {
-	directory := ""
+	value := defaults.UserSettings().GameMonitor
 	if home, err := os.UserHomeDir(); err == nil {
-		directory = filepath.Join(home, "Documents", "Escape From Tarkov", "Screenshots")
+		value.ScreenshotDirectory = filepath.Join(home, "Documents", "Escape From Tarkov", "Screenshots")
 	}
-	return contracts.GameMonitorSettings{SchemaVersion: 1, ScreenshotDirectory: directory, Mode: string(gamewatch.ModePVP), AutoMapSwitch: true}
+	return value
 }
 
 func validGameMonitorSettings(value contracts.GameMonitorSettings) bool {
-	return value.SchemaVersion == 1 && gamewatch.ValidMode(gamewatch.Mode(value.Mode)) && len(value.ScreenshotDirectory) < 4096 && len(value.LogDirectory) < 4096
+	return value.SchemaVersion == contracts.ContractSchemaVersion && gamewatch.ValidMode(gamewatch.Mode(value.Mode)) && len(value.ScreenshotDirectory) < 4096 && len(value.LogDirectory) < 4096
 }
 
 func loadGameMonitorSettings(root string) contracts.GameMonitorSettings {
@@ -43,7 +45,7 @@ type gameMonitorState struct {
 
 func (h *overlayHub) loadAppliedMap() string {
 	var state gameMonitorState
-	if readJSON(h.store.userPath("game-monitor-state.json"), &state) == nil && state.SchemaVersion == 1 {
+	if readJSON(h.store.userPath("game-monitor-state.json"), &state) == nil && state.SchemaVersion == contracts.ContractSchemaVersion {
 		if _, err := h.store.load(state.MapID); err == nil {
 			return state.MapID
 		}
@@ -58,7 +60,7 @@ func (h *overlayHub) loadAppliedMap() string {
 }
 
 func (h *overlayHub) persistAppliedMap() error {
-	return h.store.save("game-monitor-state.json", gameMonitorState{SchemaVersion: 1, MapID: h.appliedMapID})
+	return h.store.save("game-monitor-state.json", gameMonitorState{SchemaVersion: contracts.ContractSchemaVersion, MapID: h.appliedMapID})
 }
 
 func (h *overlayHub) monitorConfig() gamewatch.Config {
@@ -75,7 +77,7 @@ func (h *overlayHub) startGameMonitor(ctx context.Context) {
 		h.store.setRepository(repo)
 	}
 	h.appliedMapID = h.loadAppliedMap()
-	h.monitorStatus = contracts.GameMonitorStatus{SchemaVersion: 1, Mode: settings.Mode, MapId: h.appliedMapID, ScreenshotWatching: settings.ScreenshotDirectory != "", LogWatching: settings.LogDirectory != ""}
+	h.monitorStatus = contracts.GameMonitorStatus{SchemaVersion: contracts.ContractSchemaVersion, Mode: settings.Mode, MapId: h.appliedMapID, ScreenshotWatching: settings.ScreenshotDirectory != "", LogWatching: settings.LogDirectory != ""}
 	h.monitor = gamewatch.New(gamewatch.Callbacks{Diagnostic: h.monitorDiagnostic, Screenshot: h.acceptScreenshot, Log: h.acceptLog, SessionChanged: h.monitorSessionChanged, Activity: h.monitorActivity})
 	h.monitor.Apply(h.monitorConfig())
 	go h.monitor.Run(ctx)
@@ -142,8 +144,22 @@ func (h *overlayHub) acceptLog(event gamewatch.LogEvent) {
 }
 
 func (h *overlayHub) resolveLocationForMode(name, mode string) string {
-	var locations map[string]string
-	if repo, err := newModeRepository(h.store.root, mode); err == nil && readJSON(filepath.Join(repo.root, "locations.json"), &locations) == nil {
+	h.locationsMu.RLock()
+	locations, cached := h.locations[mode]
+	h.locationsMu.RUnlock()
+	if !cached {
+		var loaded map[string]string
+		if repo, err := newModeRepository(h.store.root, mode); err == nil && readJSON(filepath.Join(repo.root, "locations.json"), &loaded) == nil {
+			locations = loaded
+		}
+		h.locationsMu.Lock()
+		if h.locations == nil {
+			h.locations = make(map[string]map[string]string)
+		}
+		h.locations[mode] = locations
+		h.locationsMu.Unlock()
+	}
+	if locations != nil {
 		for _, candidate := range locationCandidates(name) {
 			if id := locations[candidate]; id != "" {
 				return id
@@ -151,6 +167,12 @@ func (h *overlayHub) resolveLocationForMode(name, mode string) string {
 		}
 	}
 	return name
+}
+
+func (h *overlayHub) clearLocationCache() {
+	h.locationsMu.Lock()
+	h.locations = nil
+	h.locationsMu.Unlock()
 }
 
 func locationCandidates(name string) []string {
@@ -172,33 +194,37 @@ func locationCandidates(name string) []string {
 	return candidates
 }
 
-func (h *overlayHub) selectedPlayerMap() (contracts.MapData, error) {
+func (h *overlayHub) selectedPlayerMap() (contracts.MapData, string, error) {
+	repo := h.store.repository()
+	if repo == nil {
+		return contracts.MapData{}, "", errors.New("mode_repository_unavailable")
+	}
 	h.mu.Lock()
 	applied := h.appliedMapID
 	h.mu.Unlock()
 	if applied != "" {
-		if value, err := h.store.load(applied); err == nil {
-			return value, nil
+		if value, err := h.store.loadFromRepository(applied, repo, "zh"); err == nil {
+			return value, repo.mode, nil
 		}
 	}
-	entries, err := os.ReadDir(filepath.Join(h.store.activeUpstream(), "maps"))
+	entries, err := os.ReadDir(filepath.Join(repo.root, "maps"))
 	if err != nil {
-		return contracts.MapData{}, err
+		return contracts.MapData{}, "", err
 	}
 	for _, entry := range entries {
 		id, ok := mapIDFromFile(entry.Name())
 		if entry.IsDir() || !ok {
 			continue
 		}
-		if value, err := h.store.load(id); err == nil {
-			return value, nil
+		if value, err := h.store.loadFromRepository(id, repo, "zh"); err == nil {
+			return value, repo.mode, nil
 		}
 	}
-	return contracts.MapData{}, os.ErrNotExist
+	return contracts.MapData{}, "", os.ErrNotExist
 }
 
-func (h *overlayHub) projectScreenshotPlayer(m contracts.MapData, mapID string, value gamewatch.Screenshot) (contracts.PlayerState, error) {
-	return h.projectPlayerOnMap(m, playerInput{
+func (h *overlayHub) projectScreenshotPlayer(m contracts.MapData, mode, mapID string, value gamewatch.Screenshot) (contracts.PlayerState, error) {
+	return h.projectPlayerOnMode(m, mode, playerInput{
 		PlayerId: "self", DisplayName: "You", IsSelf: true, MapId: mapID,
 		WorldPosition: contracts.WorldPosition{X: value.X, Y: value.Y, Z: value.Z}, Heading: value.Heading,
 	})
@@ -219,7 +245,7 @@ func (h *overlayHub) publishSelfPlayer(player contracts.PlayerState) {
 }
 
 func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
-	m, err := h.selectedPlayerMap()
+	m, mode, err := h.selectedPlayerMap()
 	h.mu.Lock()
 	pending := h.pendingMap
 	pendingMode := h.pendingMode
@@ -227,18 +253,19 @@ func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
 	currentMode := h.monitorSettings.Mode
 	h.mu.Unlock()
 	if autoMap && pending != "" {
-		mode := currentMode
+		candidateMode := currentMode
 		if pendingMode != "" {
-			mode = pendingMode
+			candidateMode = pendingMode
 		}
-		if candidate, loadErr := h.store.loadFromMode(pending, mode); loadErr == nil {
+		if candidate, loadErr := h.store.loadFromMode(pending, candidateMode); loadErr == nil {
 			m, err = candidate, nil
+			mode = candidateMode
 		}
 	}
 	if err != nil || len(m.Floors) == 0 {
 		return errors.New("no active map")
 	}
-	player, err := h.projectScreenshotPlayer(m, m.Id, value)
+	player, err := h.projectScreenshotPlayer(m, mode, m.Id, value)
 	if err != nil {
 		return err
 	}
@@ -265,11 +292,8 @@ func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
 		h.monitorStatus.Mode = h.monitorSettings.Mode
 		if repo, err := newModeRepository(h.store.root, h.monitorSettings.Mode); err == nil {
 			h.store.setRepository(repo)
-			if settings, err := readUserSettings(h.store.root); err == nil {
-				settings.GameMonitor = h.monitorSettings
-				_ = h.store.saveGlobal("user-settings.json", settings)
-			}
 		}
+		h.clearLocationCache()
 		for id, old := range h.players {
 			if old.IsSelf && id != player.PlayerId {
 				delete(h.players, id)
@@ -277,6 +301,15 @@ func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
 			}
 		}
 		if oldMode != h.monitorSettings.Mode {
+			mode := h.monitorSettings.Mode
+			go func() {
+				if _, _, _, err := h.UpdateUserSettings(func(settings *contracts.UserSettings) error {
+					settings.GameMonitor.Mode = mode
+					return nil
+				}); err != nil {
+					log.Printf("persist automatic game mode: %v", err)
+				}
+			}()
 			h.monitorDiagnostic("info", "mode_applied", fmt.Sprintf("Mode %q", h.monitorSettings.Mode))
 			h.publish(contracts.ServerEvent{Type: "resources_changed"})
 			h.publish(contracts.ServerEvent{Type: "mode_applied", GameMonitorStatus: &h.monitorStatus})
@@ -308,12 +341,17 @@ func (h *overlayHub) registerGameMonitor(mux *http.ServeMux) {
 			apiError(w, http.StatusBadRequest, "screenshot_name_invalid")
 			return
 		}
-		m, err := h.store.load(value.MapId)
+		repo := h.store.repository()
+		if repo == nil {
+			apiError(w, http.StatusInternalServerError, "mode_repository_unavailable")
+			return
+		}
+		m, err := h.store.loadFromRepository(value.MapId, repo, "zh")
 		if err != nil || len(m.Floors) == 0 {
 			apiError(w, http.StatusBadRequest, "map_unknown")
 			return
 		}
-		player, err := h.projectScreenshotPlayer(m, value.MapId, position)
+		player, err := h.projectScreenshotPlayer(m, repo.mode, value.MapId, position)
 		if err != nil {
 			apiError(w, http.StatusBadRequest, "position_update_failed")
 			return
@@ -325,13 +363,19 @@ func (h *overlayHub) registerGameMonitor(mux *http.ServeMux) {
 		if !localRequest(w, r) {
 			return
 		}
-		h.mu.Lock()
-		value := h.monitorSettings
-		h.mu.Unlock()
-		jsonResponse(w, value)
+		settings, revision, etag, err := ReadVersioned(h.store.files, filepath.Join("user", "user-settings.json"), defaultUserSettings())
+		if err != nil {
+			apiError(w, http.StatusInternalServerError, "user_settings_invalid")
+			return
+		}
+		versionedJSONResponse(w, settings.GameMonitor, revision, etag)
 	})
 	mux.HandleFunc("PUT /api/game-monitor/settings", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
+			return
+		}
+		expected, ok := requireRevision(w, r)
+		if !ok {
 			return
 		}
 		var value contracts.GameMonitorSettings
@@ -339,17 +383,15 @@ func (h *overlayHub) registerGameMonitor(mux *http.ServeMux) {
 			apiError(w, http.StatusBadRequest, "game_monitor_settings_invalid")
 			return
 		}
-		current, err := h.userSettings()
+		current, revision, etag, err := h.applyUserSettingsUpdate(expected, func(current *contracts.UserSettings) error {
+			current.GameMonitor = value
+			return nil
+		}, operationID(r), false, true)
+		if errors.Is(err, errRevisionConflict) {
+			versionedConflict(w, revision, etag)
+			return
+		}
 		if err != nil {
-			apiError(w, http.StatusInternalServerError, "game_monitor_settings_save_failed")
-			return
-		}
-		current.GameMonitor = value
-		if _, code := h.prepareUserSettings(&current, true); code != "" {
-			apiError(w, http.StatusBadRequest, code)
-			return
-		}
-		if err := h.applyUserSettings(current, operationID(r), false, true); err != nil {
 			if code := userSettingsErrorCode(err); code != "" {
 				apiError(w, http.StatusBadRequest, code)
 			} else {
@@ -357,7 +399,7 @@ func (h *overlayHub) registerGameMonitor(mux *http.ServeMux) {
 			}
 			return
 		}
-		jsonResponse(w, value)
+		versionedJSONResponse(w, current.GameMonitor, revision, etag)
 	})
 	mux.HandleFunc("GET /api/game-monitor/status", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {

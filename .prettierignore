@@ -7,6 +7,9 @@ docs/
 .planning/
 contracts/go/
 contracts/ts/
+contracts/version.gen.mjs
+dashboard/src/defaults.gen.ts
+.zcode/
 overlay/packages.lock.json
 pnpm-lock.yaml
 AGENTS.md

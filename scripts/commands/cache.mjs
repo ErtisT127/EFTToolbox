@@ -8,6 +8,15 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const [action, target] = process.argv.slice(2);
 if (!['check', 'save'].includes(action) || !['dashboard', 'backend'].includes(target))
   throw new Error('Usage: pnpm toolbox cache check|save dashboard|backend');
+// Sources of generated artifacts. The generated files themselves are hashed below, but a source
+// edit only reaches them once a generator runs, so the cache has to miss on the source too;
+// otherwise the dev launcher skips the very build that regenerates them.
+const generators = [
+  'contracts/i18n',
+  'contracts/map-display.json',
+  'scripts/config/defaults.mjs',
+  'scripts/generate-defaults.mjs',
+];
 const inputs =
   target === 'dashboard'
     ? [
@@ -15,11 +24,12 @@ const inputs =
         'contracts/proto',
         'contracts/generate.mjs',
         'contracts/ts',
+        ...generators,
         'package.json',
         'pnpm-lock.yaml',
         'pnpm-workspace.yaml',
       ]
-    : ['backend', 'contracts/go', 'go.work', 'go.work.sum'];
+    : ['backend', 'contracts/go', 'contracts/proto', ...generators, 'go.work', 'go.work.sum'];
 inputs.push('scripts/commands/cache.mjs');
 const output = target === 'dashboard' ? 'build/dashboard' : 'build/EFTToolbox.exe';
 const entry = target === 'dashboard' ? `${output}/index.html` : output;

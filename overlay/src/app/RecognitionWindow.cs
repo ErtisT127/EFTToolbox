@@ -10,7 +10,7 @@ namespace EFTToolbox.Overlay;
 /// the wheel and closed from the corner. Its geometry is the contract's window fields, so whatever
 /// the reader drags lands in the same settings the dashboard shows.
 ///
-/// The panel's chrome strings come from OverlayText, whose language follows the user settings.
+/// The panel's chrome strings come from the generated contract messages, whose language follows the user settings.
 /// </summary>
 internal sealed class RecognitionWindow : IDisposable
 {
@@ -19,19 +19,16 @@ internal sealed class RecognitionWindow : IDisposable
     private const float ResizeRing = 8;
     /// <summary>Drag mode for the scrollbar, which moves the list instead of the window.</summary>
     private const int ScrollDrag = 10;
+    /// <summary>Expands the code the pipeline reports into the sentence the panel shows; the
+    /// dashboard's errors.* copy carries the wording, and a code it does not know still gets the
+    /// generic failure instead of its raw name.</summary>
+    private static string RecognitionError(string code) =>
+        Messages.Has($"errors.recognition_{code}") ? Messages.Get($"errors.recognition_{code}") : Messages.Get("recognition.panel.failed");
     private readonly nint hwnd;
     private readonly OverlayRenderer renderer = new();
     private readonly RecognitionPanelAssets assets;
     private readonly Func<RecognitionSettings, Task> save;
-    private RecognitionSettings settings = new()
-    {
-        SchemaVersion = 1, OcrConfidence = 0.5, NameSimilarity = 0.65, TemplateSimilarity = 0.6,
-        CaptureWidth = 640, CaptureHeight = 640, AutoPush = true, TemplateMatching = true, TemplateStrict = false,
-        OcrUpscale = 2, OcrMinLength = 3, CandidateLimit = 8,
-        TemplateMinScale = 0.5, TemplateMaxScale = 1.8, IconWindowRatio = 1.6,
-        AutoClose = true, AutoCloseSeconds = 5, WindowWidth = 440, WindowHeight = 512,
-        Opacity = 100,
-    };
+    private RecognitionSettings settings = DefaultsValues.Recognition;
     private RecognitionResult? result;
     private bool loading;
     private bool placed;
@@ -65,6 +62,7 @@ internal sealed class RecognitionWindow : IDisposable
     internal bool Visible => visible;
 
     internal bool Loading => loading;
+    internal bool HasPendingSave => Volatile.Read(ref saveDirty) != 0 || Volatile.Read(ref saveQueued) != 0;
 
     internal void SetAssets(string? assetDirectory)
     {
@@ -405,13 +403,13 @@ internal sealed class RecognitionWindow : IDisposable
         var failed = result is { Error.Length: > 0 };
         // The title strip is just the window's name: the state belongs in the content area, where the
         // list would otherwise be.
-        var title = OverlayText.Get("recognition.title");
+        var title = Messages.Get("recognition.panel.title");
         var message = loading
-            ? OverlayText.Get("recognition.loading")
+            ? Messages.Get("recognition.panel.loading")
             : failed
-                ? OverlayText.RecognitionError(result!.Error)
+                ? RecognitionError(result!.Error)
                 : rows.Length == 0
-                    ? OverlayText.Get("recognition.empty")
+                    ? Messages.Get("recognition.panel.empty")
                     : "";
         // Prices stay neutral: the header says which market each column is, so colour would only add
         // noise. The two legs differ by their trader portrait, not by hue.
@@ -423,9 +421,9 @@ internal sealed class RecognitionWindow : IDisposable
         var columns = metrics.Columns(settings.WindowWidth);
         // The rasterizer works in logical pixels and multiplies by the DPI itself.
         var nameWrap = metrics.NameWrapWidth(columns.NameWidth);
-        var nameHeader = OverlayText.Get("recognition.name");
-        var traderHeader = OverlayText.Get("recognition.trader");
-        var fleaHeader = OverlayText.Get("recognition.flea");
+        var nameHeader = Messages.Get("recognition.panel.name");
+        var traderHeader = Messages.Get("recognition.panel.trader");
+        var fleaHeader = Messages.Get("recognition.panel.flea");
         var items = new List<RecognitionPanelItem>(rows.Length);
         var traderSlot = 0f;
         foreach (var row in rows)

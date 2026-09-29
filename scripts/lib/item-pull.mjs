@@ -5,6 +5,7 @@ import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { download } from './download.mjs';
+import { ContractSchemaVersion } from '../../contracts/version.gen.mjs';
 
 export const modes = ['pvp', 'pve', 'pvp-season'];
 const upstreamModes = { pvp: 'regular', pve: 'pve', 'pvp-season': 'pvp-season' };
@@ -425,7 +426,7 @@ export function buildCatalog(
     return result;
   };
   const catalog = (locale) => ({
-    schemaVersion: 1,
+    schemaVersion: ContractSchemaVersion,
     fetchedAt: '',
     mode,
     items: records(locale).map((record) => ({

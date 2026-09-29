@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	defaults "efttoolbox/backend/internal/defaults"
 	contracts "efttoolbox/contracts"
 )
 
@@ -25,17 +26,13 @@ func normalizeLanguage(value *contracts.UserSettings) {
 }
 
 func defaultUserSettings() contracts.UserSettings {
-	return contracts.UserSettings{
-		SchemaVersion: 1,
-		Overlay:       defaultOverlaySettings(),
-		GameMonitor:   defaultGameMonitorSettings(),
-		Recognition:   defaultRecognitionSettings(),
-		Language:      "zh-CN",
-	}
+	value := defaults.UserSettings()
+	value.GameMonitor = defaultGameMonitorSettings()
+	return value
 }
 
 func normalizeRecognition(v *contracts.RecognitionSettings) bool {
-	if v.SchemaVersion != 1 || !slices.Contains([]int{3, 5, 10, 15}, v.AutoCloseSeconds) {
+	if v.SchemaVersion != contracts.ContractSchemaVersion || !slices.Contains([]int{3, 5, 10, 15}, v.AutoCloseSeconds) {
 		return false
 	}
 	v.OcrConfidence = clampLimit(v.OcrConfidence, contracts.RecognitionSettingsLimits.OcrConfidence)
@@ -88,7 +85,7 @@ func readUserSettings(root string) (contracts.UserSettings, error) {
 	if decoder.Decode(new(any)) != io.EOF {
 		return *value, errUserSettingsInvalid
 	}
-	if value.SchemaVersion != 1 || !validGameMonitorSettings(value.GameMonitor) || !normalizeRecognition(&value.Recognition) {
+	if value.SchemaVersion != contracts.ContractSchemaVersion || !validGameMonitorSettings(value.GameMonitor) || !normalizeRecognition(&value.Recognition) {
 		return *value, errUserSettingsInvalid
 	}
 	return *value, nil
@@ -110,7 +107,7 @@ func (h *overlayHub) userSettings() (contracts.UserSettings, error) {
 
 func (h *overlayHub) prepareUserSettings(value *contracts.UserSettings, checkMode bool) (*modeRepository, string) {
 	normalizeLanguage(value)
-	if value.SchemaVersion != 1 || !validGameMonitorSettings(value.GameMonitor) || !normalizeRecognition(&value.Recognition) {
+	if value.SchemaVersion != contracts.ContractSchemaVersion || !validGameMonitorSettings(value.GameMonitor) || !normalizeRecognition(&value.Recognition) {
 		return nil, "game_monitor_settings_invalid"
 	}
 	if !h.normalize(&value.Overlay) {
@@ -126,19 +123,49 @@ func (h *overlayHub) prepareUserSettings(value *contracts.UserSettings, checkMod
 	return repo, ""
 }
 
-func (h *overlayHub) applyUserSettings(value contracts.UserSettings, operationID *string, overlayChanged, monitorChanged bool) error {
-	repo, code := h.prepareUserSettings(&value, monitorChanged)
-	if code != "" {
-		return errors.New(code)
+func (h *overlayHub) UpdateUserSettings(update func(*contracts.UserSettings) error) (contracts.UserSettings, string, string, error) {
+	return h.updateUserSettings("", update, false, false, nil, false, true)
+}
+
+func (h *overlayHub) updateUserSettings(expected string, update func(*contracts.UserSettings) error, requireExpected, repair bool, operationID *string, overlayChanged, monitorChanged bool) (contracts.UserSettings, string, string, error) {
+	fallback := defaultUserSettings()
+	var repo *modeRepository
+	var languageChanged bool
+	mutate := func(raw any) error {
+		value := raw.(*contracts.UserSettings)
+		previousLanguage := value.Language
+		if err := update(value); err != nil {
+			return err
+		}
+		languageChanged = value.Language != previousLanguage
+		var code string
+		repo, code = h.prepareUserSettings(value, monitorChanged)
+		if code != "" {
+			return errors.New(code)
+		}
+		return nil
 	}
+	var raw any
+	var revision, etag string
+	var err error
+	if requireExpected {
+		raw, revision, etag, err = h.store.files.CompareAndMutate(filepath.Join("user", "user-settings.json"), expected, &fallback, mutate)
+	} else {
+		if repair {
+			raw, revision, etag, err = h.store.files.MutateRepair(filepath.Join("user", "user-settings.json"), &fallback, mutate)
+		} else {
+			raw, revision, etag, err = h.store.files.Mutate(filepath.Join("user", "user-settings.json"), &fallback, mutate)
+		}
+	}
+	if err != nil {
+		return fallback, revision, etag, err
+	}
+	value := *raw.(*contracts.UserSettings)
 	h.mu.Lock()
+	mobile := h.mobile
 	oldMode := h.monitorSettings.Mode
 	oldLogDirectory := h.monitorSettings.LogDirectory
 	oldScreenshotDirectory := h.monitorSettings.ScreenshotDirectory
-	if err := h.store.saveGlobal("user-settings.json", value); err != nil {
-		h.mu.Unlock()
-		return err
-	}
 	if monitorChanged {
 		h.monitorSettings = value.GameMonitor
 		h.monitorStatus.Mode = value.GameMonitor.Mode
@@ -169,10 +196,25 @@ func (h *overlayHub) applyUserSettings(value contracts.UserSettings, operationID
 		h.publish(contracts.ServerEvent{Type: "game_monitor_changed", GameMonitorStatus: &h.monitorStatus, OperationId: operationID})
 	}
 	h.mu.Unlock()
+	// The phone follows the interface language; it only learns about it through the cast stream.
+	if languageChanged && mobile != nil {
+		mobile.publishSnapshot()
+	}
 	if monitorChanged && h.monitor != nil {
 		h.monitor.Apply(h.monitorConfig())
 	}
-	return nil
+	return value, revision, etag, nil
+}
+
+func (h *overlayHub) applyUserSettingsUpdate(expected string, update func(*contracts.UserSettings) error, operationID *string, overlayChanged, monitorChanged bool) (contracts.UserSettings, string, string, error) {
+	return h.updateUserSettings(expected, update, expected != "", false, operationID, overlayChanged, monitorChanged)
+}
+
+func (h *overlayHub) resetUserSettings(operationID *string) (contracts.UserSettings, string, string, error) {
+	return h.updateUserSettings("", func(value *contracts.UserSettings) error {
+		*value = defaultUserSettings()
+		return nil
+	}, false, true, operationID, true, true)
 }
 
 func userSettingsErrorCode(err error) string {

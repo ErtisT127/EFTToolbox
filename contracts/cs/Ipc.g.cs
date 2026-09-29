@@ -3,6 +3,11 @@
 using System.Text.Json.Serialization;
 namespace EFTToolbox.Contracts;
 
+public static class ContractVersions {
+  public const int ContractSchemaVersion = 1;
+  public const string ContractProtocolVersion = "1";
+}
+
 public sealed record Status {
   [JsonPropertyName("protocolVersion")] public string ProtocolVersion { get; init; } = "";
   [JsonPropertyName("appVersion")] public string AppVersion { get; init; } = "";
@@ -53,6 +58,7 @@ public sealed record ServerEvent {
   [JsonPropertyName("reason")] public string? Reason { get; init; } = null;
   [JsonPropertyName("preferences")] public Preferences? Preferences { get; init; } = null;
   [JsonPropertyName("filtersChanged")] public MobileFiltersChanged? FiltersChanged { get; init; } = null;
+  [JsonPropertyName("markerPreferences")] public MarkerPreferences? MarkerPreferences { get; init; } = null;
   [JsonPropertyName("overlaySettings")] public OverlaySettings? OverlaySettings { get; init; } = null;
   [JsonPropertyName("overlayView")] public OverlayView? OverlayView { get; init; } = null;
   [JsonPropertyName("overlayCommand")] public OverlayCommand? OverlayCommand { get; init; } = null;
@@ -62,6 +68,8 @@ public sealed record ServerEvent {
   [JsonPropertyName("recognitionRequest")] public RecognitionRequest? RecognitionRequest { get; init; } = null;
   [JsonPropertyName("recognitionResult")] public RecognitionResult? RecognitionResult { get; init; } = null;
   [JsonPropertyName("recognitionStart")] public RecognitionStart? RecognitionStart { get; init; } = null;
+  [JsonPropertyName("language")] public string? Language { get; init; } = null;
+  [JsonPropertyName("ownerId")] public string? OwnerId { get; init; } = null;
 }
 
 public sealed record ItemsCatalogItem {
@@ -545,6 +553,7 @@ public sealed record OverlayBootstrap {
   [JsonPropertyName("tileDirectory")] public string TileDirectory { get; init; } = "";
   [JsonPropertyName("tileManifestFile")] public string TileManifestFile { get; init; } = "";
   [JsonPropertyName("preferencesFile")] public string PreferencesFile { get; init; } = "";
+  [JsonPropertyName("markerPreferencesFile")] public string MarkerPreferencesFile { get; init; } = "";
   [JsonPropertyName("annotationsDirectory")] public string AnnotationsDirectory { get; init; } = "";
   [JsonPropertyName("overlaySettingsFile")] public string OverlaySettingsFile { get; init; } = "";
   [JsonPropertyName("stickersFile")] public string StickersFile { get; init; } = "";
@@ -629,11 +638,18 @@ public sealed record MultiplayerMember {
   [JsonPropertyName("state")] public string State { get; init; } = "";
 }
 
+public sealed record MultiplayerInvite {
+  [JsonPropertyName("mode")] public string Mode { get; init; } = "";
+  [JsonPropertyName("host")] public string Host { get; init; } = "";
+  [JsonPropertyName("stunServer")] public string? StunServer { get; init; } = null;
+  [JsonPropertyName("key")] public string Key { get; init; } = "";
+}
+
 public sealed record MultiplayerStatus {
   [JsonPropertyName("enabled")] public bool Enabled { get; init; } = default;
   [JsonPropertyName("role")] public string? Role { get; init; } = null;
   [JsonPropertyName("mode")] public string? Mode { get; init; } = null;
-  [JsonPropertyName("shareText")] public string? ShareText { get; init; } = null;
+  [JsonPropertyName("invite")] public MultiplayerInvite? Invite { get; init; } = null;
   [JsonPropertyName("port")] public int? Port { get; init; } = null;
   [JsonPropertyName("self")] public MultiplayerMember? Self { get; init; } = null;
   [JsonPropertyName("members")] public MultiplayerMember[]? Members { get; init; } = null;

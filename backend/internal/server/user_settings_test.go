@@ -26,6 +26,17 @@ func callLocalJSON(t *testing.T, handler http.Handler, method, path string, valu
 	request.RemoteAddr = "127.0.0.1:1234"
 	request.Host = "localhost"
 	request.Header.Set("Content-Type", "application/json")
+	if method == http.MethodPut || path == "/api/data/reset-user-settings" {
+		getPath := path
+		if path == "/api/data/reset-user-settings" {
+			getPath = "/api/user-settings"
+		}
+		get := httptest.NewRequest(http.MethodGet, getPath, nil)
+		get.RemoteAddr, get.Host = request.RemoteAddr, request.Host
+		current := httptest.NewRecorder()
+		handler.ServeHTTP(current, get)
+		request.Header.Set("If-Match", current.Header().Get("ETag"))
+	}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response

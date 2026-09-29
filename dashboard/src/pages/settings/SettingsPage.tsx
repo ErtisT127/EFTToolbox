@@ -1,28 +1,39 @@
 import { useEffect, useState } from 'react';
-import type { MapData, MapSummary } from '../../../../contracts/ts/ipc.gen';
+import { useSelector } from 'react-redux';
 import { useOverlay } from '../../stores/overlayStore';
 import { useGameMonitor } from '../../stores/gameMonitorStore';
 import { notices } from '../../stores/noticeStore';
 import {
   isUsableMapCatalog,
   isUsableMapData,
-  request,
   resetUserSettings,
 } from '../../stores/workspaceStore';
+import { api, useGetMapCatalogQuery, useGetMapQuery } from '../../stores/api';
+import { store as reduxStore } from '../../stores/store';
+import {
+  clearConflict,
+  pauseConflict,
+  setCalibrationPreferencesDraft,
+  setMapPreferencesDraft,
+  submitCalibrationPreferences,
+  submitMapPreferences,
+} from '../../stores/clientState';
+import type { RootState } from '../../stores/store';
 import { useLocale, type LocaleKey } from '../../hooks/useLocale';
+import { errorKeyOf } from '../../lib/errors';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { ErrorState } from '../../components/ErrorState';
 import { FileWarning } from 'lucide-react';
 import '../../styles/settings.css';
-import { DataLoadError } from '../../lib/errors';
 import { RecognitionSettingsTab } from './tabs/RecognitionSettingsTab';
 import { HotkeysSettingsTab } from './tabs/HotkeysSettingsTab';
 import { MapSettingsTab } from './tabs/MapSettingsTab';
 import { SystemSettingsTab } from './tabs/SystemSettingsTab';
+import { DataManagementTab } from './tabs/DataManagementTab';
 import { settingsTabs, type SettingsTab } from './types';
 
 export function SettingsPage({ initialTab }: { initialTab?: SettingsTab }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const store = useOverlay();
   const monitor = useGameMonitor();
   const value = store.settings;
@@ -38,86 +49,56 @@ export function SettingsPage({ initialTab }: { initialTab?: SettingsTab }) {
   useEffect(() => {
     if (initialTab) setTab(initialTab);
   }, [initialTab]);
-  const [catalog, setCatalog] = useState<MapSummary[]>([]);
-  const [map, setMap] = useState<MapData>();
+  const catalogQuery = useGetMapCatalogQuery(locale);
+  const catalog = isUsableMapCatalog(catalogQuery.data) ? catalogQuery.data : [];
+  const mapQuery = useGetMapQuery({ id: view?.mapId || '', locale }, { skip: !view?.mapId });
+  const map = isUsableMapData(mapQuery.data) ? mapQuery.data : undefined;
+  const mapPreferencesConflict = useSelector((state: RootState) =>
+    state.client.conflicts.find((item) => item.key === 'map-preferences'),
+  );
+  const calibrationPreferencesConflict = useSelector((state: RootState) =>
+    state.client.conflicts.find((item) => item.key === 'calibration-preferences'),
+  );
+  const gameMonitorConflict = useSelector((state: RootState) =>
+    state.client.conflicts.find((item) => item.key === 'game-monitor-settings'),
+  );
   const [mapId, setMapId] = useState('');
-  const [loadError, setLoadError] = useState('');
-  const [reloadToken, setReloadToken] = useState(0);
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetting, setResetting] = useState(false);
-  useEffect(() => {
-    let active = true;
-    void request<unknown>('/api/maps')
-      .then((next) => {
-        if (!isUsableMapCatalog(next)) throw new DataLoadError('errors.data_version', 'settings');
-        if (active) setCatalog(next);
-      })
-      .catch((error: unknown) => {
-        if (active)
-          setLoadError(error instanceof DataLoadError ? error.errorKey : 'errors.request_failed');
-      });
-    return () => {
-      active = false;
-    };
-  }, [reloadToken]);
-  useEffect(() => {
-    if (!view?.mapId) return;
-    const controller = new AbortController();
-    void request<unknown>(`/api/maps/${view.mapId}`, { signal: controller.signal })
-      .then((value) => {
-        if (!isUsableMapData(value)) throw new DataLoadError('errors.map_data_invalid', 'settings');
-        setLoadError('');
-        setMap(value);
-      })
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted)
-          setLoadError(error instanceof DataLoadError ? error.errorKey : 'errors.request_failed');
-      });
-    return () => controller.abort();
-  }, [reloadToken, view?.mapId]);
   useEffect(() => {
     if (monitor.error && monitor.error !== 'errors.user_settings_invalid')
       notices.push(t(monitor.error as LocaleKey));
   }, [monitor.error, t]);
   useEffect(() => {
-    if (view?.error) notices.push(t('settings.nativeError', { error: t(view.error as LocaleKey) }));
+    if (view?.error) notices.push(t('minimap.nativeError', { error: t(view.error as LocaleKey) }));
   }, [view?.error, t]);
   const retrySettingsLoad = () => {
     void store.load();
     void monitor.initialize();
   };
   const retrySettingsPage = () => {
-    setLoadError('');
-    setReloadToken((value) => value + 1);
+    void catalogQuery.refetch();
+    if (view?.mapId) void mapQuery.refetch();
     retrySettingsLoad();
   };
   const openUserSettingsDirectory = () => {
-    void fetch('/api/data/open-user-settings')
-      .then((response) => {
-        if (!response.ok) throw new Error('errors.data_directory_open_failed');
-      })
-      .catch((error: unknown) =>
-        notices.push(
-          t(
-            error instanceof Error
-              ? (error.message as LocaleKey)
-              : 'errors.data_directory_open_failed',
-          ),
-        ),
-      );
+    void reduxStore
+      .dispatch(api.endpoints.openDataDirectory.initiate('user-settings'))
+      .unwrap()
+      .catch(() => notices.push(t('errors.data_directory_open_failed')));
   };
   const resetSettings = () => {
     setConfirmReset(false);
     setResetting(true);
     void resetUserSettings()
-      .then(() => Promise.all([store.load(), monitor.initialize()]))
+      .then(() => Promise.all([store.load(true), monitor.initialize()]))
       .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : '';
+        const message = errorKeyOf(error, '');
         notices.push(
           t(
             (message === 'errors.user_settings_reset_failed'
-              ? 'settingsError.resetFailed'
-              : message || 'settingsError.resetFailed') as LocaleKey,
+              ? 'settings.pageError.resetFailed'
+              : message || 'settings.pageError.resetFailed') as LocaleKey,
           ),
         );
       })
@@ -127,23 +108,37 @@ export function SettingsPage({ initialTab }: { initialTab?: SettingsTab }) {
     settingsLoadError === 'errors.user_settings_invalid'
       ? [
           { label: t('common.retry'), onClick: retrySettingsPage },
-          { label: t('settingsError.openDirectory'), onClick: openUserSettingsDirectory },
+          { label: t('settings.pageError.openDirectory'), onClick: openUserSettingsDirectory },
           {
-            label: resetting ? t('settingsError.resetting') : t('settingsError.reset'),
+            label: resetting ? t('settings.pageError.resetting') : t('settings.pageError.reset'),
             onClick: () => setConfirmReset(true),
             danger: true,
           },
         ]
       : [{ label: t('common.retry'), onClick: retrySettingsPage }];
-  const pageError = settingsLoadError || loadError;
+  const mapLoadError =
+    !catalogQuery.isLoading && catalogQuery.isError
+      ? 'errors.request_failed'
+      : catalogQuery.data && !isUsableMapCatalog(catalogQuery.data)
+        ? 'errors.data_version'
+        : mapQuery.isError
+          ? 'errors.request_failed'
+          : mapQuery.data && !isUsableMapData(mapQuery.data)
+            ? 'errors.map_data_invalid'
+            : '';
+  const pageError = settingsLoadError || mapLoadError;
   const isUserSettingsInvalid = settingsLoadError === 'errors.user_settings_invalid';
   const pageErrorState = pageError ? (
     <ErrorState
       icon={FileWarning}
       tone={isUserSettingsInvalid ? 'data' : 'network'}
-      title={isUserSettingsInvalid ? t('settingsError.title') : t('settingsError.pageTitle')}
+      title={
+        isUserSettingsInvalid ? t('settings.pageError.title') : t('settings.pageError.pageTitle')
+      }
       description={
-        isUserSettingsInvalid ? t('settingsError.description') : t('settingsError.pageDescription')
+        isUserSettingsInvalid
+          ? t('settings.pageError.description')
+          : t('settings.pageError.pageDescription')
       }
       actions={settingsErrorActions}
     />
@@ -174,9 +169,14 @@ export function SettingsPage({ initialTab }: { initialTab?: SettingsTab }) {
                   document.getElementById(`settings-tab-${next}`)?.focus();
                 }}
               >
-                {t(`settings.${key}`)}
+                {t(`settings.tabs.${key}`)}
               </button>
             ))}
+            <div className="settings-tab-actions">
+              <button disabled={resetting} onClick={() => setConfirmReset(true)}>
+                {resetting ? t('settings.pageError.resetting') : t('settings.pageError.reset')}
+              </button>
+            </div>
           </aside>
           <div
             className="settings-content"
@@ -184,8 +184,111 @@ export function SettingsPage({ initialTab }: { initialTab?: SettingsTab }) {
             role="tabpanel"
             aria-labelledby={`settings-tab-${tab}`}
           >
-            <h1>{t(`settings.${tab}`)}</h1>
-            {tab === 'recognition' ? (
+            {mapPreferencesConflict && (
+              <div className="settings-conflict" role="alert">
+                <span>{t('errors.revision_conflict')}</span>
+                <button
+                  type="button"
+                  onClick={() => reduxStore.dispatch(pauseConflict('map-preferences'))}
+                >
+                  {t('errors.conflict_keep_local')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void reduxStore
+                      .dispatch(
+                        api.endpoints.getMapPreferences.initiate(undefined, { forceRefetch: true }),
+                      )
+                      .unwrap()
+                      .then(() => {
+                        reduxStore.dispatch(setMapPreferencesDraft(undefined));
+                        reduxStore.dispatch(clearConflict('map-preferences'));
+                      })
+                  }
+                >
+                  {t('errors.conflict_load_remote')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void reduxStore
+                      .dispatch(
+                        api.endpoints.getMapPreferences.initiate(undefined, { forceRefetch: true }),
+                      )
+                      .unwrap()
+                      .then(() => reduxStore.dispatch(submitMapPreferences()))
+                  }
+                >
+                  {t('errors.conflict_retry')}
+                </button>
+              </div>
+            )}
+            {calibrationPreferencesConflict && (
+              <div className="settings-conflict" role="alert">
+                <span>{t('errors.revision_conflict')}</span>
+                <button
+                  type="button"
+                  onClick={() => reduxStore.dispatch(pauseConflict('calibration-preferences'))}
+                >
+                  {t('errors.conflict_keep_local')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void reduxStore
+                      .dispatch(
+                        api.endpoints.getCalibrationPreferences.initiate(undefined, {
+                          forceRefetch: true,
+                        }),
+                      )
+                      .unwrap()
+                      .then(() => {
+                        reduxStore.dispatch(setCalibrationPreferencesDraft(undefined));
+                        reduxStore.dispatch(clearConflict('calibration-preferences'));
+                      })
+                  }
+                >
+                  {t('errors.conflict_load_remote')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void reduxStore
+                      .dispatch(
+                        api.endpoints.getCalibrationPreferences.initiate(undefined, {
+                          forceRefetch: true,
+                        }),
+                      )
+                      .unwrap()
+                      .then(() => reduxStore.dispatch(submitCalibrationPreferences()))
+                  }
+                >
+                  {t('errors.conflict_retry')}
+                </button>
+              </div>
+            )}
+            {gameMonitorConflict && (
+              <div className="settings-conflict" role="alert">
+                <span>{t('errors.revision_conflict')}</span>
+                <button
+                  type="button"
+                  onClick={() => reduxStore.dispatch(pauseConflict('game-monitor-settings'))}
+                >
+                  {t('errors.conflict_keep_local')}
+                </button>
+                <button type="button" onClick={() => monitor.discardConflict()}>
+                  {t('errors.conflict_load_remote')}
+                </button>
+                <button type="button" onClick={() => void monitor.retry()}>
+                  {t('errors.conflict_retry')}
+                </button>
+              </div>
+            )}
+            <h1>{t(`settings.tabs.${tab}`)}</h1>
+            {tab === 'data' ? (
+              <DataManagementTab />
+            ) : tab === 'recognition' ? (
               <RecognitionSettingsTab />
             ) : !value ? (
               <p>{t('common.loading')}</p>
@@ -221,9 +324,9 @@ export function SettingsPage({ initialTab }: { initialTab?: SettingsTab }) {
       )}
       <ConfirmDialog
         open={confirmReset}
-        title={t('settingsError.resetTitle')}
-        message={t('settingsError.resetConfirm')}
-        confirmLabel={t('settingsError.resetConfirmButton')}
+        title={t('settings.pageError.resetTitle')}
+        message={t('settings.pageError.resetConfirm')}
+        confirmLabel={t('settings.pageError.resetConfirmButton')}
         danger
         onConfirm={resetSettings}
         onCancel={() => setConfirmReset(false)}

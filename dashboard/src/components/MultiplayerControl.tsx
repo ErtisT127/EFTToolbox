@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
 import {
   ArrowLeft,
   ArrowUpDown,
@@ -14,23 +15,29 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import type {
-  MultiplayerHostRequest,
-  MultiplayerStatus,
-  StunProbeResult,
-  StunProbeResults,
-} from '../../../contracts/ts/ipc.gen';
+import type { MultiplayerHostRequest, MultiplayerStatus } from '../../../contracts/ts/ipc.gen';
 import { multiplayer, MultiplayerError, useMultiplayer } from '../stores/multiplayerStore';
+import { formatInviteText, parseInviteText, type ParsedInvite } from '../lib/invite';
 import { notices } from '../stores/noticeStore';
 import { reportThrottledFailure } from '../stores/workspaceStore';
 import { AppPopover } from './AppPopover';
 import { MemberList, memberRows, type MemberRow } from './MemberList';
 import { useLocale, type LocaleKey } from '../hooks/useLocale';
 import i18n from '../i18n';
+import {
+  api,
+  useCheckNatMutation,
+  useGetMultiplayerInterfacesQuery,
+  useGetStunServersQuery,
+  useProbeStunServersMutation,
+  useRefreshStunServersMutation,
+} from '../stores/api';
+import { store as reduxStore, type RootState } from '../stores/store';
+import { pauseConflict } from '../stores/clientState';
 
-// Backend multiplayer error codes → multiplayer.errors.* copy; the {{port}} placeholder is
+// Backend multiplayer error codes → errors.* copy; the {{port}} placeholder is
 // inferred over this key set.
-type MultiplayerErrorKey = Extract<LocaleKey, `multiplayer.errors.${string}`>;
+type MultiplayerErrorKey = Extract<LocaleKey, `errors.${string}`>;
 
 type View = 'root' | 'create' | 'join' | 'joinStun' | 'stun' | 'info' | 'confirm' | 'kickConfirm';
 type Probe = { state: 'probing' } | { state: 'done'; latencyMs?: number };
@@ -60,6 +67,12 @@ const randomKey = () => {
 export function MultiplayerControl() {
   const { t } = useLocale();
   const mp = useMultiplayer();
+  const identityConflict = useSelector((state: RootState) =>
+    state.client.conflicts.find((item) => item.key === 'multiplayer-settings'),
+  );
+  const markerConflict = useSelector((state: RootState) =>
+    state.client.conflicts.find((item) => item.key === 'marker-preferences'),
+  );
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>('root');
   const [pending, setPending] = useState(false);
@@ -74,13 +87,15 @@ export function MultiplayerControl() {
   const [stunJoinAddress, setStunJoinAddress] = useState('');
   const [stunJoinServer, setStunJoinServer] = useState('');
   const [stunJoinPassword, setStunJoinPassword] = useState('');
-  const [interfaces, setInterfaces] = useState<string[]>([]);
+  const [pasteInvite, setPasteInvite] = useState('');
   const [kickTarget, setKickTarget] = useState<MemberRow | null>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const triggerButton = useRef<HTMLButtonElement>(null);
   const dialog = useRef<HTMLElement>(null);
 
   const status = mp.status;
+  const interfacesQuery = useGetMultiplayerInterfacesQuery(undefined, { skip: !open });
+  const interfaces = useMemo(() => interfacesQuery.data?.addresses || [], [interfacesQuery.data]);
 
   useEffect(() => {
     void multiplayer.initialize();
@@ -98,25 +113,13 @@ export function MultiplayerControl() {
   }, [mp.selfName, mp.selfId, name, t]);
 
   useEffect(() => {
-    if (!open) return;
-    void fetch('/api/multiplayer/interfaces')
-      .then((response) => {
-        if (!response.ok) {
-          // The list is only a hint, so the panel still opens — but the failure is worth one record.
-          reportThrottledFailure('multiplayer_interfaces_failed', `interfaces ${response.status}`);
-          return { addresses: [] };
-        }
-        return response.json() as Promise<{ addresses: string[] }>;
-      })
-      .then((value: { addresses: string[] }) => {
-        setInterfaces(value.addresses || []);
-        // The first interface is the sensible default; never leave the field empty.
-        setAddress((current) => current || value.addresses[0] || '');
-      })
-      .catch((error: unknown) =>
-        reportThrottledFailure('multiplayer_interfaces_failed', String(error)),
-      );
-  }, [open]);
+    if (interfacesQuery.isError)
+      reportThrottledFailure('multiplayer_interfaces_failed', String(interfacesQuery.error));
+  }, [interfacesQuery.error, interfacesQuery.isError]);
+
+  useEffect(() => {
+    if (interfaces.length) setAddress((current) => current || interfaces[0]);
+  }, [interfaces]);
 
   const close = () => {
     setOpen(false);
@@ -165,7 +168,7 @@ export function MultiplayerControl() {
     if (view === 'root' || view === 'info' || view === 'confirm' || view === 'kickConfirm') {
       // No form to show an inline error on; the shared notice pipeline carries it.
       notices.push(
-        t(`multiplayer.errors.${code}` as MultiplayerErrorKey, { port: detail }),
+        t(`errors.${code}` as MultiplayerErrorKey, { port: detail }),
         undefined,
         'error',
       );
@@ -255,6 +258,23 @@ export function MultiplayerControl() {
     }
   };
 
+  // Pasting a host's invite fills the matching join form; STUN invites also switch the view.
+  const parsedInvite = useMemo(() => parseInviteText(pasteInvite.trim()), [pasteInvite]);
+  const applyParsedInvite = (parsed: ParsedInvite) => {
+    setError(null);
+    if (parsed.mode === 'stun') {
+      setStunJoinAddress(parsed.address);
+      if (parsed.stunServer) setStunJoinServer(parsed.stunServer);
+      setStunJoinPassword(parsed.key);
+      setView('joinStun');
+    } else {
+      setJoinAddress(parsed.address);
+      setJoinPort(parsed.port);
+      setJoinPassword(parsed.key);
+    }
+    setPasteInvite('');
+  };
+
   const kick = async () => {
     if (!kickTarget || pending) return;
     setPending(true);
@@ -271,13 +291,49 @@ export function MultiplayerControl() {
   };
 
   const identity = (
-    <IdentitySection
-      name={name}
-      selfName={mp.selfName}
-      selfColor={mp.selfColor}
-      onName={setName}
-      onSave={saveIdentity}
-    />
+    <>
+      {identityConflict && (
+        <div className="mp-error" role="alert">
+          <span>{t('errors.revision_conflict')}</span>
+          <button
+            type="button"
+            onClick={() => reduxStore.dispatch(pauseConflict('multiplayer-settings'))}
+          >
+            {t('errors.conflict_keep_local')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              mp.discardIdentityConflict();
+              void reduxStore.dispatch(
+                api.endpoints.getMultiplayerSettings.initiate(undefined, { forceRefetch: true }),
+              );
+            }}
+          >
+            {t('errors.conflict_load_remote')}
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              void mp
+                .retryIdentityConflict()
+                .catch(() =>
+                  notices.push(t('multiplayer.identitySaveFailed'), undefined, 'warning'),
+                )
+            }
+          >
+            {t('errors.conflict_retry')}
+          </button>
+        </div>
+      )}
+      <IdentitySection
+        name={name}
+        selfName={mp.selfName}
+        selfColor={mp.selfColor}
+        onName={setName}
+        onSave={saveIdentity}
+      />
+    </>
   );
 
   const title =
@@ -370,6 +426,30 @@ export function MultiplayerControl() {
               )}
               <h2>{title}</h2>
             </div>
+            {markerConflict && (
+              <div className="mp-error" role="alert">
+                <span>{t('errors.revision_conflict')}</span>
+                <button
+                  type="button"
+                  onClick={() => reduxStore.dispatch(pauseConflict('marker-preferences'))}
+                >
+                  {t('errors.conflict_keep_local')}
+                </button>
+                <button type="button" onClick={() => mp.discardMarkerConflict()}>
+                  {t('errors.conflict_load_remote')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void mp
+                      .retryMarkerConflict()
+                      .catch(() => notices.push(t('errors.preferences_save_failed')))
+                  }
+                >
+                  {t('errors.conflict_retry')}
+                </button>
+              </div>
+            )}
             {pending ? (
               <div className="mp-connecting">
                 <span className="spinner" />
@@ -461,7 +541,14 @@ export function MultiplayerControl() {
                   {t('multiplayer.createRoom')}
                 </button>
                 <div className="mp-divider" role="separator" />
-                <button className="mp-secondary" type="button" onClick={() => setView('stun')}>
+                <button
+                  className="mp-secondary"
+                  type="button"
+                  onClick={() => {
+                    setError(null);
+                    setView('stun');
+                  }}
+                >
                   {t('multiplayer.useStun')}
                 </button>
               </>
@@ -510,8 +597,32 @@ export function MultiplayerControl() {
                   {t('multiplayer.joinRoom')}
                 </button>
                 <div className="mp-divider" role="separator" />
-                <button className="mp-secondary" type="button" onClick={() => setView('joinStun')}>
+                <button
+                  className="mp-secondary"
+                  type="button"
+                  onClick={() => {
+                    setError(null);
+                    setView('joinStun');
+                  }}
+                >
                   {t('multiplayer.joinWithStun')}
+                </button>
+                <label htmlFor="mp-paste-invite">{t('multiplayer.pasteInvite')}</label>
+                <textarea
+                  id="mp-paste-invite"
+                  className="mp-paste-invite"
+                  rows={4}
+                  value={pasteInvite}
+                  onChange={(event) => setPasteInvite(event.target.value)}
+                  placeholder={t('multiplayer.pasteInvitePlaceholder')}
+                />
+                <button
+                  className="mp-secondary"
+                  type="button"
+                  disabled={!parsedInvite}
+                  onClick={() => parsedInvite && applyParsedInvite(parsedInvite)}
+                >
+                  {t('multiplayer.pasteParse')}
                 </button>
               </>
             ) : view === 'joinStun' ? (
@@ -560,7 +671,7 @@ export function MultiplayerControl() {
             ) : null}
             {error && view !== 'root' && view !== 'info' && view !== 'confirm' && (
               <p className="mp-error" role="alert">
-                {t(`multiplayer.errors.${error.code}` as MultiplayerErrorKey, {
+                {t(`errors.${error.code}` as MultiplayerErrorKey, {
                   port: error.detail,
                 })}
               </p>
@@ -784,26 +895,6 @@ function PasswordField({
 
 type InviteField = { kind: 'mode' | 'host' | 'stun' | 'password'; value: string };
 
-// The backend's share text is a stable positional format: header line, mode, host, an optional
-// STUN line, password. Parsing assigns kinds by order so the wire labels live in exactly one
-// place (the backend builder) and this side never hardcodes them.
-function parseInvite(shareText: string): InviteField[] {
-  const values = shareText
-    .split('\n')
-    .slice(1)
-    .map((line) => line.trim())
-    .filter((line) => line.includes(':'))
-    .map((line) => line.slice(line.indexOf(':') + 1).trim());
-  if (values.length < 3) return [];
-  const fields: InviteField[] = [
-    { kind: 'mode', value: values[0] },
-    { kind: 'host', value: values[1] },
-  ];
-  if (values.length === 4) fields.push({ kind: 'stun', value: values[2] });
-  fields.push({ kind: 'password', value: values[values.length - 1] });
-  return fields;
-}
-
 function InfoPanel({
   status,
   showMembersPanel,
@@ -819,7 +910,7 @@ function InfoPanel({
   onKick: (row: MemberRow) => void;
   onLeave: () => void;
 }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [copiedKey, setCopiedKey] = useState('');
   const copyLocked = useRef(false);
   const copyTimer = useRef<number | undefined>(undefined);
@@ -844,10 +935,16 @@ function InfoPanel({
     }
   };
 
-  const fields = useMemo(
-    () => (status.shareText ? parseInvite(status.shareText) : []),
-    [status.shareText],
-  );
+  const fields = useMemo<InviteField[]>(() => {
+    if (!status.invite) return [];
+    const fields: InviteField[] = [
+      { kind: 'mode', value: status.invite.mode },
+      { kind: 'host', value: status.invite.host },
+    ];
+    if (status.invite.stunServer) fields.push({ kind: 'stun', value: status.invite.stunServer });
+    fields.push({ kind: 'password', value: status.invite.key });
+    return fields;
+  }, [status.invite]);
   const fieldLabel = (field: InviteField) =>
     t(
       field.kind === 'mode'
@@ -860,26 +957,12 @@ function InfoPanel({
     );
   const fieldValue = (field: InviteField) =>
     field.kind === 'mode'
-      ? field.value === 'STUN'
+      ? field.value === 'stun'
         ? t('multiplayer.stunTitle')
         : t('multiplayer.lanMode')
       : field.value;
 
-  // The clipboard copy rebuilds the share text with the labels of the current language; the wire
-  // format stays positional, so text copied in either language reads natively and copies over the
-  // same fields. A share text the parser could not read falls back to the backend's original.
-  const localizedShareText = () => {
-    if (!status.shareText || !fields.length) return status.shareText || '';
-    const value = (kind: InviteField['kind']) =>
-      fields.find((field) => field.kind === kind)?.value ?? '';
-    return [
-      t('multiplayer.shareHeader'),
-      `${t('multiplayer.invite.mode')}: ${value('mode') === 'STUN' ? t('multiplayer.stunTitle') : t('multiplayer.lanMode')}`,
-      `${t('multiplayer.invite.host')}: ${value('host')}`,
-      ...(value('stun') ? [`${t('multiplayer.invite.stun')}: ${value('stun')}`] : []),
-      `${t('multiplayer.invite.password')}: ${value('password')}`,
-    ].join('\n');
-  };
+  const localizedShareText = () => (status.invite ? formatInviteText(status.invite, locale) : '');
 
   const rows = memberRows(status);
   return (
@@ -891,7 +974,7 @@ function InfoPanel({
             <button
               type="button"
               className="mp-copy-inline mp-copy-all"
-              disabled={!status.shareText || copiedKey === 'all'}
+              disabled={!status.invite || copiedKey === 'all'}
               onClick={() => void copyText('all', localizedShareText())}
             >
               {copiedKey === 'all' ? <Check size={13} /> : <Copy size={13} />}
@@ -918,7 +1001,9 @@ function InfoPanel({
               )}
             </div>
           ))}
-          {!fields.length && status.shareText && <pre className="mp-share">{status.shareText}</pre>}
+          {!fields.length && status.invite && (
+            <pre className="mp-share">{localizedShareText()}</pre>
+          )}
         </div>
       )}
       <label className="mp-check-row">
@@ -1005,6 +1090,10 @@ type StunEntry = { server: string; probe?: Probe };
 
 function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequest>) => void }) {
   const { t } = useLocale();
+  const { data: stunList, error: stunError } = useGetStunServersQuery();
+  const [probeStun] = useProbeStunServersMutation();
+  const [refreshStun] = useRefreshStunServersMutation();
+  const [checkNatMutation] = useCheckNatMutation();
   const [servers, setServers] = useState<StunEntry[]>([]);
   const [selected, setSelected] = useState('');
   const [nat, setNat] = useState<'cone' | 'symmetric' | 'unknown' | null>(null);
@@ -1016,26 +1105,23 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
   const [probingAll, setProbingAll] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const selectedRow = useRef<HTMLLIElement>(null);
+  const alive = useRef(true);
 
   useEffect(() => {
-    void fetch('/api/multiplayer/stun/servers')
-      .then((response) => {
-        if (!response.ok) {
-          reportThrottledFailure(
-            'multiplayer_stun_servers_failed',
-            `stun servers ${response.status}`,
-          );
-          return { servers: [] };
-        }
-        return response.json() as Promise<{ servers: string[] }>;
-      })
-      .then((value: { servers: string[] }) =>
-        setServers((value.servers || []).map((server) => ({ server }))),
-      )
-      .catch((error: unknown) =>
-        reportThrottledFailure('multiplayer_stun_servers_failed', String(error)),
-      );
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
   }, []);
+
+  useEffect(() => {
+    if (stunError) reportThrottledFailure('multiplayer_stun_servers_failed', String(stunError));
+    if (!stunList) return;
+    setServers((current) => {
+      const probes = new Map(current.map((entry) => [entry.server, entry.probe]));
+      return stunList.servers.map((server) => ({ server, probe: probes.get(server) }));
+    });
+  }, [stunList, stunError]);
 
   useEffect(() => {
     if (!searchOpen) return;
@@ -1051,19 +1137,10 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
     );
     // Progressive chunks keep the UI filling in without one huge burst on the network.
     for (let index = 0; index < targets.length; index += ProbeChunk) {
+      if (!alive.current) return;
       const chunk = targets.slice(index, index + ProbeChunk);
       try {
-        const response = await fetch('/api/multiplayer/stun/probe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ servers: chunk }),
-        });
-        if (!response.ok) {
-          reportThrottledFailure('multiplayer_stun_probe_failed', `stun probe ${response.status}`);
-        }
-        const results: StunProbeResult[] = response.ok
-          ? ((await response.json()) as StunProbeResults).results
-          : chunk.map((server) => ({ server }));
+        const { results } = await probeStun({ servers: chunk }).unwrap();
         setServers((current) =>
           current.map((entry) => {
             const result = results.find((r) => r.server === entry.server);
@@ -1104,9 +1181,7 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
     if (downloading) return;
     setDownloading(true);
     try {
-      const response = await fetch('/api/multiplayer/stun/refresh', { method: 'POST' });
-      if (!response.ok) throw new Error('download');
-      const value = (await response.json()) as { servers: string[] };
+      const value = await refreshStun().unwrap();
       const fresh = value.servers || [];
       setServers((current) => {
         const probed = new Map(
@@ -1128,9 +1203,7 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
     if (natPending) return;
     setNatPending(true);
     try {
-      const response = await fetch('/api/multiplayer/nat-check', { method: 'POST' });
-      if (!response.ok) throw new Error(`nat-check ${response.status}`);
-      const value = (await response.json()) as { kind: 'cone' | 'symmetric' | 'unknown' };
+      const value = await checkNatMutation().unwrap();
       setNat(value.kind);
     } catch (error) {
       reportThrottledFailure('multiplayer_nat_check_failed', String(error));

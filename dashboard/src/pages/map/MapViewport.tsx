@@ -13,6 +13,8 @@ type Props = {
   onMount: (map: L.Map) => () => void;
   onError?: (error: string) => void;
   onProgress?: (value: number) => void;
+  onTileBusy?: (busy: boolean) => void;
+  readOnly?: boolean;
 };
 
 // The only owner of Leaflet and basemap lifetime. Feature layers attach via onMount.
@@ -105,7 +107,7 @@ export function MapViewport(props: Props) {
           L.svgOverlay(svg, bounds, { pane: 'base', interactive: false }).addTo(map);
           current.current.onProgress?.(70);
           setReady((n) => n + 1);
-          requestAnimationFrame(() => current.current.onProgress?.(95));
+          requestAnimationFrame(() => current.current.onProgress?.(92));
         })
         .catch((e) => {
           if (!controller.signal.aborted) {
@@ -124,7 +126,7 @@ export function MapViewport(props: Props) {
     observer.observe(host);
     current.current.onProgress?.(40);
     setReady((n) => n + 1);
-    if (!data.svgUrl && !data.tiles.length) current.current.onProgress?.(95);
+    if (!data.svgUrl && !data.tiles.length) current.current.onProgress?.(92);
     return () => {
       controller.abort();
       observer.disconnect();
@@ -160,6 +162,18 @@ export function MapViewport(props: Props) {
     const active = data.tiles.find((tile) => tile.floorId === preference.floorId);
     const base = data.tiles.find((tile) => tile.floorId === data.baseFloor) || data.tiles[0];
     let tileErrorReported = false;
+    let busyLayers = 0;
+    let tileBusy = false;
+    const reportTileBusy = (busy: boolean) => {
+      if (busy === tileBusy) return;
+      tileBusy = busy;
+      current.current.onTileBusy?.(busy);
+    };
+    // A read-only viewport is driven by touch, so new tiles wait for the gesture to settle. Leaflet
+    // would otherwise fetch a fresh batch for every integer zoom level a pinch crosses.
+    const deferred = current.current.readOnly
+      ? { updateWhenIdle: true, updateWhenZooming: false, keepBuffer: 3 }
+      : {};
     for (const tile of [base, ...(active && active !== base ? [active] : [])]) {
       if (!tile) continue;
       current.current.onProgress?.(76);
@@ -173,7 +187,17 @@ export function MapViewport(props: Props) {
         noWrap: true,
         bounds: L.latLngBounds(tile.bounds.map(latLng)),
         opacity: tile === base && preference.floorId !== base.floorId ? 0.2 : 1,
+        ...deferred,
       })
+        .on('loading', () => {
+          busyLayers += 1;
+          reportTileBusy(true);
+        })
+        .on('load', () => {
+          busyLayers = Math.max(0, busyLayers - 1);
+          reportTileBusy(busyLayers > 0);
+          requestAnimationFrame(() => current.current.onProgress?.(92));
+        })
         .on('tileloadstart', () => current.current.onProgress?.(78))
         .on('tileload', () => current.current.onProgress?.(90))
         .on('tileerror', () => {
@@ -182,11 +206,11 @@ export function MapViewport(props: Props) {
           current.current.onProgress?.(90);
           notices.push(t('map.canvas.tileFailed'), undefined, 'warning');
         })
-        .on('load', () => requestAnimationFrame(() => current.current.onProgress?.(95)))
         .addTo(group);
     }
     return () => {
       group.clearLayers();
+      reportTileBusy(false);
     };
   }, [data, preference.floorId, raster, ready, t]);
   useEffect(() => {

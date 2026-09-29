@@ -53,7 +53,7 @@ func TestHTTPAndWebSocket(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&status); err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != http.StatusOK || status.ProtocolVersion != ProtocolVersion || status.AppVersion != "test-version" {
+	if response.StatusCode != http.StatusOK || status.ProtocolVersion != contracts.ContractProtocolVersion || status.AppVersion != "test-version" {
 		t.Fatalf("unexpected status: %+v", status)
 	}
 	if _, err := time.Parse(time.RFC3339Nano, status.StartedAt); err != nil {

@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	defaults "efttoolbox/backend/internal/defaults"
 	contracts "efttoolbox/contracts"
 
 	"github.com/pion/ice/v4"
@@ -51,8 +52,6 @@ const (
 	memberStateUnstable  = "unstable"
 	memberStateLost      = "lost"
 
-	defaultPlayerColor = "#d4a24e"
-
 	positionSendInterval    = 400 * time.Millisecond
 	positionBufferLimit     = 64 << 10
 	annotationSendDebounce  = 300 * time.Millisecond
@@ -62,6 +61,13 @@ const (
 )
 
 var regexpPeerID = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+// errAnnotationsInvalid marks a client-caused validation failure inside the multiplayer
+// annotation merge, so callers keep returning 400 instead of a save-failure 500.
+var errAnnotationsInvalid = errors.New("annotations_invalid")
+
+// errMultiplayerResetInRoom reports that multiplayer data cannot reset while a room is active.
+var errMultiplayerResetInRoom = errors.New("multiplayer_reset_in_room")
 
 // apiFailure carries a user-presentable error code (plus an optional detail token) out of the
 // room lifecycle so the dashboard can render a concrete reason instead of a generic failure.
@@ -123,6 +129,7 @@ type multiplayerManager struct {
 	lifeMu sync.Mutex // serializes host/join/leave
 
 	settingsSaveMu sync.Mutex
+	peerSaveMu     sync.Mutex
 
 	mu         sync.Mutex
 	settings   contracts.MultiplayerSettings
@@ -131,7 +138,7 @@ type multiplayerManager struct {
 	mode       string
 	stunServer string
 	key        string
-	shareText  string
+	invite     *contracts.MultiplayerInvite
 	port       int
 	signal     *signalListener
 	stun       *stunListener
@@ -143,6 +150,7 @@ type multiplayerManager struct {
 	stunServers    []string
 	stunNatServers []string
 	stunListMutex  sync.Mutex
+	stunRefreshMu  sync.Mutex
 
 	annoMu     sync.Mutex
 	remoteDocs map[string]map[string][]contracts.Annotation
@@ -208,7 +216,7 @@ func derivePeerID() string {
 }
 
 func validMultiplayerSettings(value contracts.MultiplayerSettings) bool {
-	if value.SchemaVersion != 1 || !regexpPeerID.MatchString(value.PlayerId) || len(value.PlayerName) > 40 || !hexColor.MatchString(value.PlayerColor) {
+	if value.SchemaVersion != contracts.ContractSchemaVersion || !regexpPeerID.MatchString(value.PlayerId) || len(value.PlayerName) > 40 || !hexColor.MatchString(value.PlayerColor) {
 		return false
 	}
 	if value.LastMode != nil && *value.LastMode != multiplayerModeCustom && *value.LastMode != multiplayerModeStun {
@@ -250,8 +258,17 @@ func (m *multiplayerManager) identityPath() string {
 	return filepath.Join(m.store.root, "user", "multiplayer-id.json")
 }
 
+func newIdentity() identityFile {
+	base := derivePeerID()
+	if base == "" {
+		base = randomToken16()
+	}
+	sum := sha256.Sum256([]byte(base + ":" + randomToken16()))
+	return identityFile{PeerID: hex.EncodeToString(sum[:8])}
+}
+
 func (m *multiplayerManager) loadSettings() {
-	value := contracts.MultiplayerSettings{SchemaVersion: 1, PlayerColor: defaultPlayerColor}
+	value := defaults.MultiplayerSettings()
 	if data, err := os.ReadFile(m.settingsPath()); err == nil {
 		var loaded contracts.MultiplayerSettings
 		if json.Unmarshal(data, &loaded) == nil && validMultiplayerSettings(loaded) {
@@ -261,12 +278,7 @@ func (m *multiplayerManager) loadSettings() {
 	var identity identityFile
 	_ = readJSON(m.identityPath(), &identity)
 	if !regexpPeerID.MatchString(identity.PeerID) {
-		base := derivePeerID()
-		if base == "" {
-			base = randomToken16()
-		}
-		sum := sha256.Sum256([]byte(base + ":" + randomToken16()))
-		identity.PeerID = hex.EncodeToString(sum[:8])
+		identity = newIdentity()
 		// Best effort: a fresh install persists its identity immediately; failure only delays
 		// stability to the first settings save.
 		if err := m.store.saveGlobal("multiplayer-id.json", identity); err != nil {
@@ -278,14 +290,58 @@ func (m *multiplayerManager) loadSettings() {
 		value.PlayerName = "玩家-" + value.PlayerId[:4]
 	}
 	if value.PlayerColor == "" {
-		value.PlayerColor = defaultPlayerColor
+		value.PlayerColor = defaults.MultiplayerSettings().PlayerColor
 	}
 	m.mu.Lock()
 	m.settings = value
-	m.mu.Unlock()
-	m.mu.Lock()
 	m.knownPeers = m.readPeersFile()
 	m.mu.Unlock()
+}
+
+func (m *multiplayerManager) resetData() error {
+	m.lifeMu.Lock()
+	defer m.lifeMu.Unlock()
+	m.settingsSaveMu.Lock()
+	defer m.settingsSaveMu.Unlock()
+	m.peerSaveMu.Lock()
+	defer m.peerSaveMu.Unlock()
+	m.stunRefreshMu.Lock()
+	defer m.stunRefreshMu.Unlock()
+	m.mu.Lock()
+	if m.role != "" {
+		m.mu.Unlock()
+		return errMultiplayerResetInRoom
+	}
+	m.mu.Unlock()
+
+	identity := newIdentity()
+	settings := defaults.MultiplayerSettings()
+	settings.PlayerId = identity.PeerID
+	settings.PlayerName = "玩家-" + identity.PeerID[:4]
+	peers := map[string]peerRecord{}
+	servers, natServers := defaults.StunServers(), defaults.StunNatServers()
+	if err := m.store.saveGlobal("multiplayer-id.json", identity); err != nil {
+		return err
+	}
+	if err := m.store.saveGlobal("multiplayer.json", settings); err != nil {
+		return err
+	}
+	if err := m.store.saveGlobal("multiplayer-peers.json", peers); err != nil {
+		return err
+	}
+	if err := m.store.saveGlobal("multiplayer-stun.json", stunCache{SchemaVersion: contracts.ContractSchemaVersion, Servers: servers, NatServers: natServers}); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.settings = settings
+	m.knownPeers = peers
+	m.mu.Unlock()
+	m.stunListMutex.Lock()
+	m.stunServers = servers
+	m.stunNatServers = natServers
+	m.stunListMutex.Unlock()
+	m.publishStatus()
+	return nil
 }
 
 func (m *multiplayerManager) saveSettings(value contracts.MultiplayerSettings) error {
@@ -340,6 +396,8 @@ func (m *multiplayerManager) recordPeer(id, name, color, role string) {
 	if id == "" || name == "" {
 		return
 	}
+	m.peerSaveMu.Lock()
+	defer m.peerSaveMu.Unlock()
 	m.mu.Lock()
 	m.knownPeers[id] = peerRecord{Name: name, Color: color, Role: role, LastSeen: time.Now().UTC().Format(time.RFC3339Nano)}
 	snapshot := make(map[string]peerRecord, len(m.knownPeers))
@@ -384,7 +442,7 @@ func (m *multiplayerManager) host(req contracts.MultiplayerHostRequest) (contrac
 		udpConn  *net.UDPConn
 		bindIP   net.IP
 		bindPort int
-		public   string
+		mapped   *net.UDPAddr
 		lf       *apiFailure
 	)
 	switch mode {
@@ -401,18 +459,26 @@ func (m *multiplayerManager) host(req contracts.MultiplayerHostRequest) (contrac
 		if stunServer == "" {
 			return contracts.MultiplayerStatus{}, fail(http.StatusBadRequest, "multiplayer_stun_required")
 		}
-		udpConn, public, lf = bindStunSignaling(stunServer)
+		udpConn, mapped, lf = bindStunSignaling(stunServer)
 		if lf != nil {
 			return contracts.MultiplayerStatus{}, lf
 		}
 		bindPort = udpConn.LocalAddr().(*net.UDPAddr).Port
 	}
 
-	advertised := bindIP.String()
-	if public != "" {
-		advertised = public
+	invite := &contracts.MultiplayerInvite{Key: key, Mode: mode}
+	if mode == multiplayerModeStun {
+		// The STUN signaler receives packets on the NAT-mapped public socket, so the invite
+		// advertises the mapped address; appending the local bind port again would be unjoinable.
+		invite.Host = net.JoinHostPort(mapped.IP.String(), strconv.Itoa(mapped.Port))
+		// Status reports the advertised endpoint, not the local ephemeral bind port.
+		bindPort = mapped.Port
+	} else {
+		invite.Host = net.JoinHostPort(bindIP.String(), strconv.Itoa(bindPort))
 	}
-	share := buildShareText(mode, net.JoinHostPort(advertised, strconv.Itoa(bindPort)), stunServer, key)
+	if stunServer != "" {
+		invite.StunServer = &stunServer
+	}
 
 	m.mu.Lock()
 	if mode == multiplayerModeCustom {
@@ -424,7 +490,7 @@ func (m *multiplayerManager) host(req contracts.MultiplayerHostRequest) (contrac
 	m.mode = mode
 	m.stunServer = stunServer
 	m.key = key
-	m.shareText = share
+	m.invite = invite
 	m.port = bindPort
 	m.roster = nil
 	m.mu.Unlock()
@@ -436,15 +502,36 @@ func (m *multiplayerManager) host(req contracts.MultiplayerHostRequest) (contrac
 }
 
 func (m *multiplayerManager) persistLastUsed(mode, address, port, key, stunServer string) {
-	m.mu.Lock()
-	settings := m.settings
-	m.mu.Unlock()
-	settings.LastMode = stringPtr(mode)
-	settings.LastAddress = stringPtr(address)
-	settings.LastPort = stringPtr(port)
-	settings.LastKey = stringPtr(key)
-	settings.LastStun = stringPtr(stunServer)
-	_ = m.saveSettings(settings)
+	// This background update must merge with the current file contents. Reading the
+	// in-memory snapshot here could overwrite a concurrent conditional REST update.
+	m.settingsSaveMu.Lock()
+	defer m.settingsSaveMu.Unlock()
+	value, _, _, err := m.store.files.Mutate(filepath.Join("user", "multiplayer.json"), defaults.MultiplayerSettings(), func(raw any) error {
+		settings, ok := raw.(*contracts.MultiplayerSettings)
+		if !ok {
+			return errors.New("multiplayer_settings_invalid")
+		}
+		m.mu.Lock()
+		settings.PlayerId = m.settings.PlayerId
+		m.mu.Unlock()
+		settings.LastMode = stringPtr(mode)
+		settings.LastAddress = stringPtr(address)
+		settings.LastPort = stringPtr(port)
+		settings.LastKey = stringPtr(key)
+		settings.LastStun = stringPtr(stunServer)
+		if !validMultiplayerSettings(*settings) {
+			return errors.New("multiplayer_settings_invalid")
+		}
+		return nil
+	})
+	if err != nil {
+		return
+	}
+	if settings, ok := value.(*contracts.MultiplayerSettings); ok {
+		m.mu.Lock()
+		m.settings = *settings
+		m.mu.Unlock()
+	}
 }
 
 func (m *multiplayerManager) capacityAvailable() bool {
@@ -475,7 +562,7 @@ func (m *multiplayerManager) join(req contracts.MultiplayerJoinRequest) (contrac
 			return contracts.MultiplayerStatus{}, fail(http.StatusBadRequest, "multiplayer_share_invalid")
 		}
 	case multiplayerModeStun:
-		// The STUN share text carries the host's public address as ip:port.
+		// The STUN invite carries the host's public address as ip:port.
 		host, _, splitErr := net.SplitHostPort(address)
 		if stunServer == "" || splitErr != nil || net.ParseIP(host) == nil {
 			return contracts.MultiplayerStatus{}, fail(http.StatusBadRequest, "multiplayer_share_invalid")
@@ -542,7 +629,7 @@ func (m *multiplayerManager) leave() {
 	m.mode = ""
 	m.stunServer = ""
 	m.key = ""
-	m.shareText = ""
+	m.invite = nil
 	m.port = 0
 	m.signal = nil
 	m.stun = nil
@@ -557,7 +644,7 @@ func (m *multiplayerManager) leave() {
 	if stun != nil {
 		stun.close()
 	}
-	bye := mustJSON(wireEnvelope{Type: "bye"})
+	bye := mustJSON(wireEnvelope{Type: contracts.WireTypeBye})
 	for _, peer := range peers {
 		sendWire(peer, bye)
 		peer.close()
@@ -674,7 +761,7 @@ func (m *multiplayerManager) tick() {
 	}
 	var rosterFrame []byte
 	if m.role == multiplayerRoleHost {
-		rosterFrame = mustJSON(wireEnvelope{Type: "roster", Data: mustJSON(wireRoster{Members: m.rosterMembersLocked()})})
+		rosterFrame = mustJSON(wireEnvelope{Type: contracts.WireTypeRoster, Data: mustJSON(wireRoster{Members: m.rosterMembersLocked()})})
 	}
 	m.mu.Unlock()
 
@@ -691,7 +778,7 @@ func (m *multiplayerManager) sendPingLocked(peer *multiplayerPeer, now time.Time
 	if peer.ctl == nil || peer.ctl.ReadyState() != webrtc.DataChannelStateOpen {
 		return
 	}
-	sendWire(peer, mustJSON(wireEnvelope{Type: "ping", Data: mustJSON(wirePing{T: now.UnixMilli()})}))
+	sendWire(peer, mustJSON(wireEnvelope{Type: contracts.WireTypePing, Data: mustJSON(wirePing{T: now.UnixMilli()})}))
 }
 
 // dropPeer removes one peer. For a guest whose peer is the host this ends the whole room, since
@@ -790,9 +877,8 @@ func (m *multiplayerManager) status() contracts.MultiplayerStatus {
 	status.Role = &role
 	status.Mode = &mode
 	if m.role == multiplayerRoleHost {
-		share := m.shareText
 		port := m.port
-		status.ShareText = &share
+		status.Invite = m.invite
 		status.Port = &port
 	}
 	self := contracts.MultiplayerMember{
@@ -876,14 +962,7 @@ func (m *multiplayerManager) onEvent(event contracts.ServerEvent) {
 
 // positions: latest-wins throttle on an unreliable channel; a frame is always expendable.
 
-type wirePos struct {
-	PeerID  string  `json:"peerId"`
-	MapID   string  `json:"mapId"`
-	X       float64 `json:"x"`
-	Y       float64 `json:"y"`
-	Z       float64 `json:"z"`
-	Heading float64 `json:"heading"`
-}
+type wirePos = contracts.WirePos
 
 func (m *multiplayerManager) schedulePosition(player *contracts.PlayerState) {
 	m.posMu.Lock()
@@ -905,8 +984,8 @@ func (m *multiplayerManager) flushPosition() {
 	if player == nil {
 		return
 	}
-	frame := mustJSON(wireEnvelope{Type: "pos", Data: mustJSON(wirePos{
-		PeerID: m.selfID(), MapID: player.MapId,
+	frame := mustJSON(wireEnvelope{Type: contracts.WireTypePos, Data: mustJSON(wirePos{
+		PeerId: m.selfID(), MapId: player.MapId,
 		X: player.WorldPosition.X, Y: player.WorldPosition.Y, Z: player.WorldPosition.Z,
 		Heading: player.Heading,
 	})})
@@ -920,8 +999,8 @@ func (m *multiplayerManager) sendSelfPosition(peer *multiplayerPeer) {
 	if !ok {
 		return
 	}
-	frame := mustJSON(wireEnvelope{Type: "pos", Data: mustJSON(wirePos{
-		PeerID: m.selfID(), MapID: self.MapId,
+	frame := mustJSON(wireEnvelope{Type: contracts.WireTypePos, Data: mustJSON(wirePos{
+		PeerId: m.selfID(), MapId: self.MapId,
 		X: self.WorldPosition.X, Y: self.WorldPosition.Y, Z: self.WorldPosition.Z,
 		Heading: self.Heading,
 	})})
@@ -931,7 +1010,7 @@ func (m *multiplayerManager) sendSelfPosition(peer *multiplayerPeer) {
 func (m *multiplayerManager) handlePosMessage(peer *multiplayerPeer, data []byte) {
 	// Position frames ride the same JSON envelope as control frames, one level nested.
 	var envelope wireEnvelope
-	if json.Unmarshal(data, &envelope) != nil || envelope.Type != "pos" {
+	if json.Unmarshal(data, &envelope) != nil || envelope.Type != contracts.WireTypePos {
 		log.Printf("multiplayer position rejected: peer=%s reason=envelope_invalid", safePeerLogID(peer.id))
 		return
 	}
@@ -940,27 +1019,27 @@ func (m *multiplayerManager) handlePosMessage(peer *multiplayerPeer, data []byte
 		log.Printf("multiplayer position rejected: peer=%s reason=payload_invalid", safePeerLogID(peer.id))
 		return
 	}
-	if frame.MapID == "" || len(frame.MapID) > 100 || !safeID.MatchString(frame.MapID) ||
+	if frame.MapId == "" || len(frame.MapId) > 100 || !safeID.MatchString(frame.MapId) ||
 		!finite(frame.X) || !finite(frame.Y) || !finite(frame.Z) || math.Abs(frame.X) > 1e7 || math.Abs(frame.Y) > 1e7 || math.Abs(frame.Z) > 1e7 || !finite(frame.Heading) || math.Abs(frame.Heading) > 1e7 {
-		log.Printf("multiplayer position rejected: peer=%s reason=values_invalid map=%s", safePeerLogID(peer.id), frame.MapID)
+		log.Printf("multiplayer position rejected: peer=%s reason=values_invalid map=%s", safePeerLogID(peer.id), frame.MapId)
 		return
 	}
 	m.mu.Lock()
 	role, selfID := m.role, m.settings.PlayerId
 	m.mu.Unlock()
-	if role == "" || frame.PeerID == selfID {
+	if role == "" || frame.PeerId == selfID {
 		return
 	}
 	if role == multiplayerRoleHost {
 		// The host attributes a position frame to the connection it arrived on.
-		frame.PeerID = peer.id
+		frame.PeerId = peer.id
 		m.relayPos(peer, frame)
 	}
 	name, color := peer.name, peer.color
 	if role == multiplayerRoleGuest {
-		name, color = m.rosterIdentity(frame.PeerID, name, color)
+		name, color = m.rosterIdentity(frame.PeerId, name, color)
 	}
-	m.hub.applyRemotePlayer(frame.PeerID, name, color, frame.MapID, contracts.WorldPosition{X: frame.X, Y: frame.Y, Z: frame.Z}, frame.Heading)
+	m.hub.applyRemotePlayer(frame.PeerId, name, color, frame.MapId, contracts.WorldPosition{X: frame.X, Y: frame.Y, Z: frame.Z}, frame.Heading)
 }
 
 func safePeerLogID(id string) string {
@@ -971,7 +1050,7 @@ func safePeerLogID(id string) string {
 }
 
 func (m *multiplayerManager) relayPos(from *multiplayerPeer, frame wirePos) {
-	m.broadcastPosExcept(from, mustJSON(wireEnvelope{Type: "pos", Data: mustJSON(frame)}))
+	m.broadcastPosExcept(from, mustJSON(wireEnvelope{Type: contracts.WireTypePos, Data: mustJSON(frame)}))
 }
 
 func (m *multiplayerManager) rosterIdentity(id, fallbackName, fallbackColor string) (string, string) {
@@ -1056,7 +1135,7 @@ func (m *multiplayerManager) resetAnnotationSync() {
 // contract now, and a pre-multiplayer file has no markers worth keeping.
 func (m *multiplayerManager) readAnnotationsFile(mapID string) []contracts.Annotation {
 	var doc contracts.Annotations
-	if readJSON(filepath.Join(m.store.userRoot(), "maps", mapID+".annotations.json"), &doc) != nil || doc.SchemaVersion != 1 {
+	if readJSON(filepath.Join(m.store.userRoot(), "maps", mapID+".annotations.json"), &doc) != nil || doc.SchemaVersion != contracts.ContractSchemaVersion {
 		return []contracts.Annotation{}
 	}
 	for _, item := range doc.Items {
@@ -1088,7 +1167,7 @@ func (m *multiplayerManager) flushAnnotations(mapID string) {
 	}
 	m.sentOwn[mapID] = own
 	m.sentOnce[mapID] = true
-	frame := mustJSON(wireEnvelope{Type: "annotations", Data: mustJSON(wireAnnotations{OwnerID: m.selfID(), MapID: mapID, Items: own})})
+	frame := mustJSON(wireEnvelope{Type: contracts.WireTypeAnnotations, Data: mustJSON(wireAnnotations{OwnerId: m.selfID(), MapId: mapID, Items: own})})
 	m.annoMu.Unlock()
 	m.broadcastCtl(frame)
 }
@@ -1105,33 +1184,46 @@ func (m *multiplayerManager) pushOwnDocsToPeer(peer *multiplayerPeer) {
 		m.sentOwn[mapID] = own
 		m.sentOnce[mapID] = true
 		m.annoMu.Unlock()
-		sendWire(peer, mustJSON(wireEnvelope{Type: "annotations", Data: mustJSON(wireAnnotations{OwnerID: selfID, MapID: mapID, Items: own})}))
+		sendWire(peer, mustJSON(wireEnvelope{Type: contracts.WireTypeAnnotations, Data: mustJSON(wireAnnotations{OwnerId: selfID, MapId: mapID, Items: own})}))
 	}
 }
 
 // applyLocalAnnotations is the single write path for the dashboard's PUT: incoming items are
 // authoritative only for the local owner; foreign owners always come from the sync cache.
-func (m *multiplayerManager) applyLocalAnnotations(mapID string, mapData contracts.MapData, incoming contracts.Annotations) (contracts.Annotations, error) {
+func (m *multiplayerManager) applyLocalAnnotations(repo *modeRepository, mapID string, mapData contracts.MapData, incoming contracts.Annotations, expected string) (contracts.Annotations, string, string, error) {
 	for _, item := range incoming.Items {
 		if item.OwnerId == "" || len(item.OwnerId) > 100 || !safeID.MatchString(item.OwnerId) {
-			return incoming, errors.New("annotations_invalid")
+			return incoming, "", "", errors.New("annotations_invalid")
 		}
 	}
 	selfID := m.selfID()
 	m.annoMu.Lock()
-	merged := canonicalAnnotations(append(filterOwn(incoming.Items, selfID), m.allRemoteLocked(mapID)...))
-	doc := contracts.Annotations{SchemaVersion: 1, Items: merged}
-	if !validAnnotations(doc, mapData) {
+	if repo == nil {
 		m.annoMu.Unlock()
-		return incoming, errors.New("annotations_invalid")
+		return incoming, "", "", errors.New("mode_repository_unavailable")
 	}
-	err := m.store.save(filepath.Join("maps", mapID+".annotations.json"), doc)
+	path := filepath.Join("user", "modes", repo.mode, "maps", mapID+".annotations.json")
+	fallback := contracts.Annotations{SchemaVersion: contracts.ContractSchemaVersion, Items: []contracts.Annotation{}}
+	value, revision, etag, err := m.store.files.CompareAndMutate(path, expected, &fallback, func(raw any) error {
+		doc := raw.(*contracts.Annotations)
+		doc.Items = canonicalAnnotations(append(filterOwn(incoming.Items, selfID), m.allRemoteLocked(mapID)...))
+		if !validAnnotations(*doc, mapData) {
+			return errAnnotationsInvalid
+		}
+		return nil
+	})
 	m.annoMu.Unlock()
 	if err != nil {
+		if errors.Is(err, errRevisionConflict) {
+			return incoming, revision, etag, err
+		}
+		if errors.Is(err, errAnnotationsInvalid) {
+			return incoming, "", "", err
+		}
 		log.Printf("multiplayer annotations save: %v", err)
-		return doc, errors.New("annotations_save_failed")
+		return incoming, "", "", errors.New("annotations_save_failed")
 	}
-	return doc, nil
+	return *value.(*contracts.Annotations), revision, etag, nil
 }
 
 func (m *multiplayerManager) allRemoteLocked(mapID string) []contracts.Annotation {
@@ -1202,7 +1294,7 @@ func (m *multiplayerManager) rewriteAnnotationsLocked(mapID string) bool {
 		// Unknown map locally: keep the cache so a later join can still sync it.
 		return false
 	}
-	doc := contracts.Annotations{SchemaVersion: 1, Items: canonicalAnnotations(append(filterOwn(m.readAnnotationsFile(mapID), m.selfID()), m.allRemoteLocked(mapID)...))}
+	doc := contracts.Annotations{SchemaVersion: contracts.ContractSchemaVersion, Items: canonicalAnnotations(append(filterOwn(m.readAnnotationsFile(mapID), m.selfID()), m.allRemoteLocked(mapID)...))}
 	if !validAnnotations(doc, mapData) {
 		log.Printf("multiplayer annotations merge invalid: map=%s", mapID)
 		return false
@@ -1219,7 +1311,7 @@ func (m *multiplayerManager) stripForeignAnnotationsLocked(mapID string) bool {
 	if err != nil {
 		return false
 	}
-	doc := contracts.Annotations{SchemaVersion: 1, Items: filterOwn(m.readAnnotationsFile(mapID), m.selfID())}
+	doc := contracts.Annotations{SchemaVersion: contracts.ContractSchemaVersion, Items: filterOwn(m.readAnnotationsFile(mapID), m.selfID())}
 	if !validAnnotations(doc, mapData) {
 		return false
 	}
@@ -1246,42 +1338,23 @@ func (m *multiplayerManager) sendSnapshot(peer *multiplayerPeer) {
 		m.sentOnce[mapID] = true
 		var remote []wireAnnotations
 		for ownerID, items := range m.remoteDocs[mapID] {
-			remote = append(remote, wireAnnotations{OwnerID: ownerID, MapID: mapID, Items: items})
+			remote = append(remote, wireAnnotations{OwnerId: ownerID, MapId: mapID, Items: items})
 		}
 		m.annoMu.Unlock()
-		sendWire(peer, mustJSON(wireEnvelope{Type: "annotations", Data: mustJSON(wireAnnotations{OwnerID: selfID, MapID: mapID, Items: own})}))
+		sendWire(peer, mustJSON(wireEnvelope{Type: contracts.WireTypeAnnotations, Data: mustJSON(wireAnnotations{OwnerId: selfID, MapId: mapID, Items: own})}))
 		for _, doc := range remote {
-			sendWire(peer, mustJSON(wireEnvelope{Type: "annotations", Data: mustJSON(doc)}))
+			sendWire(peer, mustJSON(wireEnvelope{Type: contracts.WireTypeAnnotations, Data: mustJSON(doc)}))
 		}
 	}
 }
 
 // wire frames
 
-type wireEnvelope struct {
-	Type string          `json:"type"`
-	Data json.RawMessage `json:"data,omitempty"`
-}
-
-type wireHello struct {
-	PeerID string `json:"peerId"`
-	Name   string `json:"name"`
-	Color  string `json:"color"`
-}
-
-type wireRoster struct {
-	Members []contracts.MultiplayerMember `json:"members"`
-}
-
-type wireAnnotations struct {
-	OwnerID string                 `json:"ownerId"`
-	MapID   string                 `json:"mapId"`
-	Items   []contracts.Annotation `json:"items"`
-}
-
-type wirePing struct {
-	T int64 `json:"t"`
-}
+type wireEnvelope = contracts.WireEnvelope
+type wireHello = contracts.WireHello
+type wireRoster = contracts.WireRoster
+type wireAnnotations = contracts.WireAnnotations
+type wirePing = contracts.WirePing
 
 func mustJSON(value any) json.RawMessage {
 	data, err := json.Marshal(value)
@@ -1359,7 +1432,7 @@ func (m *multiplayerManager) broadcastRoster() {
 		m.mu.Unlock()
 		return
 	}
-	frame := mustJSON(wireEnvelope{Type: "roster", Data: mustJSON(wireRoster{Members: m.rosterMembersLocked()})})
+	frame := mustJSON(wireEnvelope{Type: contracts.WireTypeRoster, Data: mustJSON(wireRoster{Members: m.rosterMembersLocked()})})
 	m.mu.Unlock()
 	m.broadcastCtl(frame)
 }
@@ -1368,9 +1441,9 @@ func (m *multiplayerManager) broadcastRoster() {
 
 func (m *multiplayerManager) handleCtlMessage(peer *multiplayerPeer, envelope wireEnvelope) {
 	switch envelope.Type {
-	case "hello":
+	case contracts.WireTypeHello:
 		m.handleHello(peer, envelope.Data)
-	case "roster":
+	case contracts.WireTypeRoster:
 		var roster wireRoster
 		if json.Unmarshal(envelope.Data, &roster) != nil {
 			return
@@ -1402,9 +1475,9 @@ func (m *multiplayerManager) handleCtlMessage(peer *multiplayerPeer, envelope wi
 			m.sendSelfPosition(peer)
 		}
 		m.publishStatus()
-	case "annotations":
+	case contracts.WireTypeAnnotations:
 		var doc wireAnnotations
-		if len(envelope.Data) > multiplayerMaxRemoteDocumentBytes || json.Unmarshal(envelope.Data, &doc) != nil || doc.MapID == "" || len(doc.MapID) > 100 || !safeID.MatchString(doc.MapID) || doc.OwnerID == "" || len(doc.OwnerID) > 100 || !safeID.MatchString(doc.OwnerID) || doc.Items == nil || len(doc.Items) > multiplayerMaxRemoteAnnotations {
+		if len(envelope.Data) > multiplayerMaxRemoteDocumentBytes || json.Unmarshal(envelope.Data, &doc) != nil || doc.MapId == "" || len(doc.MapId) > 100 || !safeID.MatchString(doc.MapId) || doc.OwnerId == "" || len(doc.OwnerId) > 100 || !safeID.MatchString(doc.OwnerId) || doc.Items == nil || len(doc.Items) > multiplayerMaxRemoteAnnotations {
 			return
 		}
 		m.mu.Lock()
@@ -1413,27 +1486,27 @@ func (m *multiplayerManager) handleCtlMessage(peer *multiplayerPeer, envelope wi
 		if role == "" {
 			return
 		}
-		ownerID := doc.OwnerID
+		ownerID := doc.OwnerId
 		if role == multiplayerRoleHost {
 			// The host attributes the document to the connection it arrived on.
 			ownerID = peer.id
 		} else if ownerID == selfID {
 			return
 		}
-		if !m.applyRemoteAnnotations(ownerID, doc.MapID, doc.Items) {
+		if !m.applyRemoteAnnotations(ownerID, doc.MapId, doc.Items) {
 			return
 		}
 		if role == multiplayerRoleHost {
-			relay := mustJSON(wireEnvelope{Type: "annotations", Data: mustJSON(wireAnnotations{OwnerID: ownerID, MapID: doc.MapID, Items: doc.Items})})
+			relay := mustJSON(wireEnvelope{Type: contracts.WireTypeAnnotations, Data: mustJSON(wireAnnotations{OwnerId: ownerID, MapId: doc.MapId, Items: doc.Items})})
 			m.broadcastCtlExcept(peer, relay)
 		}
-	case "ping":
+	case contracts.WireTypePing:
 		var ping wirePing
 		if json.Unmarshal(envelope.Data, &ping) != nil {
 			return
 		}
-		sendWire(peer, mustJSON(wireEnvelope{Type: "pong", Data: mustJSON(wirePing{T: ping.T})}))
-	case "pong":
+		sendWire(peer, mustJSON(wireEnvelope{Type: contracts.WireTypePong, Data: mustJSON(wirePing{T: ping.T})}))
+	case contracts.WireTypePong:
 		var ping wirePing
 		if json.Unmarshal(envelope.Data, &ping) != nil {
 			return
@@ -1445,15 +1518,18 @@ func (m *multiplayerManager) handleCtlMessage(peer *multiplayerPeer, envelope wi
 		peer.unstable = false
 		peer.firstMiss = time.Time{}
 		m.mu.Unlock()
-	case "bye":
+	case contracts.WireTypeBye:
 		m.dropPeer(peer.id, "bye")
+	default:
+		sendWire(peer, mustJSON(wireEnvelope{Type: contracts.WireTypeError, Data: mustJSON("multiplayer_peer_invalid")}))
+		peer.close()
 	}
 }
 
 func (m *multiplayerManager) handleHello(peer *multiplayerPeer, data []byte) {
 	var hello wireHello
-	if json.Unmarshal(data, &hello) != nil || !regexpPeerID.MatchString(hello.PeerID) || len(hello.Name) > 40 || !hexColor.MatchString(hello.Color) {
-		sendWire(peer, mustJSON(wireEnvelope{Type: "error", Data: mustJSON("multiplayer_peer_invalid")}))
+	if json.Unmarshal(data, &hello) != nil || !regexpPeerID.MatchString(hello.PeerId) || len(hello.Name) > 40 || !hexColor.MatchString(hello.Color) {
+		sendWire(peer, mustJSON(wireEnvelope{Type: contracts.WireTypeError, Data: mustJSON("multiplayer_peer_invalid")}))
 		peer.close()
 		return
 	}
@@ -1462,20 +1538,20 @@ func (m *multiplayerManager) handleHello(peer *multiplayerPeer, data []byte) {
 		m.mu.Unlock()
 		return
 	}
-	previous := m.peers[hello.PeerID]
+	previous := m.peers[hello.PeerId]
 	if previous == nil && len(m.peers) >= multiplayerMaxMembers-1 {
 		m.mu.Unlock()
-		sendWire(peer, mustJSON(wireEnvelope{Type: "error", Data: mustJSON("multiplayer_room_full")}))
+		sendWire(peer, mustJSON(wireEnvelope{Type: contracts.WireTypeError, Data: mustJSON("multiplayer_room_full")}))
 		peer.close()
 		return
 	}
 	if previous != nil && previous != peer {
 		// The same machine rejoining replaces its stale connection.
-		delete(m.peers, hello.PeerID)
+		delete(m.peers, hello.PeerId)
 		previous.close()
 	}
 	delete(m.joining, peer)
-	peer.id, peer.name, peer.color = hello.PeerID, hello.Name, hello.Color
+	peer.id, peer.name, peer.color = hello.PeerId, hello.Name, hello.Color
 	m.peers[peer.id] = peer
 	m.mu.Unlock()
 
@@ -1519,9 +1595,9 @@ func wirePeer(peer *multiplayerPeer, onCtl func(*multiplayerPeer, wireEnvelope),
 
 func (m *multiplayerManager) sendHello(peer *multiplayerPeer) {
 	m.mu.Lock()
-	hello := wireHello{PeerID: m.settings.PlayerId, Name: m.settings.PlayerName, Color: m.settings.PlayerColor}
+	hello := wireHello{PeerId: m.settings.PlayerId, Name: m.settings.PlayerName, Color: m.settings.PlayerColor}
 	m.mu.Unlock()
-	sendWire(peer, mustJSON(wireEnvelope{Type: "hello", Data: mustJSON(hello)}))
+	sendWire(peer, mustJSON(wireEnvelope{Type: contracts.WireTypeHello, Data: mustJSON(hello)}))
 }
 
 // acceptGuest runs on the signaling path: it builds the host-side peer connection and returns the
@@ -1678,16 +1754,16 @@ func (m *multiplayerManager) stunCachePath() string {
 // snapshot, and the manager never talks to the network on startup.
 func (m *multiplayerManager) loadStunList() {
 	var cache stunCache
-	if readJSON(m.stunCachePath(), &cache) == nil && cache.SchemaVersion == 1 &&
+	if readJSON(m.stunCachePath(), &cache) == nil && cache.SchemaVersion == contracts.ContractSchemaVersion &&
 		len(cache.Servers) > 0 && len(cache.NatServers) > 0 {
 		m.stunServers = cache.Servers
 		m.stunNatServers = cache.NatServers
 	}
 	if len(m.stunServers) == 0 {
-		m.stunServers = builtinStunServers(m.store.root)
+		m.stunServers = defaults.StunServers()
 	}
 	if len(m.stunNatServers) == 0 {
-		m.stunNatServers = builtinStunNatServers(m.store.root)
+		m.stunNatServers = defaults.StunNatServers()
 	}
 }
 
@@ -1696,7 +1772,7 @@ func (m *multiplayerManager) saveStunList(servers, natServers []string) {
 	m.stunServers = servers
 	m.stunNatServers = natServers
 	m.stunListMutex.Unlock()
-	if err := m.store.saveGlobal("multiplayer-stun.json", stunCache{SchemaVersion: 1, Servers: servers, NatServers: natServers}); err != nil {
+	if err := m.store.saveGlobal("multiplayer-stun.json", stunCache{SchemaVersion: contracts.ContractSchemaVersion, Servers: servers, NatServers: natServers}); err != nil {
 		log.Printf("multiplayer stun cache persist: %v", err)
 	}
 }
@@ -1706,22 +1782,49 @@ func (m *multiplayerManager) register(mux *http.ServeMux) {
 		if !localRequest(w, r) {
 			return
 		}
-		jsonResponse(w, m.currentSettings())
+		value, revision, etag, err := ReadVersioned(m.store.files, filepath.Join("user", "multiplayer.json"), m.currentSettings())
+		if err != nil {
+			apiError(w, http.StatusInternalServerError, "multiplayer_settings_invalid")
+			return
+		}
+		versionedJSONResponse(w, value, revision, etag)
 	})
 	mux.HandleFunc("PUT /api/multiplayer/settings", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
+			return
+		}
+		expected, ok := requireRevision(w, r)
+		if !ok {
 			return
 		}
 		var value contracts.MultiplayerSettings
 		if !decodeUpdate(w, r, &value) {
 			return
 		}
-		if err := m.saveSettings(value); err != nil {
-			apiError(w, http.StatusBadRequest, err.Error())
+		m.settingsSaveMu.Lock()
+		defer m.settingsSaveMu.Unlock()
+		m.mu.Lock()
+		value.PlayerId = m.settings.PlayerId
+		m.mu.Unlock()
+		if !validMultiplayerSettings(value) {
+			apiError(w, http.StatusBadRequest, "multiplayer_settings_invalid")
 			return
 		}
+		revision, etag, err := m.store.files.Update(filepath.Join("user", "multiplayer.json"), expected, defaults.MultiplayerSettings(), value, nil)
+		if errors.Is(err, errRevisionConflict) {
+			versionedConflict(w, revision, etag)
+			return
+		}
+		if err != nil {
+			log.Printf("multiplayer settings save: %v", err)
+			apiError(w, http.StatusInternalServerError, "multiplayer_settings_save_failed")
+			return
+		}
+		m.mu.Lock()
+		m.settings = value
+		m.mu.Unlock()
 		m.publishStatus()
-		jsonResponse(w, m.currentSettings())
+		versionedJSONResponse(w, m.currentSettings(), revision, etag)
 	})
 	mux.HandleFunc("GET /api/multiplayer/status", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
@@ -1796,6 +1899,8 @@ func (m *multiplayerManager) register(mux *http.ServeMux) {
 		if !localRequest(w, r) {
 			return
 		}
+		m.stunRefreshMu.Lock()
+		defer m.stunRefreshMu.Unlock()
 		servers, err := fetchStunServers()
 		if err != nil {
 			log.Printf("multiplayer stun refresh: %v", err)

@@ -46,6 +46,10 @@
   --scrollbar: #39423c;
   --selected-hover: rgba(200, 162, 74, 0.22);
   --selected: rgba(200, 162, 74, 0.14);
+  /* Material 3 elevation level 2: a 1px key over a 2px ambient. On the dialogs the mask is
+     already near-black, so the shadow only has to read as a direction — anything wider and
+     darker just bands across the mask instead of lifting the panel. */
+  --dialog-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 2px 6px 2px rgb(0 0 0 / 0.15);
   /* A disc with the cross knocked out, shared by search clear controls. */
   --search-clear-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0Zm3.54 10.13-1.41 1.41L8 9.41l-2.13 2.13-1.41-1.41L6.59 8 4.46 5.87l1.41-1.41L8 6.59l2.13-2.13 1.41 1.41L9.41 8l2.13 2.13Z'/%3E%3C/svg%3E");
   color: var(--text);
@@ -109,9 +113,14 @@ button[aria-pressed='true']:hover:not(:disabled) {
   background: var(--selected-hover);
 }
 
+/* A disabled control keeps its plate and goes quiet through its content. Fading the whole button
+   also faded its background, and every surface here is already translucent, so a disabled button
+   over the map let it show through and read as turning white. */
 button:disabled {
   color: var(--muted);
   cursor: default;
+}
+button:disabled :is(svg, img) {
   opacity: 0.55;
 }
 

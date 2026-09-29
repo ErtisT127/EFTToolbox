@@ -18,6 +18,7 @@ internal static class Program
     private static int Main(string[] args)
     {
         if (args.Contains("--tile-self-check")) { TileRuntimeSelfCheck.Run().GetAwaiter().GetResult(); return 0; }
+        if (args.Contains("--owner-visibility-self-check")) { OwnerVisibilitySelfCheck.Run().GetAwaiter().GetResult(); return 0; }
         if (args.Contains("--tile-preview")) { BruTilePreview.Run(Directory.GetCurrentDirectory()).GetAwaiter().GetResult(); return 0; }
         if (args.Contains("--svg-benchmark")) { var i = Array.IndexOf(args, "--resolution"); SvgRuntimeBenchmark.Run(Directory.GetCurrentDirectory(), i >= 0 ? int.Parse(args[i + 1]) : 2048); return 0; }
         var index = Array.IndexOf(args, "--backend");

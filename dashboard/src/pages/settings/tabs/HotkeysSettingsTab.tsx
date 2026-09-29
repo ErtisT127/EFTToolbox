@@ -25,11 +25,11 @@ export function HotkeysSettingsTab({
       : undefined;
   return (
     <fieldset>
-      <legend>{t('settings.hotkeyGroup')}</legend>
+      <legend>{t('minimap.name')}</legend>
       {hotkeyKeys.map((key) => (
         <HotkeyRecorder
           key={key}
-          label={t(`settings.hotkeyAction.${key}`)}
+          label={t(`settings.hotkeyActions.${key}`)}
           value={value.hotkeys[key]}
           error={error(key)}
           conflict={conflict(key)}
@@ -37,7 +37,7 @@ export function HotkeysSettingsTab({
           onChange={(hotkey) => onUpdate({ hotkeys: { ...value.hotkeys, [key]: hotkey } })}
         />
       ))}
-      {!view?.connected && <p>{t('settings.unavailable')}</p>}
+      {!view?.connected && <p>{t('minimap.unavailable')}</p>}
     </fieldset>
   );
 }

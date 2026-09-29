@@ -1,7 +1,6 @@
-import { useSyncExternalStore } from 'react';
+import { useSelector } from 'react-redux';
 import type {
   Annotation,
-  Annotations,
   CalibratorPreferences,
   MapData,
   MapPreference,
@@ -10,6 +9,30 @@ import type {
   Sticker,
   UserSettings,
 } from '../../../contracts/ts/ipc.gen';
+import { ContractSchemaVersion } from '../../../contracts/ts/ipc.gen.ts';
+import {
+  calibratorPreferences as defaultCalibratorPreferencesValue,
+  defaultGroups,
+} from '../defaults.gen.ts';
+import { api, isRevisionConflict } from './api.ts';
+import { errorKeyOf } from '../lib/errors.ts';
+import { store, type RootState, waitForAnnotationSaves } from './store.ts';
+import {
+  clearAnnotationDraft,
+  clearAnnotationSessions,
+  commitAnnotations,
+  ensureAnnotationSession,
+  redoAnnotations,
+  setAnnotationSaveState,
+  setCalibrationPreferencesDraft,
+  submitMapPreferences,
+  submitCalibrationPreferences,
+  setMapPreferencesDraft,
+  setWorkspaceState,
+  undoAnnotations,
+  submitAnnotations,
+  clearConflict,
+} from './clientState.ts';
 class DataLoadError extends Error {
   readonly errorKey: string;
   readonly module = 'map' as const;
@@ -39,8 +62,6 @@ export function setLocale(next: string) {
   locale = next;
 }
 
-const defaultGroups = ['extracts', 'landmarks'];
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object';
 const isStringArray = (value: unknown): value is string[] =>
@@ -65,7 +86,7 @@ export function isUsableMapCatalog(value: unknown): value is MapSummary[] {
 }
 
 export function isUsableMapData(value: unknown): value is MapData {
-  if (!isRecord(value) || value.schemaVersion !== 1) return false;
+  if (!isRecord(value) || value.schemaVersion !== ContractSchemaVersion) return false;
   if (!isRecord(value.projection) || !isRecord(value.clock)) return false;
   if (
     !isRecordArray(value.floors) ||
@@ -120,12 +141,15 @@ export function isUsableMapData(value: unknown): value is MapData {
 
 function defaultCalibratorPreferences(mapId = ''): CalibratorPreferences {
   return {
-    schemaVersion: 1,
-    sidebarCollapsed: false,
-    collapsedMaps: [],
-    collapsedFloors: [],
+    ...defaultCalibratorPreferencesValue,
+    collapsedMaps: [...defaultCalibratorPreferencesValue.collapsedMaps],
+    collapsedFloors: [...defaultCalibratorPreferencesValue.collapsedFloors],
     ...(mapId ? { selection: { type: 'map', mapId } } : {}),
   };
+}
+
+function defaultPreferences(): Preferences {
+  return { schemaVersion: ContractSchemaVersion, selectedMap: '', maps: [], stickerUsage: [] };
 }
 
 export function reportClientLog(event: string, message: string, error = '') {
@@ -157,92 +181,45 @@ export function reportThrottledFailure(event: string, detail: string, cooldownMs
   reportClientLog('http_request_failed', event, detail);
 }
 
-async function failure(response: Response): Promise<string> {
-  try {
-    const body = (await response.json()) as { code?: string };
-    if (body.code) return body.code.startsWith('errors.') ? body.code : `errors.${body.code}`;
-  } catch {
-    // Not a JSON error body; fall through to the generic key.
-  }
-  return 'errors.request_failed';
-}
-
-export async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(url, init);
-  } catch (error) {
-    if (!(error instanceof DOMException && error.name === 'AbortError')) {
-      reportClientLog(
-        'http_request_failed',
-        `request failed: ${url}`,
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-    throw new Error('errors.request_failed', { cause: error });
-  }
-  if (!response.ok) {
-    const message = await failure(response);
-    reportClientLog('http_request_failed', `${response.status} ${url}`, message);
-    throw new Error(message);
-  }
-  return response.json() as Promise<T>;
-}
-
-let userSettingsCache: UserSettings | undefined;
-let userSettingsLoad: Promise<UserSettings> | undefined;
-let userSettingsWrite = Promise.resolve();
-
 export function loadUserSettings() {
-  if (userSettingsCache) return Promise.resolve(userSettingsCache);
-  userSettingsLoad ??= request<UserSettings>('/api/user-settings')
-    .then((value) => {
-      userSettingsCache = value;
-      return value;
-    })
-    .finally(() => {
-      userSettingsLoad = undefined;
-    });
-  return userSettingsLoad;
+  return store
+    .dispatch(api.endpoints.getUserSettings.initiate(undefined, { forceRefetch: true }))
+    .unwrap()
+    .then(({ value }) => value);
 }
 
 export function updateUserSettings(update: (value: UserSettings) => UserSettings) {
-  const next = userSettingsWrite.then(async () => {
-    const current = await loadUserSettings();
-    const saved = await request<UserSettings>('/api/user-settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(update(current)),
-    });
-    userSettingsCache = saved;
-    return saved;
+  return loadUserSettings().then(async (current) => {
+    const cached = api.endpoints.getUserSettings.select()(store.getState()).data;
+    if (!cached) throw new Error('errors.request_failed');
+    try {
+      const result = await store
+        .dispatch(
+          api.endpoints.updateUserSettings.initiate({
+            value: update(current),
+            revision: cached.revision,
+            etag: cached.etag,
+          }),
+        )
+        .unwrap();
+      store.dispatch(api.util.updateQueryData('getUserSettings', undefined, () => result));
+      return result.value;
+    } catch (error) {
+      if (isRevisionConflict(error)) throw new Error('errors.revision_conflict', { cause: error });
+      throw error;
+    }
   });
-  userSettingsWrite = next.then(
-    () => undefined,
-    () => undefined,
-  );
-  return next;
-}
-
-export function patchUserSettingsCache(update: (value: UserSettings) => UserSettings) {
-  if (userSettingsCache) userSettingsCache = update(userSettingsCache);
 }
 
 export async function resetUserSettings() {
-  const value = await request<UserSettings>('/api/data/reset-user-settings', { method: 'POST' });
-  userSettingsCache = value;
+  const { value } = await store.dispatch(api.endpoints.resetUserSettings.initiate()).unwrap();
   return value;
 }
-
-const put = (data: unknown): RequestInit => ({
-  method: 'PUT',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(data),
-});
 
 export type Session = {
   data: MapData;
   items: Annotation[];
+  draft?: Annotation[];
   past: Annotation[][];
   future: Annotation[][];
   revision: number;
@@ -251,92 +228,125 @@ export type Session = {
   error: string;
   /** A remote markers update landed while this session had unsaved edits; refetch once clean. */
   pendingSync: boolean;
+  conflict: boolean;
 };
 
 export class Workspace {
-  catalog: MapSummary[] = [];
-  stickers: Sticker[] = [];
-  sessions = new Map<string, Session>();
-  preferences: Preferences = { schemaVersion: 1, selectedMap: '', maps: [], stickerUsage: [] };
-  calibratorPreferences: CalibratorPreferences = defaultCalibratorPreferences();
-  activeId = '';
-  loading = true;
-  error = '';
-  preferenceError = '';
-  calibratorPreferenceError = '';
-  savingPreferences = false;
-  savingCalibratorPreferences = false;
-  private version = 0;
-  private listeners = new Set<() => void>();
-  private sequence = 0;
-  private controller?: AbortController;
-  private preferenceTimer?: ReturnType<typeof setTimeout>;
-  private preferenceRevision = 0;
-  private preferenceSaved = 0;
-  private calibratorPreferenceTimer?: ReturnType<typeof setTimeout>;
-  private calibratorPreferenceRevision = 0;
-  private calibratorPreferenceSaved = 0;
-  subscribe = (listener: () => void) => {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  };
-  snapshot = () => this.version;
-  changed() {
-    this.version++;
-    this.listeners.forEach((listener) => listener());
+  get sessions() {
+    const state = store.getState();
+    const clientSessions = state.client.annotations.sessions;
+    const sessions = new Map<string, Session>();
+    for (const id of Object.keys(clientSessions)) {
+      const data = api.endpoints.getMap.select({ id, locale })(state)?.data;
+      const annotations = api.endpoints.getAnnotations.select(id)(state).data?.value;
+      if (!data || !annotations) continue;
+      const local = clientSessions[id];
+      const draft = local.draft;
+      sessions.set(id, {
+        data,
+        items: draft || annotations.items,
+        draft,
+        past: local.past,
+        future: local.future,
+        revision: local.editRevision,
+        savedRevision: local.savedRevision,
+        saving: local.saving,
+        error: local.error,
+        pendingSync: local.pendingSync,
+        conflict: local.conflict,
+      });
+    }
+    return sessions;
   }
+  get catalog(): MapSummary[] {
+    return api.endpoints.getMapCatalog.select(locale)(store.getState()).data || [];
+  }
+  get stickers(): Sticker[] {
+    return api.endpoints.getStickers.select()(store.getState()).data || [];
+  }
+  get preferences(): Preferences {
+    const state = store.getState();
+    return (
+      state.client.mapPreferencesDraft ||
+      api.endpoints.getMapPreferences.select()(state).data?.value ||
+      defaultPreferences()
+    );
+  }
+  get calibratorPreferences(): CalibratorPreferences {
+    const state = store.getState();
+    return (
+      state.client.calibrationPreferencesDraft ||
+      api.endpoints.getCalibrationPreferences.select()(state).data?.value ||
+      defaultCalibratorPreferences()
+    );
+  }
+  get activeId() {
+    return store.getState().client.annotations.activeId;
+  }
+  get loading() {
+    return store.getState().client.annotations.loading;
+  }
+  get error() {
+    return store.getState().client.annotations.error;
+  }
+  get preferenceError() {
+    return store.getState().client.annotations.preferenceError;
+  }
+  get calibratorPreferenceError() {
+    return store.getState().client.annotations.calibratorPreferenceError;
+  }
+  get savingPreferences() {
+    return store.getState().client.annotations.savingPreferences;
+  }
+  get savingCalibratorPreferences() {
+    return store.getState().client.annotations.savingCalibratorPreferences;
+  }
+  private sequence = 0;
 
   async initialize() {
     const sequence = ++this.sequence;
-    this.controller?.abort();
-    this.controller = new AbortController();
-    const signal = this.controller.signal;
-    this.loading = true;
-    this.error = '';
-    this.changed();
+    store.dispatch(setWorkspaceState({ loading: true, error: '' }));
     try {
-      const [catalog, preferences, stickers, calibratorPreferences] = await Promise.all([
-        request<MapSummary[]>(`/api/maps?locale=${locale}`, { signal }),
-        request<Preferences>('/api/map-preferences', { signal }),
-        request<Sticker[]>('/api/stickers', { signal }),
-        request<CalibratorPreferences>('/api/calibration-preferences', { signal }),
+      const [catalog, preferenceResult, stickers, calibratorResult] = await Promise.all([
+        store
+          .dispatch(api.endpoints.getMapCatalog.initiate(locale, { forceRefetch: true }))
+          .unwrap(),
+        store
+          .dispatch(api.endpoints.getMapPreferences.initiate(undefined, { forceRefetch: true }))
+          .unwrap(),
+        store
+          .dispatch(api.endpoints.getStickers.initiate(undefined, { forceRefetch: true }))
+          .unwrap(),
+        store
+          .dispatch(
+            api.endpoints.getCalibrationPreferences.initiate(undefined, { forceRefetch: true }),
+          )
+          .unwrap(),
       ]);
+      const preferences = preferenceResult.value;
+      const calibratorPreferences = calibratorResult.value;
       if (sequence !== this.sequence) return;
       if (
         !isUsableMapCatalog(catalog) ||
         !Array.isArray(stickers) ||
-        preferences.schemaVersion !== 1 ||
+        preferences.schemaVersion !== ContractSchemaVersion ||
         !Array.isArray(preferences.maps) ||
-        calibratorPreferences.schemaVersion !== 1
+        calibratorPreferences.schemaVersion !== ContractSchemaVersion
       )
         throw new DataLoadError('errors.data_version', 'map');
-      this.catalog = catalog;
-      this.stickers = stickers;
-      // A preferences file written before stickers existed has no usage list, and Go marshals the
-      // absent slice back as null rather than an empty array.
-      if (!Array.isArray(preferences.stickerUsage)) preferences.stickerUsage = [];
-      for (const preference of preferences.maps) {
-        if (!Array.isArray(preference.hiddenCategories)) preference.hiddenCategories = [];
-        if (!Array.isArray(preference.collapsedGroups)) preference.collapsedGroups = [];
-        if (!Array.isArray(preference.selectedTasks)) preference.selectedTasks = [];
-        if (!Array.isArray(preference.center)) preference.center = [];
-      }
-      this.preferences = preferences;
-      this.calibratorPreferences = calibratorPreferences;
       const id = catalog.find((m) => m.id === preferences.selectedMap)?.id || catalog[0]?.id;
-      this.normalizeCalibratorPreferences(id || '');
+      const normalizedCalibratorPreferences = this.normalizeCalibratorPreferences(id || '');
+      if (normalizedCalibratorPreferences !== calibratorPreferences)
+        this.setCalibratorPreferencesDraft(normalizedCalibratorPreferences);
       if (id) await this.select(id, true);
       else {
-        this.loading = false;
-        this.changed();
+        store.dispatch(setWorkspaceState({ loading: false }));
       }
     } catch (error) {
       if (sequence === this.sequence) {
-        this.error = error instanceof Error ? error.message : 'errors.request_failed';
-        this.loading = false;
-        this.changed();
+        store.dispatch(
+          setWorkspaceState({ error: errorKeyOf(error, 'errors.request_failed'), loading: false }),
+        );
       }
     }
   }
@@ -346,13 +356,29 @@ export class Workspace {
   }
 
   private normalizeCalibratorPreferences(mapId: string) {
-    const value = this.calibratorPreferences;
-    if (value.schemaVersion !== 1) this.calibratorPreferences = defaultCalibratorPreferences(mapId);
-    const normalized = this.calibratorPreferences;
+    const source = this.calibratorPreferences;
+    const needsDraft =
+      source.schemaVersion !== ContractSchemaVersion ||
+      !Array.isArray(source.collapsedMaps) ||
+      !Array.isArray(source.collapsedFloors) ||
+      (!source.selection && !!mapId);
+    const normalized = needsDraft
+      ? source.schemaVersion !== ContractSchemaVersion
+        ? defaultCalibratorPreferences(mapId)
+        : structuredClone(source)
+      : source;
     if (!Array.isArray(normalized.collapsedMaps)) normalized.collapsedMaps = [];
     if (!Array.isArray(normalized.collapsedFloors)) normalized.collapsedFloors = [];
     if (!normalized.selection && mapId) normalized.selection = { type: 'map', mapId };
     return normalized;
+  }
+
+  private setPreferencesDraft(value: Preferences | undefined) {
+    store.dispatch(setMapPreferencesDraft(value));
+  }
+
+  private setCalibratorPreferencesDraft(value: CalibratorPreferences | undefined) {
+    store.dispatch(setCalibrationPreferencesDraft(value));
   }
 
   async reloadForResources() {
@@ -361,61 +387,60 @@ export class Workspace {
     await this.initialize();
   }
 
+  async waitForSaves() {
+    await waitForAnnotationSaves();
+  }
+
+  async reloadAfterAnnotationReset() {
+    store.dispatch(clearAnnotationSessions());
+    await this.initialize();
+  }
+
   async select(id: string, reload = false) {
     const sequence = ++this.sequence;
-    this.controller?.abort();
-    this.controller = new AbortController();
-    this.activeId = id;
-    this.error = '';
-    this.loading = true;
-    this.changed();
+    store.dispatch(setWorkspaceState({ activeId: id, error: '', loading: true }));
     try {
       if (reload) {
-        const catalog = await request<MapSummary[]>(`/api/maps?locale=${locale}`, {
-          signal: this.controller.signal,
-        });
+        const catalog = await store
+          .dispatch(api.endpoints.getMapCatalog.initiate(locale, { forceRefetch: true }))
+          .unwrap();
         if (sequence !== this.sequence) return;
         if (!isUsableMapCatalog(catalog)) throw new DataLoadError('errors.data_version', 'map');
-        this.catalog = catalog;
       }
       if (!this.sessions.has(id) || reload) {
-        const [data, annotations] = await Promise.all([
-          request<MapData>(`/api/maps/${id}?locale=${locale}`, { signal: this.controller.signal }),
-          request<Annotations>(`/api/maps/${id}/annotations`, { signal: this.controller.signal }),
+        const [data, annotationsResult] = await Promise.all([
+          store
+            .dispatch(api.endpoints.getMap.initiate({ id, locale }, { forceRefetch: reload }))
+            .unwrap(),
+          store
+            .dispatch(api.endpoints.getAnnotations.initiate(id, { forceRefetch: reload }))
+            .unwrap(),
         ]);
+        const annotations = annotationsResult.value;
         if (sequence !== this.sequence) return;
         const mapDataValid = isUsableMapData(data);
-        if (!mapDataValid || annotations.schemaVersion !== 1 || !Array.isArray(annotations.items))
+        if (
+          !mapDataValid ||
+          annotations.schemaVersion !== ContractSchemaVersion ||
+          !Array.isArray(annotations.items)
+        )
           throw new DataLoadError(
             mapDataValid ? 'errors.annotations_invalid' : 'errors.map_data_invalid',
             'map',
           );
-        const previous = this.sessions.get(id);
-        if (previous) previous.data = data;
-        else
-          this.sessions.set(id, {
-            data,
-            items: annotations.items,
-            past: [],
-            future: [],
-            revision: 0,
-            savedRevision: 0,
-            saving: false,
-            error: '',
-            pendingSync: false,
-          });
+        store.dispatch(ensureAnnotationSession(id));
       }
       if (sequence !== this.sequence) return;
-      this.preferences.selectedMap = id;
-      this.preferenceFor(id);
-      this.savePreferenceSoon();
+      const preferences = structuredClone(this.preferences);
+      preferences.selectedMap = id;
+      this.normalizePreference(preferences, id, this.sessions.get(id)!.data);
+      this.setPreferencesDraft(preferences);
     } catch (error) {
       if (sequence === this.sequence)
-        this.error = error instanceof Error ? error.message : 'errors.request_failed';
+        store.dispatch(setWorkspaceState({ error: errorKeyOf(error, 'errors.request_failed') }));
     } finally {
       if (sequence === this.sequence) {
-        this.loading = false;
-        this.changed();
+        store.dispatch(setWorkspaceState({ loading: false }));
       }
     }
   }
@@ -425,7 +450,11 @@ export class Workspace {
   }
 
   preferenceForData(id: string, data: MapData): MapPreference {
-    let preference = this.preferences.maps.find((p) => p.mapId === id);
+    return this.normalizePreference(structuredClone(this.preferences), id, data);
+  }
+
+  private normalizePreference(preferences: Preferences, id: string, data: MapData): MapPreference {
+    let preference = preferences.maps.find((p) => p.mapId === id);
     if (!preference) {
       preference = {
         mapId: id,
@@ -441,7 +470,7 @@ export class Workspace {
         center: [],
         zoom: 0,
       };
-      this.preferences.maps.push(preference);
+      preferences.maps.push(preference);
     }
     if (!Array.isArray(preference.hiddenCategories)) preference.hiddenCategories = [];
     if (!Array.isArray(preference.collapsedGroups)) preference.collapsedGroups = [];
@@ -469,28 +498,52 @@ export class Workspace {
   }
 
   updatePreference(id: string, changes: Partial<MapPreference>) {
-    Object.assign(this.preferenceFor(id), changes);
-    this.savePreferenceSoon();
-    this.changed();
+    const data = this.sessions.get(id)!.data;
+    const preferences = structuredClone(this.preferences);
+    const preference = this.normalizePreference(preferences, id, data);
+    Object.assign(preference, changes);
+    this.setPreferencesDraft(preferences);
   }
   updatePreferenceForData(id: string, data: MapData, changes: Partial<MapPreference>) {
-    Object.assign(this.preferenceForData(id, data), changes);
-    this.savePreferenceSoon();
-    this.changed();
+    const preferences = structuredClone(this.preferences);
+    const preference = this.normalizePreference(preferences, id, data);
+    Object.assign(preference, changes);
+    this.setPreferencesDraft(preferences);
   }
   updateCalibratorPreference(changes: Partial<CalibratorPreferences>) {
-    Object.assign(this.calibratorPreference, changes);
-    this.saveCalibratorPreferenceSoon();
-    this.changed();
+    const value = structuredClone(this.calibratorPreference);
+    Object.assign(value, changes);
+    this.setCalibratorPreferencesDraft(value);
+  }
+  private findPreference(preferences: Preferences, id: string, data: MapData) {
+    let preference = preferences.maps.find((entry) => entry.mapId === id);
+    if (!preference) {
+      preference = {
+        mapId: id,
+        basemap: data.svgUrl ? 'svg' : 'tiles',
+        floorId: data.defaultFloor,
+        hiddenCategories: data.categories
+          .filter((category) => !defaultGroups.includes(category.groupId))
+          .map((category) => category.id),
+        collapsedGroups: [],
+        showAnnotations: true,
+        selectedTasks: [],
+        taskFilterActive: false,
+        center: [],
+        zoom: 0,
+      };
+      preferences.maps.push(preference);
+    }
+    return preference;
   }
   // Stickers are map-independent, so usage lives on the global preferences. The picker sorts by
   // count, which is why this is a tally rather than a most-recently-used list.
   recordSticker(stickerId: string) {
-    const entry = this.preferences.stickerUsage.find((u) => u.id === stickerId);
+    const preferences = structuredClone(this.preferences);
+    const entry = preferences.stickerUsage.find((u) => u.id === stickerId);
     if (entry) entry.count++;
-    else this.preferences.stickerUsage.push({ id: stickerId, count: 1 });
-    this.savePreferenceSoon();
-    this.changed();
+    else preferences.stickerUsage.push({ id: stickerId, count: 1 });
+    this.setPreferencesDraft(preferences);
   }
   // Every entry the user has used, most-used first. A usage id is either a catalogue sticker or a
   // built-in glyph, and only the picker knows which, so this stays a plain tally and the callers
@@ -500,114 +553,44 @@ export class Workspace {
       .filter((u) => u.count > 0)
       .sort((a, b) => b.count - a.count);
   }
-  private savePreferenceSoon() {
-    this.preferenceRevision++;
-    clearTimeout(this.preferenceTimer);
-    this.preferenceTimer = setTimeout(() => {
-      void this.savePreferences();
-    }, 350);
-  }
-  private saveCalibratorPreferenceSoon() {
-    this.calibratorPreferenceRevision++;
-    clearTimeout(this.calibratorPreferenceTimer);
-    this.calibratorPreferenceTimer = setTimeout(() => {
-      void this.saveCalibratorPreferences();
-    }, 350);
-  }
   async savePreferences() {
-    clearTimeout(this.preferenceTimer);
-    if (this.savingPreferences) return;
-    this.savingPreferences = true;
-    try {
-      while (this.preferenceSaved < this.preferenceRevision) {
-        const revision = this.preferenceRevision;
-        await request('/api/map-preferences', put(this.preferences));
-        this.preferenceSaved = revision;
-      }
-      // Only a send that actually happened may clear the failure (see overlayStore.save).
-      if (this.preferenceSaved >= this.preferenceRevision && this.preferenceSaved > 0)
-        this.preferenceError = '';
-    } catch {
-      this.preferenceError = 'errors.preferences_save_failed';
-    } finally {
-      this.savingPreferences = false;
-      this.changed();
-    }
+    store.dispatch(submitMapPreferences());
   }
   async saveCalibratorPreferences() {
-    clearTimeout(this.calibratorPreferenceTimer);
-    if (this.savingCalibratorPreferences) return;
-    this.savingCalibratorPreferences = true;
-    try {
-      while (this.calibratorPreferenceSaved < this.calibratorPreferenceRevision) {
-        const revision = this.calibratorPreferenceRevision;
-        await request('/api/calibration-preferences', put(this.calibratorPreferences));
-        this.calibratorPreferenceSaved = revision;
-      }
-      if (
-        this.calibratorPreferenceSaved >= this.calibratorPreferenceRevision &&
-        this.calibratorPreferenceSaved > 0
-      )
-        this.calibratorPreferenceError = '';
-    } catch {
-      this.calibratorPreferenceError = 'errors.preferences_save_failed';
-    } finally {
-      this.savingCalibratorPreferences = false;
-      this.changed();
-    }
+    store.dispatch(submitCalibrationPreferences());
   }
 
   commit(id: string, items: Annotation[]) {
     const s = this.sessions.get(id)!;
     if (JSON.stringify(items) === JSON.stringify(s.items)) return;
-    s.past = [...s.past, s.items].slice(-50);
-    s.future = [];
-    s.items = items;
-    s.revision++;
-    this.changed();
-    void this.save(id);
+    store.dispatch(commitAnnotations({ id, base: s.items, items }));
   }
   undo(id: string) {
     const s = this.sessions.get(id)!;
     if (!s.past.length) return;
-    s.future = [s.items, ...s.future];
-    s.items = s.past[s.past.length - 1];
-    s.past = s.past.slice(0, -1);
-    s.revision++;
-    this.changed();
-    void this.save(id);
+    store.dispatch(undoAnnotations({ id, current: s.items }));
   }
   redo(id: string) {
     const s = this.sessions.get(id)!;
     if (!s.future.length) return;
-    s.past = [...s.past, s.items].slice(-50);
-    s.items = s.future[0];
-    s.future = s.future.slice(1);
-    s.revision++;
-    this.changed();
-    void this.save(id);
+    store.dispatch(redoAnnotations({ id, current: s.items }));
   }
-  async save(id: string) {
-    const s = this.sessions.get(id)!;
-    if (s.saving) return;
-    s.saving = true;
-    s.error = '';
-    this.changed();
+  save(id: string) {
+    store.dispatch(submitAnnotations({ id }));
+    return Promise.resolve();
+  }
+  async retryAnnotations(id: string) {
+    const session = this.sessions.get(id);
+    if (!session?.conflict) return this.save(id);
     try {
-      while (s.savedRevision < s.revision) {
-        const revision = s.revision;
-        await request(`/api/maps/${id}/annotations`, put({ schemaVersion: 1, items: s.items }));
-        s.savedRevision = revision;
-      }
+      await store
+        .dispatch(api.endpoints.getAnnotations.initiate(id, { forceRefetch: true }))
+        .unwrap();
+      store.dispatch(setAnnotationSaveState({ id, changes: { conflict: false, error: '' } }));
+      store.dispatch(clearConflict(`annotations:${id}`));
+      store.dispatch(submitAnnotations({ id, explicit: true }));
     } catch {
-      s.error = 'errors.annotations_save_failed';
-    } finally {
-      s.saving = false;
-      this.changed();
-    }
-    if (s.savedRevision >= s.revision && s.pendingSync) {
-      s.pendingSync = false;
-      await this.refetchAnnotations(id);
+      return;
     }
   }
   /** Teammates' marker updates land in the shared file; pick them up once this session is clean. */
@@ -615,21 +598,24 @@ export class Workspace {
     const s = this.sessions.get(id);
     if (!s) return;
     if (s.revision !== s.savedRevision || s.saving) {
-      s.pendingSync = true;
+      store.dispatch(setAnnotationSaveState({ id, changes: { pendingSync: true } }));
       return;
     }
     try {
-      const annotations = await request<Annotations>(`/api/maps/${id}/annotations`);
+      const result = await store
+        .dispatch(api.endpoints.getAnnotations.initiate(id, { forceRefetch: true }))
+        .unwrap();
+      const annotations = result.value;
       const current = this.sessions.get(id);
       if (!current) return;
       // A local edit may have raced the fetch; it wins and the refetch is retried after it saves.
       if (current.revision !== current.savedRevision || current.saving) {
-        current.pendingSync = true;
+        store.dispatch(setAnnotationSaveState({ id, changes: { pendingSync: true } }));
         return;
       }
-      if (annotations.schemaVersion !== 1 || !Array.isArray(annotations.items)) return;
-      current.items = annotations.items;
-      this.changed();
+      if (annotations.schemaVersion !== ContractSchemaVersion || !Array.isArray(annotations.items))
+        return;
+      store.dispatch(clearAnnotationDraft(id));
     } catch {
       // Keep the local state; the next remote change retries.
     }
@@ -637,8 +623,8 @@ export class Workspace {
   get unsaved() {
     return (
       [...this.sessions.values()].some((s) => s.revision !== s.savedRevision) ||
-      this.preferenceSaved < this.preferenceRevision ||
-      this.calibratorPreferenceSaved < this.calibratorPreferenceRevision
+      !!store.getState().client.mapPreferencesDraft ||
+      !!store.getState().client.calibrationPreferencesDraft
     );
   }
 }
@@ -646,6 +632,33 @@ export class Workspace {
 export const workspace = new Workspace();
 
 export function useWorkspace(workspace: Workspace) {
-  useSyncExternalStore(workspace.subscribe, workspace.snapshot);
+  useSelector((state: RootState) => state.client.annotations.activeId);
+  useSelector((state: RootState) => state.client.annotations.loading);
+  useSelector((state: RootState) => state.client.annotations.error);
+  useSelector((state: RootState) => state.client.annotations.preferenceError);
+  useSelector((state: RootState) => state.client.annotations.calibratorPreferenceError);
+  useSelector((state: RootState) => state.client.annotations.savingPreferences);
+  useSelector((state: RootState) => state.client.annotations.savingCalibratorPreferences);
+  useSelector(
+    (state: RootState) => state.client.annotations.sessions[state.client.annotations.activeId],
+  );
+  // The drafts are the truth while an edit waits for its debounced save: the preferences the pages
+  // read (floors, categories, owner lists) come from the draft, so without subscribing to it the UI
+  // keeps the old value until the save round-trips.
+  useSelector((state: RootState) => state.client.mapPreferencesDraft);
+  useSelector((state: RootState) => state.client.calibrationPreferencesDraft);
+  // Every other getter this hook exposes reads a query cache. This store has no change channel of
+  // its own, so the caches the pages render from have to be subscribed here or they only appear on
+  // a later render.
+  useSelector(api.endpoints.getMapCatalog.select(locale));
+  useSelector(api.endpoints.getStickers.select());
+  useSelector(
+    (state: RootState) =>
+      api.endpoints.getMap.select({ id: state.client.annotations.activeId, locale })(state).data,
+  );
+  useSelector(
+    (state: RootState) =>
+      api.endpoints.getAnnotations.select(state.client.annotations.activeId)(state).data?.value,
+  );
   return workspace;
 }

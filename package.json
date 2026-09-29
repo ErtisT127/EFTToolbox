@@ -6,9 +6,11 @@
     "toolbox": "node scripts/cli.mjs",
     "test:maps": "node --test dashboard/test/map-tests.mjs",
     "contracts": "node contracts/generate.mjs",
-    "contracts:check": "node contracts/generate.mjs --check",
+    "contracts:check": "node contracts/generate.mjs --check && node contracts/check.mjs",
+    "defaults": "node scripts/generate-defaults.mjs",
+    "defaults:check": "node scripts/generate-defaults.mjs --check",
     "i18n:check": "node scripts/i18n-check.mjs",
-    "build": "pnpm contracts && pnpm --filter @efttoolbox/dashboard build",
+    "build": "pnpm contracts && pnpm defaults && pnpm --filter @efttoolbox/dashboard build",
     "format": "prettier --write ."
   },
   "devDependencies": {

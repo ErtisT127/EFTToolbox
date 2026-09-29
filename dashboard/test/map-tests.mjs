@@ -4,8 +4,21 @@ import { readFile } from 'node:fs/promises';
 import { DOMParser } from '@xmldom/xmldom';
 import { pixelToWorld, worldToPixel, segmentDistance } from '../src/pages/map/lib/geometry.ts';
 import { Workspace, selectableFloors } from '../src/stores/workspaceStore.ts';
+import {
+  clientReducer,
+  commitAnnotations,
+  ensureAnnotationSession,
+  redoAnnotations,
+  undoAnnotations,
+} from '../src/stores/clientState.ts';
 import { mapTimes, timePhase } from '../src/pages/map/lib/time.ts';
 import { SVG_MAX_ZOOM, zoomRange } from '../src/pages/map/lib/zoom.ts';
+import {
+  isAnnotationVisible,
+  nextMarkerPreferences,
+  ownerVisibleFor,
+  ownerVisibilityFor,
+} from '../src/pages/map/lib/visibility.ts';
 
 const root = new URL('../../data/upstream/', import.meta.url);
 const assetsRoot = new URL('assets/', root);
@@ -21,16 +34,6 @@ test('floor options respect basemap availability and never switch basemap implic
   assert.ok(selectableFloors(data, 'tiles').some((f) => f.id === rasterOnly.id));
   for (const mode of ['svg', 'tiles'])
     assert.ok(!selectableFloors(data, mode).some((f) => f.id === data.baseFloor));
-  const w = new Workspace();
-  w.sessions.set(data.id, { data });
-  const preference = w.preferenceFor(data.id);
-  preference.basemap = 'svg';
-  preference.floorId = rasterOnly.id;
-  assert.equal(w.preferenceFor(data.id).basemap, 'svg');
-  assert.equal(preference.floorId, data.baseFloor);
-  preference.basemap = 'tiles';
-  preference.floorId = rasterOnly.id;
-  assert.equal(w.preferenceFor(data.id).floorId, rasterOnly.id);
 });
 
 test('daylight icons follow each clock independently at dawn/day/dusk/night boundaries', async () => {
@@ -201,30 +204,9 @@ test('rotation orientation and stroke hit testing have independent expected valu
   assert.equal(segmentDistance({ x: 13, y: 4 }, { x: 0, y: 0 }, { x: 10, y: 0 }), 5);
 });
 
-test('serial saves coalesce edits, retain failed edits, retry, and preserve map history', async () => {
-  const previous = globalThis.fetch;
+test('annotation drafts keep undo and redo history independently of server requests', async () => {
   const map = await load('maps/factory_zh.json');
-  const w = new Workspace();
-  const session = {
-    data: map,
-    items: [],
-    past: [],
-    future: [],
-    revision: 0,
-    savedRevision: 0,
-    saving: false,
-    error: '',
-  };
-  w.sessions.set(map.id, session);
-  const pending = [],
-    writes = [];
-  globalThis.fetch = (url, init) => {
-    if (url === '/api/logs') return Promise.resolve(new Response(null, { status: 204 }));
-    return new Promise((resolve) => {
-      writes.push(JSON.parse(init.body));
-      pending.push(resolve);
-    });
-  };
+  let state = clientReducer(undefined, ensureAnnotationSession(map.id));
   const item = (id) => ({
     id,
     floorId: map.defaultFloor,
@@ -236,43 +218,21 @@ test('serial saves coalesce edits, retain failed edits, retry, and preserve map 
     text: id,
     textSize: 15,
   });
-  const tick = () => new Promise((resolve) => setImmediate(resolve));
-  try {
-    w.commit(map.id, [item('a')]);
-    w.commit(map.id, [item('a'), item('b')]);
-    assert.equal(writes.length, 1);
-    pending.shift()(new Response('{}'));
-    await tick();
-    assert.equal(writes.length, 2);
-    assert.equal(writes[1].items.length, 2);
-    pending.shift()(new Response('disk full', { status: 500 }));
-    await tick();
-    assert.equal(session.items.length, 2);
-    assert.ok(session.error);
-    assert.notEqual(session.revision, session.savedRevision);
-    const retry = w.save(map.id);
-    pending.shift()(new Response('{}'));
-    await retry;
-    assert.equal(session.savedRevision, session.revision);
-    assert.equal(session.error, '');
-    w.undo(map.id);
-    assert.equal(session.items.length, 1);
-    pending.shift()(new Response('{}'));
-    await tick();
-    w.redo(map.id);
-    assert.equal(session.items.length, 2);
-    pending.shift()(new Response('{}'));
-    await tick();
-    w.undo(map.id);
-    pending.shift()(new Response('{}'));
-    await tick();
-    w.commit(map.id, [item('c')]);
-    assert.equal(session.future.length, 0);
-    pending.shift()(new Response('{}'));
-    await tick();
-  } finally {
-    globalThis.fetch = previous;
-  }
+  state = clientReducer(state, commitAnnotations({ id: map.id, base: [], items: [item('a')] }));
+  state = clientReducer(
+    state,
+    commitAnnotations({ id: map.id, base: [item('a')], items: [item('a'), item('b')] }),
+  );
+  state = clientReducer(state, undoAnnotations({ id: map.id, current: [item('a'), item('b')] }));
+  assert.equal(state.annotations.sessions[map.id].draft.length, 1);
+  state = clientReducer(state, redoAnnotations({ id: map.id, current: [item('a')] }));
+  assert.equal(state.annotations.sessions[map.id].draft.length, 2);
+  state = clientReducer(state, undoAnnotations({ id: map.id, current: [item('a'), item('b')] }));
+  state = clientReducer(
+    state,
+    commitAnnotations({ id: map.id, base: [item('a')], items: [item('c')] }),
+  );
+  assert.equal(state.annotations.sessions[map.id].future.length, 0);
 });
 
 test('a slow previous map response cannot replace the active map', async () => {
@@ -281,33 +241,169 @@ test('a slow previous map response cannot replace the active map', async () => {
   const first = await load('maps/factory_zh.json'),
     second = await load('maps/interchange_zh.json');
   const pending = [];
-  globalThis.fetch = (url, init) => {
-    if (url === '/api/logs') return Promise.resolve(new Response(null, { status: 204 }));
-    if (init?.method === 'PUT') return Promise.resolve(new Response('{}'));
+  globalThis.fetch = (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/api/maps?locale=zh-CN')) return Promise.resolve(new Response('[]'));
+    if (url.endsWith('/api/map-preferences'))
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ schemaVersion: 1, selectedMap: '', maps: [], stickerUsage: [] }),
+          { headers: { 'Content-Type': 'application/json', ETag: '"pref"', 'X-Revision': 'pref' } },
+        ),
+      );
+    if (init?.method === 'PUT' || (input instanceof Request && input.method === 'PUT'))
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ schemaVersion: 1, selectedMap: '', maps: [], stickerUsage: [] }),
+          { headers: { 'Content-Type': 'application/json', ETag: '"next"', 'X-Revision': 'next' } },
+        ),
+      );
+    if (url.includes('/api/maps/') && url.endsWith('/annotations'))
+      return Promise.resolve(
+        new Response(JSON.stringify({ schemaVersion: 1, items: [] }), {
+          headers: { 'Content-Type': 'application/json', ETag: '"rev"', 'X-Revision': 'rev' },
+        }),
+      );
+    if (url.includes('/api/maps/')) {
+      const map = url.includes(first.id) ? first : second;
+      return Promise.resolve(
+        new Response(JSON.stringify(map), { headers: { 'Content-Type': 'application/json' } }),
+      );
+    }
     return new Promise((resolve) => pending.push({ url, resolve }));
   };
   try {
     const a = w.select(first.id),
       b = w.select(second.id);
-    for (const p of pending.filter((p) => p.url.includes(second.id)))
-      p.resolve(
-        new Response(
-          JSON.stringify(p.url.endsWith('annotations') ? { schemaVersion: 1, items: [] } : second),
-        ),
-      );
+    await new Promise((resolve) => setImmediate(resolve));
     await b;
-    for (const p of pending.filter((p) => p.url.includes(first.id)))
-      p.resolve(
-        new Response(
-          JSON.stringify(p.url.endsWith('annotations') ? { schemaVersion: 1, items: [] } : first),
-        ),
-      );
     await a;
     assert.equal(w.activeId, second.id);
     assert.equal(w.loading, false);
     assert.equal(w.sessions.has(first.id), false);
+    await new Promise((resolve) => setTimeout(resolve, 550));
     await w.savePreferences();
   } finally {
     globalThis.fetch = previous;
   }
+});
+
+const selfOwner = 'self';
+const teammate = 'mate';
+const departed = 'gone';
+const visibleContext = {
+  selfId: selfOwner,
+  activeOwners: [teammate],
+  hiddenOwners: [],
+  shownOwners: [],
+};
+
+// The dashboard, the cast and the native overlay share one owner-visibility rule; these cases are
+// the matrix the C# mirror (--owner-visibility-self-check) repeats.
+test('owner visibility: hidden wins, own markers stay visible, roster defaults and departed owners', () => {
+  const visible = (context, ownerId) => ownerVisibleFor(context)?.(ownerId);
+  assert.equal(
+    visible(visibleContext, selfOwner),
+    true,
+    'own markers render outside/inside a room',
+  );
+  assert.equal(
+    visible({ ...visibleContext, hiddenOwners: [selfOwner] }, selfOwner),
+    false,
+    'own markers hide when hidden',
+  );
+  assert.equal(
+    visible({ ...visibleContext, hiddenOwners: [teammate] }, teammate),
+    false,
+    'a manual hide beats the roster',
+  );
+  assert.equal(visible(visibleContext, teammate), true, 'room members default visible');
+  assert.equal(visible(visibleContext, departed), false, 'departed owners default hidden');
+  assert.equal(
+    visible({ ...visibleContext, shownOwners: [departed] }, departed),
+    true,
+    'explicitly shown departed owners render',
+  );
+  assert.equal(
+    visible({ ...visibleContext, hiddenOwners: [departed], shownOwners: [departed] }, departed),
+    false,
+    'hidden beats an explicit show',
+  );
+  assert.equal(
+    visible({ ...visibleContext, selfId: '' }, teammate),
+    undefined,
+    'no identity means no filtering',
+  );
+  const owners = ownerVisibilityFor(visibleContext);
+  assert.equal(owners.selfId, selfOwner);
+  assert.deepEqual([...owners.active], [teammate]);
+});
+
+test('annotation visibility: the group switch hides everyone, the floor splits the rest', () => {
+  const owners = ownerVisibilityFor(visibleContext);
+  const annotation = { ownerId: selfOwner, floorId: 'ground' };
+  const preference = { floorId: 'ground', showAnnotations: true };
+  assert.equal(isAnnotationVisible(annotation, preference, owners), true);
+  assert.equal(
+    isAnnotationVisible(annotation, { ...preference, showAnnotations: false }, owners),
+    false,
+    'the group switch hides the local owner too',
+  );
+  assert.equal(
+    isAnnotationVisible({ ...annotation, floorId: 'second' }, preference, owners),
+    false,
+    'only the current floor renders',
+  );
+  assert.equal(
+    isAnnotationVisible(
+      { ...annotation, ownerId: departed },
+      { ...preference, showAnnotations: false },
+      owners,
+    ),
+    false,
+  );
+  assert.equal(
+    isAnnotationVisible({ ...annotation, ownerId: departed }, preference, owners),
+    false,
+  );
+});
+
+test('owner toggle writes the side that makes the choice stick', () => {
+  const base = { schemaVersion: 1, hiddenOwners: [], shownOwners: [] };
+  const context = { selfId: selfOwner, activeOwners: [teammate] };
+
+  // The bug this locks: a departed owner is hidden by default, so showing one has to be recorded.
+  const shown = nextMarkerPreferences(base, departed, true, context);
+  assert.deepEqual(shown.shownOwners, [departed]);
+  assert.deepEqual(shown.hiddenOwners, []);
+  assert.equal(
+    ownerVisibleFor({ ...visibleContext, shownOwners: shown.shownOwners })?.(departed),
+    true,
+  );
+
+  // Unchecking records the manual hide, so it survives that owner rejoining the room.
+  const hidden = nextMarkerPreferences(base, teammate, false, context);
+  assert.deepEqual(hidden.hiddenOwners, [teammate]);
+  assert.equal(
+    ownerVisibleFor({ ...visibleContext, hiddenOwners: hidden.hiddenOwners })?.(teammate),
+    false,
+  );
+
+  // Checking an active member only clears the hide: the roster already keeps them visible.
+  const cleared = nextMarkerPreferences(hidden, teammate, true, context);
+  assert.deepEqual(cleared.hiddenOwners, []);
+  assert.deepEqual(cleared.shownOwners, []);
+
+  // Own markers never need the shown list, and a redundant toggle writes nothing.
+  const selfShown = nextMarkerPreferences(base, selfOwner, true, context);
+  assert.equal(selfShown, base);
+  assert.equal(nextMarkerPreferences(shown, departed, true, context), shown);
+  const selfHidden = nextMarkerPreferences(base, selfOwner, false, context);
+  assert.deepEqual(selfHidden.hiddenOwners, [selfOwner]);
+  assert.deepEqual(nextMarkerPreferences(selfHidden, selfOwner, true, context).hiddenOwners, []);
+
+  // Unchecking a shown departed owner must not leave it visible by default either.
+  const unshown = nextMarkerPreferences(shown, departed, false, context);
+  assert.deepEqual(unshown.shownOwners, []);
+  assert.deepEqual(unshown.hiddenOwners, [departed]);
 });

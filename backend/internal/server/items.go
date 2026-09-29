@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	defaults "efttoolbox/backend/internal/defaults"
 	contracts "efttoolbox/contracts"
 )
 
@@ -145,11 +146,22 @@ type itemsManager struct {
 }
 
 func defaultItemsSettings() contracts.ItemsSettings {
-	return contracts.ItemsSettings{SchemaVersion: 1, IntervalMinutes: 60, IncludeImages: true, Sort: "id"}
+	return defaults.ItemsSettings()
+}
+
+func (m *itemsManager) resetSettings() error {
+	value := defaults.ItemsSettings()
+	if err := m.store.files.Save(filepath.Join("user", "items-settings.json"), value); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.settings = value
+	m.mu.Unlock()
+	return nil
 }
 
 func validItemsSettings(value contracts.ItemsSettings) bool {
-	return value.SchemaVersion == 1 && slices.Contains(itemIntervals, value.IntervalMinutes) &&
+	return value.SchemaVersion == contracts.ContractSchemaVersion && slices.Contains(itemIntervals, value.IntervalMinutes) &&
 		slices.Contains(append([]string{""}, itemCategories...), value.Category) &&
 		slices.Contains([]string{"id", "name", "traderPrice", "fleaPrice", "lowestPrice"}, value.Sort)
 }
@@ -316,7 +328,7 @@ func itemCatalog(mode string, source upstreamItems, traders map[string]upstreamT
 		})
 	}
 	slices.SortFunc(items, func(a, b contracts.ItemsCatalogItem) int { return strings.Compare(a.Id, b.Id) })
-	return contracts.ItemsCatalog{SchemaVersion: 1, FetchedAt: time.Now().UTC().Format(time.RFC3339Nano), Mode: mode, Items: items}
+	return contracts.ItemsCatalog{SchemaVersion: contracts.ContractSchemaVersion, FetchedAt: time.Now().UTC().Format(time.RFC3339Nano), Mode: mode, Items: items}
 }
 
 func traderName(id string, trader upstreamTrader, en map[string]string) string {
@@ -585,29 +597,10 @@ func (m *itemsManager) downloadImages(ctx context.Context, source upstreamItems,
 		sources = append(sources, entry)
 	}
 	slices.SortFunc(sources, func(a, b manifestEntry) int { return strings.Compare(a.Source, b.Source) })
-	if err := atomicJSON(manifestPath, itemManifest{FetchedAt: time.Now().UTC().Format(time.RFC3339Nano), Sources: sources}); err != nil {
+	if err := m.store.savePath(manifestPath, itemManifest{FetchedAt: time.Now().UTC().Format(time.RFC3339Nano), Sources: sources}); err != nil {
 		return nil, downloaded, skipped, err
 	}
 	return images, downloaded, skipped, nil
-}
-
-func atomicJSON(name string, value any) error {
-	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
-		return err
-	}
-	data, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	temporary := name + ".tmp"
-	if err := os.WriteFile(temporary, append(data, '\n'), 0o644); err != nil {
-		return err
-	}
-	if err := os.Rename(temporary, name); err != nil {
-		_ = os.Remove(temporary)
-		return err
-	}
-	return nil
 }
 
 func (m *itemsManager) run(ctx context.Context, includeImages bool) error {
@@ -693,7 +686,7 @@ func (m *itemsManager) run(ctx context.Context, includeImages bool) error {
 			return err
 		}
 		m.setStatus(func(s *contracts.ItemsUpdateStatus) { s.Phase, s.Detail = "write", "items_"+locale })
-		if err := atomicJSON(m.catalogPathFor(mode, locale), catalog); err != nil {
+		if err := m.store.savePath(m.catalogPathFor(mode, locale), catalog); err != nil {
 			return err
 		}
 	}
@@ -784,7 +777,7 @@ func (m *itemsManager) register(mux *http.ServeMux) {
 			locale = "zh"
 		}
 		var value contracts.ItemsCatalog
-		if err := readJSON(m.catalogPath(locale), &value); err != nil || value.SchemaVersion != 1 || value.Mode != m.mode() {
+		if err := readJSON(m.catalogPath(locale), &value); err != nil || value.SchemaVersion != contracts.ContractSchemaVersion || value.Mode != m.mode() {
 			apiError(w, http.StatusNotFound, "items_not_available")
 			return
 		}
@@ -794,10 +787,19 @@ func (m *itemsManager) register(mux *http.ServeMux) {
 		if !localRequest(w, r) {
 			return
 		}
-		jsonResponse(w, m.readSettings())
+		value, revision, etag, err := ReadVersioned(m.store.files, filepath.Join("user", "items-settings.json"), defaultItemsSettings())
+		if err != nil {
+			apiError(w, http.StatusInternalServerError, "items_settings_invalid")
+			return
+		}
+		versionedJSONResponse(w, value, revision, etag)
 	})
 	mux.HandleFunc("PUT /api/items-settings", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
+			return
+		}
+		expected, ok := requireRevision(w, r)
+		if !ok {
 			return
 		}
 		var value contracts.ItemsSettings
@@ -809,14 +811,20 @@ func (m *itemsManager) register(mux *http.ServeMux) {
 			dataDirError(w, err)
 			return
 		}
-		if err := m.store.saveGlobal("items-settings.json", value); err != nil {
-			apiError(w, http.StatusInternalServerError, "items_settings_invalid")
+		revision, etag, err := m.store.files.Update(filepath.Join("user", "items-settings.json"), expected, defaultItemsSettings(), value, nil)
+		if errors.Is(err, errRevisionConflict) {
+			versionedConflict(w, revision, etag)
+			return
+		}
+		if err != nil {
+			log.Printf("save items settings: %v", err)
+			apiError(w, http.StatusInternalServerError, "items_settings_save_failed")
 			return
 		}
 		m.mu.Lock()
 		m.settings = value
 		m.mu.Unlock()
-		jsonResponse(w, value)
+		versionedJSONResponse(w, value, revision, etag)
 	})
 	mux.HandleFunc("POST /api/items/update", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {

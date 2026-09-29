@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	contracts "efttoolbox/contracts"
 )
@@ -30,7 +31,7 @@ func mapFixtureWithBlockedUser(t *testing.T) (string, http.Handler) {
 	if err := os.WriteFile(filepath.Join(root, "user"), []byte("not a directory"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return root, New(context.Background(), "test", http.FS(fstest.MapFS{}), root)
+	return root, testServer(t, root)
 }
 
 func mapFixture(t *testing.T) (string, http.Handler) {
@@ -51,7 +52,18 @@ func mapFixture(t *testing.T) (string, http.Handler) {
 	if err := os.WriteFile(filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture_en.json"), dataEn, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return root, New(context.Background(), "test", http.FS(fstest.MapFS{}), root)
+	return root, testServer(t, root)
+}
+
+func testServer(t *testing.T, root string) http.Handler {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	handler := New(ctx, "test", http.FS(fstest.MapFS{}), root)
+	t.Cleanup(func() {
+		cancel()
+		time.Sleep(50 * time.Millisecond)
+	})
+	return handler
 }
 
 func callJSON(t *testing.T, handler http.Handler, method, path string, value any) *httptest.ResponseRecorder {
@@ -66,6 +78,23 @@ func callJSON(t *testing.T, handler http.Handler, method, path string, value any
 	}
 	request := httptest.NewRequest(method, path, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
+	request.RemoteAddr = "127.0.0.1:1234"
+	request.Host = "localhost"
+	if method == http.MethodPut || path == "/api/data/reset-user-settings" {
+		getPath := path
+		if path == "/api/data/reset-user-settings" {
+			getPath = "/api/user-settings"
+		}
+		get := httptest.NewRequest(http.MethodGet, getPath, nil)
+		get.RemoteAddr, get.Host = request.RemoteAddr, request.Host
+		current := httptest.NewRecorder()
+		handler.ServeHTTP(current, get)
+		tag := current.Header().Get("ETag")
+		if tag == "" {
+			tag = `"invalid"`
+		}
+		request.Header.Set("If-Match", tag)
+	}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
@@ -116,7 +145,7 @@ func TestMapDiscoveryAndPersistence(t *testing.T) {
 	if response := callJSON(t, handler, "PUT", "/api/maps/fixture/annotations", saved); response.Code != 200 {
 		t.Fatal(response.Body.String())
 	}
-	restarted := New(context.Background(), "test", http.FS(fstest.MapFS{}), root)
+	restarted := testServer(t, root)
 	response = callJSON(t, restarted, "GET", "/api/maps/fixture/annotations", nil)
 	var actual contracts.Annotations
 	if err := json.Unmarshal(response.Body.Bytes(), &actual); err != nil || len(actual.Items) != 1 || actual.Items[0].Text != saved.Items[0].Text {
@@ -175,6 +204,32 @@ func TestCorruptCalibrationReturnsCalibrationError(t *testing.T) {
 	response := callJSON(t, handler, "GET", "/api/maps/fixture/calibration?basemap=svg", nil)
 	if response.Code != http.StatusInternalServerError || !bytes.Contains(response.Body.Bytes(), []byte(`"code":"calibration_invalid"`)) {
 		t.Fatalf("corrupt calibration was not classified correctly: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestInvalidCalibrationDocumentSetReturnsCalibrationError(t *testing.T) {
+	root, handler := mapFixture(t)
+	path := filepath.Join(root, "user", "calibration", "maps.calibration.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	invalid := contracts.CalibrationDocuments{
+		SchemaVersion: 1,
+		Maps: []contracts.CalibrationDocument{
+			{SchemaVersion: 1, MapId: "fixture", Basemap: "svg", Revision: 0, NextRegionNumber: 1},
+			{SchemaVersion: 1, MapId: "fixture", Basemap: "svg", Revision: 0, NextRegionNumber: 1},
+		},
+	}
+	data, err := json.Marshal(invalid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	response := callJSON(t, handler, "GET", "/api/maps/fixture/calibration?basemap=svg", nil)
+	if response.Code != http.StatusInternalServerError || !bytes.Contains(response.Body.Bytes(), []byte(`"code":"calibration_invalid"`)) {
+		t.Fatalf("invalid calibration set was accepted: %d %s", response.Code, response.Body.String())
 	}
 }
 
@@ -249,6 +304,65 @@ func TestCalibrationRegionDeletionPersistsEmptyDocument(t *testing.T) {
 	}
 }
 
+func TestCalibrationDocumentRequiresCurrentETag(t *testing.T) {
+	_, handler := mapFixture(t)
+	path := "/api/maps/fixture/calibration?basemap=svg"
+	request := func(method string, document *contracts.CalibrationDocument, etag string) *httptest.ResponseRecorder {
+		var body []byte
+		if document != nil {
+			var err error
+			body, err = json.Marshal(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		req := httptest.NewRequest(method, path, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if etag != "" {
+			req.Header.Set("If-Match", etag)
+		}
+		req.RemoteAddr = "127.0.0.1:1234"
+		req.Host = "localhost"
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response
+	}
+
+	initial := request(http.MethodGet, nil, "")
+	if initial.Code != http.StatusOK || initial.Header().Get("ETag") == "" || initial.Header().Get("X-Revision") == "" {
+		t.Fatalf("GET did not return revision: %d %v", initial.Code, initial.Header())
+	}
+	var document contracts.CalibrationDocument
+	if err := json.Unmarshal(initial.Body.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+
+	withoutRevision := request(http.MethodPut, &document, "")
+	if withoutRevision.Code != http.StatusPreconditionRequired {
+		t.Fatalf("PUT without revision returned %d: %s", withoutRevision.Code, withoutRevision.Body.String())
+	}
+
+	document.NextRegionNumber++
+	saved := request(http.MethodPut, &document, initial.Header().Get("ETag"))
+	if saved.Code != http.StatusOK || saved.Header().Get("X-Revision") == initial.Header().Get("X-Revision") || saved.Header().Get("ETag") == "" {
+		t.Fatalf("conditional PUT failed or omitted new revision: %d %v %s", saved.Code, saved.Header(), saved.Body.String())
+	}
+	var persisted contracts.CalibrationDocument
+	if err := json.Unmarshal(saved.Body.Bytes(), &persisted); err != nil {
+		t.Fatal(err)
+	}
+	stale := request(http.MethodPut, &persisted, initial.Header().Get("ETag"))
+	if stale.Code != http.StatusConflict {
+		t.Fatalf("stale ETag PUT returned %d: %s", stale.Code, stale.Body.String())
+	}
+
+	after := request(http.MethodGet, nil, "")
+	var actual contracts.CalibrationDocument
+	if after.Code != http.StatusOK || json.Unmarshal(after.Body.Bytes(), &actual) != nil || actual.Revision != persisted.Revision || actual.NextRegionNumber != persisted.NextRegionNumber || after.Header().Get("X-Revision") != saved.Header().Get("X-Revision") {
+		t.Fatalf("stale PUT changed persisted document: %d %s", after.Code, after.Body.String())
+	}
+}
+
 func TestCalibrationDocumentsAreIsolatedByBasemap(t *testing.T) {
 	_, handler := mapFixture(t)
 	document := func(basemap, id string) contracts.CalibrationDocument {
@@ -305,7 +419,7 @@ func TestCorruptCalibrationPreferencesReturnsCalibrationError(t *testing.T) {
 	}
 }
 
-func TestCalibrationResetPreservesOtherUserData(t *testing.T) {
+func TestCalibrationResetRestoresDefaultsAndPreservesOtherUserData(t *testing.T) {
 	root, handler := mapFixture(t)
 	files := map[string]string{
 		filepath.Join(root, "user", "calibration", "maps.calibration.json"):             `{ "schemaVersion": 1, "maps": [] }`,
@@ -332,13 +446,13 @@ func TestCalibrationResetPreservesOtherUserData(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("calibration reset failed: %d %s", response.Code, response.Body.String())
 	}
-	for _, path := range []string{
-		filepath.Join(root, "user", "calibration", "maps.calibration.json"),
-		filepath.Join(root, "user", "calibration", "calibration-preferences.json"),
-	} {
-		if _, err := os.Stat(path); err == nil {
-			t.Fatalf("calibration file was not removed: %s", path)
-		}
+	var documents contracts.CalibrationDocuments
+	if err := readJSON(filepath.Join(root, "user", "calibration", "maps.calibration.json"), &documents); err != nil || documents.SchemaVersion != 1 || documents.Maps == nil || len(documents.Maps) != 0 {
+		t.Fatalf("calibration documents were not restored to defaults: %+v %v", documents, err)
+	}
+	var preferences contracts.CalibratorPreferences
+	if err := readJSON(filepath.Join(root, "user", "calibration", "calibration-preferences.json"), &preferences); err != nil || preferences.SchemaVersion != 1 || preferences.CollapsedMaps == nil || preferences.CollapsedFloors == nil {
+		t.Fatalf("calibration preferences were not restored to defaults: %+v %v", preferences, err)
 	}
 	for _, path := range []string{
 		filepath.Join(root, "user", "maps", "keep.txt"),

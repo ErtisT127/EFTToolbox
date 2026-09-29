@@ -5,11 +5,12 @@ import { useLocale } from '../hooks/useLocale';
 import { notices } from '../stores/noticeStore';
 import { reportThrottledFailure } from '../stores/workspaceStore';
 import { AppPopover } from './AppPopover';
-import type {
-  MobileInterfaces,
-  MobileStartRequest,
-  MobileStatus,
-} from '../../../contracts/ts/ipc.gen';
+import {
+  useGetCastInterfacesQuery,
+  useGetCastStatusQuery,
+  useStartCastMutation,
+  useStopCastMutation,
+} from '../stores/api';
 
 type Stage = 'config' | 'running' | 'confirm';
 type CopyState = 'idle' | 'copying' | 'copied';
@@ -20,10 +21,16 @@ export function CastControl() {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
   const [stage, setStage] = useState<Stage>('config');
-  const [status, setStatus] = useState<MobileStatus>({
-    enabled: false,
-    connected: 0,
+  const {
+    data: status = { enabled: false, connected: 0 },
+    refetch: load,
+    error: statusError,
+  } = useGetCastStatusQuery(undefined, {
+    pollingInterval: open ? 2000 : 0,
   });
+  const { data: interfaceData, error: interfacesError } = useGetCastInterfacesQuery();
+  const [startCast] = useStartCastMutation();
+  const [stopCast] = useStopCastMutation();
   const [address, setAddress] = useState('');
   const [interfaces, setInterfaces] = useState<string[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
@@ -37,6 +44,21 @@ export function CastControl() {
   const copyLocked = useRef(false);
   const copyTimer = useRef<number | undefined>(undefined);
 
+  useEffect(() => {
+    setStage((current) =>
+      current === 'confirm' ? current : status.enabled ? 'running' : 'config',
+    );
+  }, [status.enabled]);
+  useEffect(() => {
+    if (!interfaceData) return;
+    setInterfaces(interfaceData.addresses ?? []);
+    setAddress((current) => current || interfaceData.addresses[0] || '');
+  }, [interfaceData]);
+  useEffect(() => {
+    if (statusError) reportThrottledFailure('cast_status_poll_failed', String(statusError));
+    if (interfacesError) reportThrottledFailure('cast_interfaces_failed', String(interfacesError));
+  }, [statusError, interfacesError]);
+
   useEffect(() => () => window.clearTimeout(copyTimer.current), []);
 
   const close = () => {
@@ -46,40 +68,6 @@ export function CastControl() {
     setStage((current) => (current === 'confirm' ? 'running' : current));
     triggerButton.current?.focus();
   };
-
-  const load = () =>
-    void fetch('/api/cast/status')
-      .then((response) => {
-        if (!response.ok) throw new Error('status');
-        return response.json() as Promise<MobileStatus>;
-      })
-      .then((next) => {
-        setStatus(next);
-        setStage((current) =>
-          current === 'confirm' ? current : next.enabled ? 'running' : 'config',
-        );
-      })
-      .catch((error: unknown) => reportThrottledFailure('cast_status_poll_failed', String(error)));
-
-  useEffect(() => {
-    load();
-    void fetch('/api/cast/interfaces')
-      .then((response) => {
-        if (!response.ok) throw new Error('interfaces');
-        return response.json() as Promise<MobileInterfaces>;
-      })
-      .then((values) => {
-        setInterfaces(values.addresses ?? []);
-        if (values.addresses[0]) setAddress(values.addresses[0]);
-      })
-      .catch((error: unknown) => reportThrottledFailure('cast_interfaces_failed', String(error)));
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    const timer = window.setInterval(load, 2000);
-    return () => window.clearInterval(timer);
-  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -131,30 +119,22 @@ export function CastControl() {
     if (requesting) return;
     setRequesting('start');
     try {
-      const response = await fetch('/api/cast/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address: address.trim() } satisfies MobileStartRequest),
-      });
-      if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as {
-          code?: string;
-          detail?: string;
-        } | null;
+      await startCast({ address: address.trim() }).unwrap();
+      setStage('running');
+    } catch (reason) {
+      const data =
+        reason && typeof reason === 'object' && 'data' in reason ? reason.data : undefined;
+      const body =
+        data && typeof data === 'object' ? (data as { code?: string; detail?: string }) : {};
+      {
         notices.push(
-          body?.code === 'mobile_address_invalid'
+          body.code === 'mobile_address_invalid'
             ? t('cast.addressInvalid')
-            : body?.code === 'mobile_port_in_use'
+            : body.code === 'mobile_port_in_use'
               ? t('cast.portInUse', { port: body.detail ?? '' })
               : t('cast.startFailed'),
         );
-        return;
       }
-      const next = (await response.json()) as MobileStatus;
-      setStatus(next);
-      setStage('running');
-    } catch {
-      notices.push(t('cast.startFailed'));
     } finally {
       setRequesting(null);
     }
@@ -164,9 +144,7 @@ export function CastControl() {
     if (requesting) return;
     setRequesting('stop');
     try {
-      const response = await fetch('/api/cast/stop', { method: 'POST' });
-      if (!response.ok) throw new Error('stop');
-      setStatus({ enabled: false, connected: 0 });
+      await stopCast().unwrap();
       setStage('config');
       close();
     } catch {
@@ -206,7 +184,7 @@ export function CastControl() {
         title={t('cast.trigger')}
         onClick={() => {
           setOpen(true);
-          load();
+          void load();
         }}
       >
         <Smartphone size={20} />

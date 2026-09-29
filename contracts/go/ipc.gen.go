@@ -3,6 +3,11 @@ package contracts
 
 import "math"
 
+const (
+	ContractSchemaVersion   int    = 1
+	ContractProtocolVersion string = "1"
+)
+
 type Status struct {
 	ProtocolVersion string `json:"protocolVersion"`
 	AppVersion      string `json:"appVersion"`
@@ -53,6 +58,7 @@ type ServerEvent struct {
 	Reason              *string               `json:"reason,omitempty"`
 	Preferences         *Preferences          `json:"preferences,omitempty"`
 	FiltersChanged      *MobileFiltersChanged `json:"filtersChanged,omitempty"`
+	MarkerPreferences   *MarkerPreferences    `json:"markerPreferences,omitempty"`
 	OverlaySettings     *OverlaySettings      `json:"overlaySettings,omitempty"`
 	OverlayView         *OverlayView          `json:"overlayView,omitempty"`
 	OverlayCommand      *OverlayCommand       `json:"overlayCommand,omitempty"`
@@ -62,6 +68,8 @@ type ServerEvent struct {
 	RecognitionRequest  *RecognitionRequest   `json:"recognitionRequest,omitempty"`
 	RecognitionResult   *RecognitionResult    `json:"recognitionResult,omitempty"`
 	RecognitionStart    *RecognitionStart     `json:"recognitionStart,omitempty"`
+	Language            *string               `json:"language,omitempty"`
+	OwnerId             *string               `json:"ownerId,omitempty"`
 }
 
 type ItemsCatalogItem struct {
@@ -539,17 +547,18 @@ type UserSettings struct {
 }
 
 type OverlayBootstrap struct {
-	SchemaVersion        int    `json:"schemaVersion"`
-	MapDirectory         string `json:"mapDirectory"`
-	AssetDirectory       string `json:"assetDirectory"`
-	TileDirectory        string `json:"tileDirectory"`
-	TileManifestFile     string `json:"tileManifestFile"`
-	PreferencesFile      string `json:"preferencesFile"`
-	AnnotationsDirectory string `json:"annotationsDirectory"`
-	OverlaySettingsFile  string `json:"overlaySettingsFile"`
-	StickersFile         string `json:"stickersFile"`
-	WebsocketPath        string `json:"websocketPath"`
-	LogPipeName          string `json:"logPipeName"`
+	SchemaVersion         int    `json:"schemaVersion"`
+	MapDirectory          string `json:"mapDirectory"`
+	AssetDirectory        string `json:"assetDirectory"`
+	TileDirectory         string `json:"tileDirectory"`
+	TileManifestFile      string `json:"tileManifestFile"`
+	PreferencesFile       string `json:"preferencesFile"`
+	MarkerPreferencesFile string `json:"markerPreferencesFile"`
+	AnnotationsDirectory  string `json:"annotationsDirectory"`
+	OverlaySettingsFile   string `json:"overlaySettingsFile"`
+	StickersFile          string `json:"stickersFile"`
+	WebsocketPath         string `json:"websocketPath"`
+	LogPipeName           string `json:"logPipeName"`
 }
 
 type OverlayView struct {
@@ -629,16 +638,23 @@ type MultiplayerMember struct {
 	State     string `json:"state"`
 }
 
+type MultiplayerInvite struct {
+	Mode       string  `json:"mode"`
+	Host       string  `json:"host"`
+	StunServer *string `json:"stunServer,omitempty"`
+	Key        string  `json:"key"`
+}
+
 type MultiplayerStatus struct {
-	Enabled   bool                 `json:"enabled"`
-	Role      *string              `json:"role,omitempty"`
-	Mode      *string              `json:"mode,omitempty"`
-	ShareText *string              `json:"shareText,omitempty"`
-	Port      *int                 `json:"port,omitempty"`
-	Self      *MultiplayerMember   `json:"self,omitempty"`
-	Members   *[]MultiplayerMember `json:"members,omitempty"`
-	Known     *[]MultiplayerMember `json:"known,omitempty"`
-	Error     *string              `json:"error,omitempty"`
+	Enabled bool                 `json:"enabled"`
+	Role    *string              `json:"role,omitempty"`
+	Mode    *string              `json:"mode,omitempty"`
+	Invite  *MultiplayerInvite   `json:"invite,omitempty"`
+	Port    *int                 `json:"port,omitempty"`
+	Self    *MultiplayerMember   `json:"self,omitempty"`
+	Members *[]MultiplayerMember `json:"members,omitempty"`
+	Known   *[]MultiplayerMember `json:"known,omitempty"`
+	Error   *string              `json:"error,omitempty"`
 }
 
 type MultiplayerSettings struct {

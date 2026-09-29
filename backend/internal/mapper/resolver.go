@@ -73,7 +73,7 @@ func ResolveWithDiagnostics(index *Index, p contracts.WorldPosition, followFloor
 }
 
 func ValidDocument(doc contracts.CalibrationDocument, mapData contracts.MapData) bool {
-	if doc.SchemaVersion != 1 || doc.MapId != mapData.Id || (doc.Basemap != "svg" && doc.Basemap != "tiles") || doc.Revision < 0 || doc.NextRegionNumber < 1 || len(doc.Regions) > 10000 {
+	if doc.SchemaVersion != contracts.ContractSchemaVersion || doc.MapId != mapData.Id || (doc.Basemap != "svg" && doc.Basemap != "tiles") || doc.Revision < 0 || doc.NextRegionNumber < 1 || len(doc.Regions) > 10000 {
 		return false
 	}
 	ids := map[string]bool{}

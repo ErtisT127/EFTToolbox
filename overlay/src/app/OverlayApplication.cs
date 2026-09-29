@@ -23,7 +23,7 @@ internal sealed class OverlayApplication : IDisposable
     private readonly SemaphoreSlim recognitionStart = new(1);
     private readonly SvgRasterizer rasterizer = new();
     private OverlaySettings settings = OverlaySettingsStore.Defaults;
-    private RecognitionSettings recognitionSettings = new() { SchemaVersion = 1, OcrConfidence = 0.5, NameSimilarity = 0.65, TemplateSimilarity = 0.6, CaptureWidth = 640, CaptureHeight = 640, AutoPush = true, TemplateMatching = true, TemplateStrict = false, OcrUpscale = 2, OcrMinLength = 3, CandidateLimit = 8, TemplateMinScale = 0.5, TemplateMaxScale = 1.8, IconWindowRatio = 1.6, AutoClose = true, AutoCloseSeconds = 5, Opacity = 100, WindowWidth = 440, WindowHeight = 512 };
+    private RecognitionSettings recognitionSettings = DefaultsValues.Recognition;
     // One run at a time: the hotkey supersedes whatever is in flight, and the superseded run stops
     // producing anything the moment its token is cancelled.
     private CancellationTokenSource? recognitionRun;
@@ -31,6 +31,11 @@ internal sealed class OverlayApplication : IDisposable
     private readonly Dictionary<string, byte[]> recognitionIcons = [];
     private Preferences preferences = new();
     private OverlayBootstrap? bootstrap;
+    // The shared owner-visibility rule's inputs: the local owner id, the room roster, and the
+    // dashboard's owner lists. Snapshot/event supplied, so the overlay renders what the dashboard does.
+    private string ownerId = "";
+    private MultiplayerStatus? multiplayerStatus;
+    private MarkerPreferences markerPreferences = new();
     private CancellationTokenSource loading = new();
     private int generation;
     private int renderCount, hotkeyCount;
@@ -481,7 +486,7 @@ internal sealed class OverlayApplication : IDisposable
         var previousView = (scene.Center, scene.Zoom, scene.Floor, scene.Basemap);
         // The language this load starts with; the reload below compares it against the live value so
         // a change that arrives while the file is being read never leaves the old names baked in.
-        var language = OverlayText.Language;
+        var language = Messages.Language;
         if (bootstrap is null) return; loading.Cancel(); loading.Dispose(); loading = new(); var token = loading.Token; var version = ++generation;
         tiles.Clear(); renderer.Tiles.Clear(); renderer.Svg.Clear(); scene.SvgRegion = null; resourceKey = ""; scene.Map = null; loadingScene = true; Begin("map", resources: true);
         var b = bootstrap;
@@ -520,7 +525,7 @@ internal sealed class OverlayApplication : IDisposable
                     else if (scene.Preference.Center.Length == 2) { scene.Center = new((float)scene.Preference.Center[1], (float)-scene.Preference.Center[0]); scene.Zoom = scene.Preference.Zoom; scene.ClampZoom(); } else scene.Fit();
                     // The language moved while the file was being read: this map is already stale, so
                     // hand the view over to a load in the current language instead of showing it.
-                    if (language != OverlayText.Language) { LoadMap(id, preference, follow, preserveView); return; }
+                    if (language != Messages.Language) { LoadMap(id, preference, follow, preserveView); return; }
                     loadingScene = false; LoadResources(); if (follow) FollowSelf();
                 }); Wake();
             }
@@ -532,6 +537,14 @@ internal sealed class OverlayApplication : IDisposable
     {
         var path = Path.Combine(b.AnnotationsDirectory, id + ".annotations.json");
         return File.Exists(path) ? OverlayStateClient.Read<Annotations>(path)?.Items ?? [] : [];
+    }
+    private static MarkerPreferences ReadMarkerPreferences(OverlayBootstrap b) =>
+        File.Exists(b.MarkerPreferencesFile) ? OverlayStateClient.Read<MarkerPreferences>(b.MarkerPreferencesFile) ?? new() : new();
+    /// <summary>Rebuilds the shared owner-visibility rule and repaints; the rule itself is map-independent.</summary>
+    private void ApplyOwnerVisibility()
+    {
+        scene.Owners = OwnerVisibility.From(ownerId, multiplayerStatus, markerPreferences);
+        dirty = true;
     }
     private void LoadResources(bool force = false, bool viewOnly = false)
     {
@@ -593,6 +606,11 @@ internal sealed class OverlayApplication : IDisposable
     private void Event(ServerEvent e)
     {
         if (e.Type == "overlay_status") return;
+        // Owner visibility rides the session: the id on every event, the roster on multiplayer
+        // changes, the owner lists on their own event (the file watcher covers external edits).
+        if (e.OwnerId is { } owner && owner != ownerId) { ownerId = owner; ApplyOwnerVisibility(); }
+        if (e.MultiplayerStatus is { } roster) { multiplayerStatus = roster; ApplyOwnerVisibility(); }
+        if (e.MarkerPreferences is { } ownerLists) { markerPreferences = ownerLists; ApplyOwnerVisibility(); }
         var nextPreference = e.Preferences?.Maps.FirstOrDefault(p => p.MapId == e.Preferences.SelectedMap);
         var replacesResources = e.Preferences is { } next && next.SelectedMap != preferences.SelectedMap
             || nextPreference is { } view && (view.FloorId != scene.Preference.FloorId || view.Basemap != scene.Preference.Basemap)
@@ -601,14 +619,23 @@ internal sealed class OverlayApplication : IDisposable
             || e.Player is { IsSelf: true } self && (settings.FollowCenter && self.MapId != scene.Map?.Id || settings.FollowFloor && self.Resolution.FloorId != scene.Floor);
         if (replacesResources) operation = null;
         Begin(e.Type, e.OperationId);
-        if (e.OverlaySettings is { } s) ApplySettings(s);
+        if (e.OverlaySettings is { } s)
+        {
+            client.InvalidateSettingsETags();
+            // A local drag owns the pending value until its save attempt completes.
+            if (drag < 2 && Volatile.Read(ref dragSaveQueued) == 0 && !client.SettingsSavePending && !client.SettingsConflict) ApplySettings(s);
+        }
         // A language lives in the aggregate user settings: pick it up on the first snapshot and
         // again whenever a settings write broadcasts one of its events.
         if (e.Type is "snapshot" or "overlay_settings" or "recognition_settings" or "game_monitor_changed") _ = ApplyLanguageAsync();
         if (e.RecognitionSettings is { } recognition)
         {
-            recognitionSettings = recognition;
-            recognitionWindow.ApplySettings(recognition);
+            client.InvalidateSettingsETags();
+            if (!recognitionWindow.HasPendingSave && !client.RecognitionSavePending && !client.RecognitionConflict)
+            {
+                recognitionSettings = recognition;
+                recognitionWindow.ApplySettings(recognition);
+            }
         }
         // A snapshot is what a late client sees; showing the panel from it would pop an old result
         // back up on every reconnect, so only live events move the window.
@@ -654,18 +681,18 @@ internal sealed class OverlayApplication : IDisposable
             if (command.Kind == "view") { if (command.Center is { } c) scene.Center = new((float)c.X, (float)c.Y); if (command.Zoom is { } z) scene.Zoom = z; if (command.FloorId is { } f) scene.Floor = f; scene.ClampZoom(); LoadResources(); }
         }
     }
-    /// <summary>The panel labels rasterize from OverlayText and the map bakes its marker names
+    /// <summary>The panel labels rasterize from the generated messages and the map bakes its marker names
     /// into textures, so a language change only needs the new value plus a map reload.</summary>
     private async Task ApplyLanguageAsync()
     {
         var language = await client.GetLanguageAsync();
-        if (language is null || language == OverlayText.Language) return;
+        if (language is null || language == Messages.Language) return;
         // This resumes on a worker thread, but the scene, the texture caches and every other map
         // load belong to the frame loop, so the value is handed over instead of applied here.
         completions.Enqueue(() =>
         {
-            if (language == OverlayText.Language) return;
-            OverlayText.Language = language;
+            if (language == Messages.Language) return;
+            Messages.Language = language;
             if (scene.Map is { } map) LoadMap(map.Id, scene.Preference, preserveView: true);
         });
         Wake();
@@ -682,6 +709,7 @@ internal sealed class OverlayApplication : IDisposable
             var previous = bootstrap;
             bootstrap = b; markers.SetAssets(b.AssetDirectory, b.StickersFile); renderer.SetAssetDirectory(b.AssetDirectory); renderer.Images.Clear(); renderer.Texts.Clear();
             recognitionWindow.SetAssets(b.AssetDirectory);
+            markerPreferences = ReadMarkerPreferences(b); ApplyOwnerVisibility();
             dirty = true;
             // Tells the tile layer which tiles are already on disk; it asks the backend for the rest.
             _ = Task.Run(() => { try { tiles.SetManifest(b.TileManifestFile); } catch (Exception e) { OverlayDiagnostics.Log("warn", "tile_manifest_failed", e.Message); } Wake(); });
@@ -707,14 +735,19 @@ internal sealed class OverlayApplication : IDisposable
                     try
                     {
                         var p = File.Exists(b2.PreferencesFile) ? OverlayStateClient.Read<Preferences>(b2.PreferencesFile) : null;
+                        var settingsGeneration = client.SettingsGeneration;
                         var saved = await client.GetSettingsAsync();
                         var annotations = currentId is null ? [] : ReadAnnotations(b2, currentId);
+                        var ownerLists = ReadMarkerPreferences(b2);
                         if (reloadResources) tiles.SetManifest(b2.TileManifestFile);
                         completions.Enqueue(() =>
                         {
                             if (bootstrap != b2) return;
+                            // The owner lists live outside the map: an external edit (or a dashboard
+                            // toggle) has to move the filter without reloading the map.
+                            markerPreferences = ownerLists; ApplyOwnerVisibility();
                             if (p is not null) Select(p);
-                            if (System.Text.Json.JsonSerializer.Serialize(saved) != System.Text.Json.JsonSerializer.Serialize(settings)) ApplySettings(saved);
+                            if (settingsGeneration == client.SettingsGeneration && !client.SettingsSavePending && !client.SettingsConflict && System.Text.Json.JsonSerializer.Serialize(saved) != System.Text.Json.JsonSerializer.Serialize(settings)) ApplySettings(saved);
                             if (scene.Map?.Id == currentId) scene.Annotations = annotations;
                             if (reloadResources)
                             {

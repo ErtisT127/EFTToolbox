@@ -11,6 +11,10 @@
     </PropertyGroup>
     <ItemGroup>
         <Compile Include="../contracts/cs/Ipc.g.cs" Link="Contracts/Ipc.g.cs" />
+        <Compile Include="../contracts/cs/Protocol.g.cs" Link="Contracts/Protocol.g.cs" />
+        <Compile Include="../contracts/cs/Errors.g.cs" Link="Contracts/Errors.g.cs" />
+        <Compile Include="../contracts/cs/Messages.g.cs" Link="Contracts/Messages.g.cs" />
+        <Compile Include="../contracts/cs/Http.g.cs" Link="Contracts/Http.g.cs" />
         <Compile Include="../contracts/cs/MapDisplay.g.cs" Link="Contracts/MapDisplay.g.cs" />
         <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
         <PackageReference Include="OpenCvSharp4" Version="4.10.0.20241107" />

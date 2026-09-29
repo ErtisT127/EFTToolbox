@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://efttoolbox.local/signal.schema.json",
+  "title": "EFTToolbox multiplayer signaling protocol",
+  "$defs": {
+    "SignalRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "offer"],
+      "properties": {
+        "key": { "type": "string", "maxLength": 256 },
+        "offer": { "type": "string", "minLength": 1, "maxLength": 1048576 }
+      }
+    },
+    "SignalError": {
+      "type": "string",
+      "enum": [
+        "multiplayer_signal_invalid",
+        "multiplayer_key_invalid",
+        "multiplayer_room_full",
+        "multiplayer_share_invalid",
+        "multiplayer_connection_failed",
+        "multiplayer_signaling_timeout",
+        "multiplayer_stun_failed"
+      ]
+    },
+    "SignalResponse": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["answer"],
+          "properties": { "answer": { "type": "string", "minLength": 1, "maxLength": 1048576 } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["error"],
+          "properties": {
+            "answer": { "type": "string", "maxLength": 1048576 },
+            "error": { "$ref": "#/$defs/SignalError" },
+            "detail": { "type": "string", "maxLength": 4096 }
+          }
+        }
+      ]
+    }
+  }
+}

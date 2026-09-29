@@ -50,11 +50,14 @@ export class BuiltinMarkers extends L.Layer {
   private attached = false;
   private dpr = 0;
   private iconSize = 24;
+  private laidOut = false;
+  private settled = false;
 
   constructor(
     private data: MapData,
     private annotations: () => L.Layer[],
     private activateFloor: (floor: string) => void,
+    private onIconsSettled: () => void = () => {},
   ) {
     super();
     const categories = new Map(data.categories.map((c) => [c.id, c]));
@@ -181,6 +184,7 @@ export class BuiltinMarkers extends L.Layer {
     this.raise(this.pinned);
     this.updateTooltip();
     this.updateOutlines();
+    this.laidOut = true;
     this.schedule();
   }
 
@@ -298,6 +302,8 @@ export class BuiltinMarkers extends L.Layer {
       img.alt = '';
       img.draggable = false;
       img.width = img.height = this.iconSize;
+      // Settling only needs a re-check; the icon itself paints whenever the browser is done.
+      img.onload = img.onerror = () => this.schedule();
       element.append(img);
     }
     if (entry.named) {
@@ -382,10 +388,17 @@ export class BuiltinMarkers extends L.Layer {
           (this.entries[a.id].active ? 1000 : 0) -
           (b.p.y + (this.entries[b.id].active ? 1000 : 0)) || a.id - b.id,
     );
+    // Any icon still decoding keeps the map "unfinished" for the caller's loading overlay, so the
+    // cast does not drop the overlay onto a map whose markers have not painted yet.
+    let pending = false;
     for (const { id, p } of visible) {
-      const entry = this.entries[id],
-        sprite = this.sprite(entry);
-      if (!sprite) continue;
+      const entry = this.entries[id];
+      const url = entry.marker.iconUrl || entry.category.iconUrl;
+      const sprite = url ? this.sprite(entry) : undefined;
+      if (!sprite) {
+        if (url && !this.sprites.get(`${url}:${entry.art}`)?.image.complete) pending = true;
+        continue;
+      }
       ctx.globalAlpha = entry.active ? 1 : 0.2;
       // Copy cached device pixels directly; fractional-DPR resampling softens the thin outline.
       ctx.drawImage(
@@ -393,6 +406,14 @@ export class BuiltinMarkers extends L.Layer {
         Math.round(p.x * dpr - sprite.width / 2),
         Math.round(p.y * dpr - sprite.height / 2),
       );
+    }
+    for (const entry of this.entries) {
+      const image = entry.visible && entry.native?.getElement()?.querySelector('img');
+      if (image && !image.complete) pending = true;
+    }
+    if (this.laidOut && !pending && !this.settled) {
+      this.settled = true;
+      this.onIconsSettled();
     }
     this.canvas.style.visibility = '';
     if (this.restoreFade) {

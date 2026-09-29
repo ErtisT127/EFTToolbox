@@ -8,15 +8,12 @@ import type {
 } from '../../../../../contracts/ts/ipc.gen';
 import { segmentDistance } from './geometry';
 import { rimmedArtwork } from './artwork';
+import { isAnnotationVisible, type OwnerVisibility } from './visibility';
+
+export { isAnnotationVisible } from './visibility';
+export type { OwnerVisibility } from './visibility';
 
 export const latLng = (MapPoint: MapPoint): L.LatLngTuple => [-MapPoint.y, MapPoint.x];
-
-/** Per-owner visibility context: hidden/shown are user preferences, active is the live roster. */
-export type OwnerVisibility = {
-  selfId: string;
-  active: Set<string>;
-  visible: (ownerId: string) => boolean;
-};
 
 // Leaflet paints every vector layer onto a canvas (`preferCanvas`), so CSS never reaches these
 // colours and the design token has to be read into JS. Cached because paint() also runs from
@@ -39,16 +36,6 @@ function placeholderSticker() {
 
 // The sticker slot, matching .annotation-sticker's width in map.css.
 const StickerSize = mapDisplay.stickerSize;
-
-export const isAnnotationVisible = (
-  a: Annotation,
-  preference: MapPreference,
-  owners?: OwnerVisibility,
-) => {
-  if (a.floorId !== preference.floorId || !preference.showAnnotations) return false;
-  if (owners && !owners.visible(a.ownerId)) return false;
-  return true;
-};
 
 export function paintAnnotations(
   layer: L.LayerGroup,

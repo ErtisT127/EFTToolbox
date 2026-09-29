@@ -13,9 +13,9 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
+	contracts "efttoolbox/contracts"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -61,16 +61,8 @@ type signalListener struct {
 	accept   func(offer string) (string, *apiFailure)
 }
 
-type signalRequest struct {
-	Key   string `json:"key"`
-	Offer string `json:"offer"`
-}
-
-type signalResponse struct {
-	Answer string `json:"answer"`
-	Error  string `json:"error,omitempty"`
-	Detail string `json:"detail,omitempty"`
-}
+type signalRequest = contracts.SignalRequest
+type signalResponse = contracts.SignalResponse
 
 func newSignalListener(listener net.Listener, key string, capacity func() bool, accept func(string) (string, *apiFailure)) *signalListener {
 	s := &signalListener{key: key, capacity: capacity, accept: accept}
@@ -92,20 +84,20 @@ func (s *signalListener) close() {
 func (s *signalListener) handleSignal(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
-		writeSignalJSON(w, http.StatusBadRequest, signalResponse{Error: "multiplayer_signal_invalid"})
+		writeSignalJSON(w, http.StatusBadRequest, signalResponse{Error: string(contracts.SignalErrorMultiplayerSignalInvalid)})
 		return
 	}
 	var request signalRequest
 	if json.Unmarshal(body, &request) != nil || request.Offer == "" {
-		writeSignalJSON(w, http.StatusBadRequest, signalResponse{Error: "multiplayer_signal_invalid"})
+		writeSignalJSON(w, http.StatusBadRequest, signalResponse{Error: string(contracts.SignalErrorMultiplayerSignalInvalid)})
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(request.Key), []byte(s.key)) != 1 {
-		writeSignalJSON(w, http.StatusForbidden, signalResponse{Error: "multiplayer_key_invalid"})
+		writeSignalJSON(w, http.StatusForbidden, signalResponse{Error: string(contracts.SignalErrorMultiplayerKeyInvalid)})
 		return
 	}
 	if !s.capacity() {
-		writeSignalJSON(w, http.StatusServiceUnavailable, signalResponse{Error: "multiplayer_room_full"})
+		writeSignalJSON(w, http.StatusServiceUnavailable, signalResponse{Error: string(contracts.SignalErrorMultiplayerRoomFull)})
 		return
 	}
 	answer, failure := s.accept(request.Offer)
@@ -124,18 +116,24 @@ func writeSignalJSON(w http.ResponseWriter, status int, value signalResponse) {
 
 // bindStunSignaling opens the STUN-mode host signaling socket and learns its public mapped
 // address from the selected STUN server. Under a cone NAT that mapping is reachable from anyone,
-// which is exactly what the share text advertises; a symmetric NAT invalidates it and joining fails.
-func bindStunSignaling(stunServer string) (*net.UDPConn, string, *apiFailure) {
+// which is exactly what the structured invite advertises; a symmetric NAT invalidates it and joining fails.
+func bindStunSignaling(stunServer string) (*net.UDPConn, *net.UDPAddr, *apiFailure) {
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 0})
 	if err != nil {
-		return nil, "", fail(http.StatusInternalServerError, "multiplayer_connection_failed")
+		return nil, nil, fail(http.StatusInternalServerError, "multiplayer_connection_failed")
 	}
 	mapped, err := stunMappedAddr(conn, stunServer, 3*time.Second)
 	if err != nil {
 		_ = conn.Close()
-		return nil, "", fail(http.StatusBadGateway, "multiplayer_stun_failed")
+		return nil, nil, fail(http.StatusBadGateway, "multiplayer_stun_failed")
 	}
-	return conn, net.JoinHostPort(mapped.IP.String(), strconv.Itoa(mapped.Port)), nil
+	// The read deadline above only bounds the probe; the same socket keeps serving the
+	// signaling loop, so it must read without a deadline from here on.
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		_ = conn.Close()
+		return nil, nil, fail(http.StatusInternalServerError, "multiplayer_connection_failed")
+	}
+	return conn, mapped, nil
 }
 
 // stunListener serves the same handshake over that UDP socket.
@@ -179,11 +177,11 @@ func (s *stunListener) run() {
 			continue
 		}
 		if subtle.ConstantTimeCompare([]byte(request.Key), []byte(s.key)) != 1 {
-			s.reply(from, signalResponse{Error: "multiplayer_key_invalid"})
+			s.reply(from, signalResponse{Error: string(contracts.SignalErrorMultiplayerKeyInvalid)})
 			continue
 		}
 		if !s.capacity() {
-			s.reply(from, signalResponse{Error: "multiplayer_room_full"})
+			s.reply(from, signalResponse{Error: string(contracts.SignalErrorMultiplayerRoomFull)})
 			continue
 		}
 		answer, failure := s.accept(request.Offer)
@@ -228,11 +226,11 @@ func signalCustom(address, port, key, offer string) (string, *apiFailure) {
 func signalFailure(payload signalResponse) *apiFailure {
 	status := http.StatusBadGateway
 	switch payload.Error {
-	case "multiplayer_key_invalid":
+	case string(contracts.SignalErrorMultiplayerKeyInvalid):
 		status = http.StatusForbidden
-	case "multiplayer_room_full":
+	case string(contracts.SignalErrorMultiplayerRoomFull):
 		status = http.StatusServiceUnavailable
-	case "multiplayer_share_invalid":
+	case string(contracts.SignalErrorMultiplayerShareInvalid):
 		status = http.StatusBadRequest
 	}
 	return failDetail(status, payload.Error, payload.Detail)
@@ -293,24 +291,4 @@ func answerOffer(pc *webrtc.PeerConnection, offerSDP string) (string, *apiFailur
 		return "", fail(http.StatusGatewayTimeout, "multiplayer_signaling_timeout")
 	}
 	return pc.LocalDescription().SDP, nil
-}
-
-// share text: plaintext, human-readable, and parseable for paste-to-join.
-
-const shareHeader = "EFTToolbox 联机"
-
-func buildShareText(mode, host, stunServer, key string) string {
-	var builder strings.Builder
-	builder.WriteString(shareHeader + "\n")
-	if mode == multiplayerModeStun {
-		builder.WriteString("模式: STUN\n")
-	} else {
-		builder.WriteString("模式: 局域网\n")
-	}
-	builder.WriteString("房主: " + host + "\n")
-	if mode == multiplayerModeStun && stunServer != "" {
-		builder.WriteString("STUN: " + stunServer + "\n")
-	}
-	builder.WriteString("密码: " + key + "\n")
-	return builder.String()
 }

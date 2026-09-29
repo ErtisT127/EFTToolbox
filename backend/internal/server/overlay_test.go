@@ -35,6 +35,14 @@ func TestOverlaySettingsAndPlayerSnapshot(t *testing.T) {
 			t.Fatal(err)
 		}
 		req.Header.Set("Content-Type", "application/json")
+		if method == http.MethodPut {
+			current, err := http.Get(srv.URL + path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("If-Match", current.Header.Get("ETag"))
+			_ = current.Body.Close()
+		}
 		response, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -229,5 +237,25 @@ func TestOverlapDedupRevisionAndLRU(t *testing.T) {
 	}
 	if got := dedup.order.Len(); got > 200 {
 		t.Fatalf("LRU grew beyond limit: %d", got)
+	}
+}
+
+// The overlay applies the project's shared owner-visibility rule, so its bootstrap has to point at
+// the same owner list file the dashboard writes.
+func TestBootstrapCarriesOwnerListPath(t *testing.T) {
+	root, handler := mapFixture(t)
+	if response := callLocalJSON(t, handler, http.MethodPut, "/api/user-settings", defaultUserSettings()); response.Code != http.StatusOK {
+		t.Fatalf("save settings: %d %s", response.Code, response.Body.String())
+	}
+	response := callLocalJSON(t, handler, http.MethodGet, "/api/overlay/bootstrap", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("bootstrap: %d %s", response.Code, response.Body.String())
+	}
+	var bootstrap contracts.OverlayBootstrap
+	if err := json.Unmarshal(response.Body.Bytes(), &bootstrap); err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(root, "user", "marker-preferences.json"); bootstrap.MarkerPreferencesFile != want {
+		t.Fatalf("marker preferences file: %q want %q", bootstrap.MarkerPreferencesFile, want)
 	}
 }

@@ -14,5 +14,5 @@ export const hotkeyKeys = [
 ] as const;
 
 export type HotkeyKey = (typeof hotkeyKeys)[number];
-export type SettingsTab = 'system' | 'map' | 'recognition' | 'hotkeys';
-export const settingsTabs = ['system', 'map', 'recognition', 'hotkeys'] as const;
+export type SettingsTab = 'system' | 'map' | 'recognition' | 'hotkeys' | 'data';
+export const settingsTabs = ['system', 'map', 'recognition', 'hotkeys', 'data'] as const;

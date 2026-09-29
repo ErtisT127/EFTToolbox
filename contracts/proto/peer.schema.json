@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://efttoolbox.local/peer.schema.json",
+  "title": "EFTToolbox multiplayer peer wire protocol",
+  "$defs": {
+    "WirePos": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["peerId", "mapId", "x", "y", "z", "heading"],
+      "properties": {
+        "peerId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "mapId": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$", "maxLength": 100 },
+        "x": { "type": "number", "finite": true },
+        "y": { "type": "number", "finite": true },
+        "z": { "type": "number", "finite": true },
+        "heading": { "type": "number", "finite": true }
+      }
+    },
+    "WireHello": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["peerId", "name", "color"],
+      "properties": {
+        "peerId": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$", "maxLength": 100 },
+        "name": { "type": "string", "maxLength": 40 },
+        "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
+      }
+    },
+    "WireRoster": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["members"],
+      "properties": {
+        "members": {
+          "type": "array",
+          "maxItems": 5,
+          "items": { "$ref": "./data.schema.json#/$defs/MultiplayerMember" }
+        }
+      }
+    },
+    "WireAnnotations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ownerId", "mapId", "items"],
+      "properties": {
+        "ownerId": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$", "maxLength": 100 },
+        "mapId": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$", "maxLength": 100 },
+        "items": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": { "$ref": "./data.schema.json#/$defs/Annotation" }
+        }
+      }
+    },
+    "WirePing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t"],
+      "properties": { "t": { "type": "integer", "format": "int64" } }
+    },
+    "WireError": {
+      "type": "string",
+      "enum": ["multiplayer_peer_invalid", "multiplayer_room_full"]
+    },
+    "WireEnvelope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": { "type": { "const": "bye" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "data"],
+          "properties": { "type": { "const": "hello" }, "data": { "$ref": "#/$defs/WireHello" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "data"],
+          "properties": { "type": { "const": "roster" }, "data": { "$ref": "#/$defs/WireRoster" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "data"],
+          "properties": {
+            "type": { "const": "annotations" },
+            "data": { "$ref": "#/$defs/WireAnnotations" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "data"],
+          "properties": { "type": { "const": "pos" }, "data": { "$ref": "#/$defs/WirePos" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "data"],
+          "properties": { "type": { "const": "ping" }, "data": { "$ref": "#/$defs/WirePing" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "data"],
+          "properties": { "type": { "const": "pong" }, "data": { "$ref": "#/$defs/WirePing" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "data"],
+          "properties": { "type": { "const": "error" }, "data": { "$ref": "#/$defs/WireError" } }
+        }
+      ]
+    }
+  }
+}

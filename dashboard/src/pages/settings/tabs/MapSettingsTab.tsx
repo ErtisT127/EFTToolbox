@@ -59,7 +59,7 @@ export function MapSettingsTab({
         checked={!!value[key]}
         onChange={(event) => onUpdate({ [key]: event.target.checked })}
       />
-      {t(`settings.${key}`)}
+      {t(`minimap.${key}`)}
     </label>
   );
   const updateZoom = (zoom: number) =>
@@ -77,7 +77,7 @@ export function MapSettingsTab({
   return (
     <>
       <fieldset>
-        <legend>{t('settings.appearance')}</legend>
+        <legend>{t('minimap.appearance')}</legend>
         <label className="settings-check">
           <input
             type="checkbox"
@@ -88,10 +88,10 @@ export function MapSettingsTab({
                 : onUpdate({ visible: event.target.checked })
             }
           />
-          {t('settings.visible')}
+          {t('minimap.visible')}
         </label>
         <div className="settings-field">
-          <label htmlFor="settings-opacity">{t('settings.opacity')}</label>
+          <label htmlFor="settings-opacity">{t('minimap.opacity')}</label>
           <span className="settings-slider">
             <input
               id="settings-opacity"
@@ -119,10 +119,10 @@ export function MapSettingsTab({
             checked={value.backdrop}
             onChange={(event) => onUpdate({ backdrop: event.target.checked })}
           />
-          {t('settings.backdrop')}
+          {t('minimap.backdrop')}
         </label>
         <div className="settings-field">
-          <label htmlFor="settings-shape">{t('settings.shape')}</label>
+          <label htmlFor="settings-shape">{t('minimap.shape')}</label>
           <select
             id="settings-shape"
             value={value.shape}
@@ -130,13 +130,13 @@ export function MapSettingsTab({
               onUpdate({ shape: event.target.value as OverlaySettings['shape'] })
             }
           >
-            <option value="square">{t('settings.square')}</option>
-            <option value="circle">{t('settings.circle')}</option>
+            <option value="square">{t('minimap.square')}</option>
+            <option value="circle">{t('minimap.circle')}</option>
           </select>
         </div>
         <div className="size-fields">
           <NumberStepper
-            label={t('settings.width')}
+            label={t('minimap.width')}
             value={value.width}
             limit={OverlaySettingsLimits.width}
             onChange={(width) => onUpdate(resizeOverlay(value, 'width', width))}
@@ -144,14 +144,14 @@ export function MapSettingsTab({
           {value.shape === 'square' && (
             <div className="aspect-row">
               <span className="aspect-spacer" aria-hidden="true">
-                {t('settings.width')}
+                {t('minimap.width')}
               </span>
               <span className="aspect-track">
                 <button
                   type="button"
                   className={`aspect-link ${value.lockAspect ? 'active' : ''}`}
-                  aria-label={t('settings.lockAspect')}
-                  title={t('settings.lockAspect')}
+                  aria-label={t('minimap.lockAspect')}
+                  title={t('minimap.lockAspect')}
                   aria-pressed={value.lockAspect}
                   onClick={() => onUpdate({ lockAspect: !value.lockAspect })}
                 >
@@ -161,7 +161,7 @@ export function MapSettingsTab({
             </div>
           )}
           <NumberStepper
-            label={t('settings.height')}
+            label={t('minimap.height')}
             value={value.height}
             limit={OverlaySettingsLimits.height}
             onChange={(height) => onUpdate(resizeOverlay(value, 'height', height))}
@@ -169,8 +169,8 @@ export function MapSettingsTab({
         </div>
         <div className="settings-field">
           <label htmlFor="settings-resolution">
-            <HintTooltip content={t('settings.svgResolutionHint')}>
-              {t('settings.svgQualityMode')}
+            <HintTooltip content={t('minimap.svgResolutionHint')}>
+              {t('minimap.svgQualityMode')}
             </HintTooltip>
           </label>
           <select
@@ -184,7 +184,7 @@ export function MapSettingsTab({
               )
             }
           >
-            <option value="auto">{t('settings.svgQualityAuto')}</option>
+            <option value="auto">{t('minimap.svgQualityAuto')}</option>
             {[1024, 2048, 4096, 8192].map((resolution) => (
               <option key={resolution} value={resolution}>
                 {resolution}
@@ -194,7 +194,7 @@ export function MapSettingsTab({
         </div>
       </fieldset>
       <fieldset>
-        <legend>{t('settings.follow')}</legend>
+        <legend>{t('minimap.follow')}</legend>
         <span className={`settings-check-wrap${monitorStatus?.logWatching ? '' : ' is-disabled'}`}>
           {monitorStatus?.logWatching ? (
             <label className="settings-check">
@@ -203,13 +203,13 @@ export function MapSettingsTab({
                 checked={!!monitorSettings?.autoMapSwitch}
                 onChange={(event) => onMonitorUpdate({ autoMapSwitch: event.target.checked })}
               />
-              {t('settings.autoMapSwitch')}
+              {t('gameMonitor.autoMapSwitch')}
             </label>
           ) : (
-            <AppTooltip content={t('settings.noMonitorDirectory')}>
+            <AppTooltip content={t('gameMonitor.noDirectory')}>
               <label className="settings-check" aria-disabled="true">
                 <input type="checkbox" disabled checked={!!monitorSettings?.autoMapSwitch} />
-                {t('settings.autoMapSwitch')}
+                {t('gameMonitor.autoMapSwitch')}
               </label>
             </AppTooltip>
           )}
@@ -224,13 +224,13 @@ export function MapSettingsTab({
                 checked={!!monitorSettings?.deleteScreenshots}
                 onChange={(event) => onMonitorUpdate({ deleteScreenshots: event.target.checked })}
               />
-              {t('settings.deleteScreenshots')}
+              {t('gameMonitor.deleteScreenshots')}
             </label>
           ) : (
-            <AppTooltip content={t('settings.noMonitorDirectory')}>
+            <AppTooltip content={t('gameMonitor.noDirectory')}>
               <label className="settings-check" aria-disabled="true">
                 <input type="checkbox" disabled checked={!!monitorSettings?.deleteScreenshots} />
-                {t('settings.deleteScreenshots')}
+                {t('gameMonitor.deleteScreenshots')}
               </label>
             </AppTooltip>
           )}
@@ -245,11 +245,11 @@ export function MapSettingsTab({
             disabled={!value.followZoom}
             onChange={(event) => onUpdate({ perMapZoom: !event.target.checked })}
           />
-          {t('settings.perMapZoom')}
+          {t('minimap.perMapZoom')}
         </label>
         {value.perMapZoom && (
           <div className="settings-field">
-            <label htmlFor="settings-map">{t('settings.map')}</label>
+            <label htmlFor="settings-map">{t('settings.tabs.map')}</label>
             <select
               id="settings-map"
               value={selectedMap}
@@ -265,7 +265,7 @@ export function MapSettingsTab({
           </div>
         )}
         <NumberStepper
-          label={t('settings.targetZoom')}
+          label={t('minimap.targetZoom')}
           value={value.perMapZoom ? (override?.zoom ?? value.targetZoom) : value.targetZoom}
           limit={OverlaySettingsLimits.targetZoom}
           disabled={!value.followZoom}
@@ -279,17 +279,17 @@ export function MapSettingsTab({
             updateZoom(zoomValue(view.zoom));
           }}
         >
-          {t('settings.useCurrent')}
+          {t('minimap.useCurrent')}
         </button>
       </fieldset>
       <fieldset>
-        <legend>{t('settings.window')}</legend>
+        <legend>{t('minimap.window')}</legend>
         <div className="readonly-values">
           <span>
-            {t('settings.left')} <b>{value.left}</b>
+            {t('minimap.left')} <b>{value.left}</b>
           </span>
           <span>
-            {t('settings.top')} <b>{value.top}</b>
+            {t('minimap.top')} <b>{value.top}</b>
           </span>
         </div>
         <button
@@ -298,27 +298,27 @@ export function MapSettingsTab({
           aria-pressed={!!view?.editing}
           onClick={() => onCommand({ kind: 'edit', enabled: !view?.editing })}
         >
-          {t(view?.editing ? 'settings.exitEdit' : 'settings.enterEdit')}
+          {t(view?.editing ? 'minimap.exitEdit' : 'minimap.enterEdit')}
         </button>
       </fieldset>
       <fieldset disabled={!view?.connected}>
-        <legend>{t('settings.viewport')}</legend>
+        <legend>{t('minimap.viewport')}</legend>
         <div className="readonly-values">
           <span>
-            {t('settings.centerX')} <b>{formatCoordinate(view?.center.x || 0)}</b>
+            {t('minimap.centerX')} <b>{formatCoordinate(view?.center.x || 0)}</b>
           </span>
           <span>
-            {t('settings.centerY')} <b>{formatCoordinate(view?.center.y || 0)}</b>
+            {t('minimap.centerY')} <b>{formatCoordinate(view?.center.y || 0)}</b>
           </span>
         </div>
         <NumberStepper
-          label={t('settings.zoom')}
+          label={t('minimap.zoom')}
           value={view?.zoom || 0}
           limit={viewZoomLimit}
           onChange={(zoom) => onCommand({ kind: 'view', zoom })}
         />
         <div className="settings-field">
-          <label htmlFor="settings-floor">{t('settings.floor')}</label>
+          <label htmlFor="settings-floor">{t('minimap.floor')}</label>
           <select
             id="settings-floor"
             value={view?.floorId || ''}

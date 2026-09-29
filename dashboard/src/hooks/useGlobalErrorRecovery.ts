@@ -36,11 +36,10 @@ export function useGlobalErrorRecovery() {
   const recover = useCallback(() => {
     if (overlay.error) void overlay.retry();
     if (w.error) void workspace.initialize();
-    if (session?.error) void workspace.save(w.activeId);
+    if (session?.error) void workspace.retryAnnotations(w.activeId);
     if (w.preferenceError) void workspace.savePreferences();
     if (w.calibratorPreferenceError) void workspace.saveCalibratorPreferences();
-    if (monitor.error && monitor.error !== 'errors.user_settings_invalid')
-      void gameMonitor.initialize();
+    if (monitor.error && monitor.error !== 'errors.user_settings_invalid') void gameMonitor.retry();
   }, [
     monitor.error,
     overlay,

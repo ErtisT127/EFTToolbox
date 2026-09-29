@@ -22,6 +22,27 @@ export function isDataLoadError(value: unknown): value is DataLoadError {
   );
 }
 
+/**
+ * Locale key for a failed request. RTK Query rejections are plain objects carrying the
+ * backend error code, so an `error instanceof Error` check alone loses it and every message
+ * degrades to the generic fallback.
+ */
+export function errorKeyOf(reason: unknown, fallback: string): string {
+  const data =
+    reason !== null && typeof reason === 'object' && 'data' in reason
+      ? (reason as { data?: unknown }).data
+      : undefined;
+  const code =
+    data !== null &&
+    typeof data === 'object' &&
+    'code' in data &&
+    typeof (data as { code?: unknown }).code === 'string'
+      ? (data as { code: string }).code
+      : undefined;
+  if (code) return `errors.${code}`;
+  return reason instanceof Error ? reason.message : fallback;
+}
+
 export function isDashboardDevelopment(): boolean {
   return (
     typeof globalThis !== 'undefined' &&

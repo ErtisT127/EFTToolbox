@@ -3,11 +3,8 @@ package server
 import (
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,24 +14,6 @@ import (
 
 	stun "github.com/pion/stun/v4"
 )
-
-// Local snapshots can be refreshed independently of the binary and are optional at startup.
-func builtinStunServers(dataRoot string) []string {
-	return readStunListFile(filepath.Join(dataRoot, "upstream", "stun-valid-hosts.txt"))
-}
-
-func builtinStunNatServers(dataRoot string) []string {
-	return readStunListFile(filepath.Join(dataRoot, "upstream", "stun-nat-hosts.txt"))
-}
-
-func readStunListFile(path string) []string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		log.Printf("read STUN list %q: %v", path, err)
-		return nil
-	}
-	return parseStunList(string(data))
-}
 
 const (
 	// The repository regenerates both lists on a schedule; the NAT file lists servers suited to

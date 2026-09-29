@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { useSelector } from 'react-redux';
 import i18n from '../i18n';
 import type {
   MarkerPreferences,
@@ -10,6 +11,11 @@ import type {
 } from '../../../contracts/ts/ipc.gen';
 import { reportClientLog } from './workspaceStore';
 import { notices } from './noticeStore';
+import { markerPreferences as defaultMarkerPreferences } from '../defaults.gen';
+import { api, isRevisionConflict } from './api';
+import { store, type RootState } from './store';
+import { clearConflict, setConflict, setMultiplayerState } from './clientState';
+import { nextMarkerPreferences } from '../pages/map/lib/visibility';
 
 // Carries the backend's error code plus its optional detail token (e.g. the occupied port) so the
 // panel can render the concrete failure reason the backend chose.
@@ -24,47 +30,55 @@ export class MultiplayerError extends Error {
   }
 }
 
-async function mpFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(url, init);
-  } catch (error) {
-    reportClientLog('http_request_failed', `request failed: ${url}`, String(error));
-    throw new MultiplayerError('request_failed');
-  }
-  if (!response.ok) {
-    let failure = new MultiplayerError('request_failed');
-    try {
-      const body = (await response.json()) as { code?: string; detail?: string };
-      if (body.code) failure = new MultiplayerError(body.code, body.detail || '');
-    } catch {
-      // Not a JSON error body; keep the generic failure.
-    }
-    reportClientLog('http_request_failed', `${response.status} ${url}`, failure.code);
-    throw failure;
-  }
-  return response.json() as Promise<T>;
+function multiplayerError(reason: unknown) {
+  const data = reason && typeof reason === 'object' && 'data' in reason ? reason.data : undefined;
+  const body = data && typeof data === 'object' ? (data as { code?: string; detail?: string }) : {};
+  return new MultiplayerError(body.code || 'request_failed', body.detail || '');
 }
 
-const put = (data: unknown): RequestInit => ({
-  method: 'PUT',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(data),
-});
-
-const post = (data?: unknown): RequestInit => ({
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: data === undefined ? undefined : JSON.stringify(data),
-});
-
 class MultiplayerStore {
-  status: MultiplayerStatus = { enabled: false };
-  settings?: MultiplayerSettings;
-  showMembersPanel = true;
-  markerPreferences: MarkerPreferences = { schemaVersion: 1, hiddenOwners: [], shownOwners: [] };
-  private initialized = false;
-  private markerWrite = Promise.resolve();
+  get settingsDraft() {
+    return store.getState().client.multiplayer.settingsDraft;
+  }
+  set settingsDraft(value: MultiplayerSettings | undefined) {
+    store.dispatch(setMultiplayerState({ settingsDraft: value }));
+  }
+  get markerDraft() {
+    return store.getState().client.multiplayer.markerDraft;
+  }
+  set markerDraft(value: MarkerPreferences | undefined) {
+    store.dispatch(setMultiplayerState({ markerDraft: value }));
+  }
+  private settingsSaveQueue = Promise.resolve();
+  private settingsEditRevision = 0;
+  get status() {
+    return api.endpoints.getMultiplayerStatus.select()(store.getState()).data || { enabled: false };
+  }
+  get settings() {
+    return (
+      this.settingsDraft ||
+      api.endpoints.getMultiplayerSettings.select()(store.getState()).data?.value
+    );
+  }
+  get markerPreferences() {
+    return (
+      this.markerDraft ||
+      api.endpoints.getMarkerPreferences.select()(store.getState()).data?.value || {
+        ...defaultMarkerPreferences,
+        hiddenOwners: [...defaultMarkerPreferences.hiddenOwners],
+        shownOwners: [...defaultMarkerPreferences.shownOwners],
+      }
+    );
+  }
+  get showMembersPanel() {
+    return this.settings?.showMembersPanel ?? true;
+  }
+  get initialized() {
+    return store.getState().client.multiplayer.initialized;
+  }
+  set initialized(value: boolean) {
+    store.dispatch(setMultiplayerState({ initialized: value }));
+  }
   private version = 0;
   private listeners = new Set<() => void>();
   subscribe = (listener: () => void) => {
@@ -84,27 +98,36 @@ class MultiplayerStore {
     if (this.initialized) return;
     this.initialized = true;
     try {
-      const [status, settings, markerPreferences] = await Promise.all([
-        mpFetch<MultiplayerStatus>('/api/multiplayer/status'),
-        mpFetch<MultiplayerSettings>('/api/multiplayer/settings'),
-        mpFetch<MarkerPreferences>('/api/marker-preferences'),
+      await Promise.all([
+        store
+          .dispatch(api.endpoints.getMultiplayerStatus.initiate(undefined, { forceRefetch: true }))
+          .unwrap(),
+        store
+          .dispatch(
+            api.endpoints.getMultiplayerSettings.initiate(undefined, { forceRefetch: true }),
+          )
+          .unwrap(),
+        store
+          .dispatch(api.endpoints.getMarkerPreferences.initiate(undefined, { forceRefetch: true }))
+          .unwrap(),
       ]);
-      this.status = status;
-      this.settings = settings;
-      this.showMembersPanel = settings.showMembersPanel ?? true;
-      if (!Array.isArray(markerPreferences.hiddenOwners)) markerPreferences.hiddenOwners = [];
-      if (!Array.isArray(markerPreferences.shownOwners)) markerPreferences.shownOwners = [];
-      this.markerPreferences = markerPreferences;
+      this.settingsDraft = undefined;
+      this.markerDraft = undefined;
     } catch {
       this.initialized = false;
     }
     this.changed();
   }
 
+  async reload() {
+    this.initialized = false;
+    await this.initialize();
+  }
+
   /** Live status push from the backend's multiplayer_changed event (zero polling). */
   handleStatus(status: MultiplayerStatus) {
     const previous = this.status;
-    this.status = status;
+    void store.dispatch(api.util.upsertQueryData('getMultiplayerStatus', undefined, status));
     this.notifyRoomEvents(previous, status);
     this.changed();
   }
@@ -158,103 +181,211 @@ class MultiplayerStore {
   }
 
   async host(request: MultiplayerHostRequest) {
-    const status = await mpFetch<MultiplayerStatus>('/api/multiplayer/host', post(request));
-    this.status = status;
-    this.changed();
-    return status;
+    try {
+      const status = await store.dispatch(api.endpoints.hostMultiplayer.initiate(request)).unwrap();
+      void store.dispatch(api.util.upsertQueryData('getMultiplayerStatus', undefined, status));
+      return status;
+    } catch (error) {
+      throw multiplayerError(error);
+    }
   }
 
   async join(request: MultiplayerJoinRequest) {
-    const status = await mpFetch<MultiplayerStatus>('/api/multiplayer/join', post(request));
-    this.status = status;
-    this.changed();
-    return status;
+    try {
+      const status = await store.dispatch(api.endpoints.joinMultiplayer.initiate(request)).unwrap();
+      void store.dispatch(api.util.upsertQueryData('getMultiplayerStatus', undefined, status));
+      return status;
+    } catch (error) {
+      throw multiplayerError(error);
+    }
   }
 
   async leave() {
-    const status = await mpFetch<MultiplayerStatus>('/api/multiplayer/leave', post());
-    this.status = status;
-    this.changed();
-    return status;
+    try {
+      const status = await store.dispatch(api.endpoints.leaveMultiplayer.initiate()).unwrap();
+      void store.dispatch(api.util.upsertQueryData('getMultiplayerStatus', undefined, status));
+      return status;
+    } catch (error) {
+      throw multiplayerError(error);
+    }
   }
 
   async kick(peerId: string) {
-    const status = await mpFetch<MultiplayerStatus>(
-      '/api/multiplayer/kick',
-      post({ peerId } satisfies MultiplayerKickRequest),
-    );
-    this.status = status;
-    this.changed();
-    return status;
+    try {
+      const status = await store
+        .dispatch(
+          api.endpoints.kickMultiplayerPeer.initiate({ peerId } satisfies MultiplayerKickRequest),
+        )
+        .unwrap();
+      void store.dispatch(api.util.upsertQueryData('getMultiplayerStatus', undefined, status));
+      return status;
+    } catch (error) {
+      throw multiplayerError(error);
+    }
   }
 
   async refreshStatus() {
-    this.status = await mpFetch<MultiplayerStatus>('/api/multiplayer/status');
-    this.changed();
-    return this.status;
+    return store
+      .dispatch(api.endpoints.getMultiplayerStatus.initiate(undefined, { forceRefetch: true }))
+      .unwrap();
   }
 
   async saveIdentity(
     changes: Partial<Pick<MultiplayerSettings, 'playerName' | 'playerColor' | 'showMembersPanel'>>,
+    explicit = false,
   ) {
     if (!this.settings) return;
-    this.settings = { ...this.settings, ...changes };
-    this.showMembersPanel = this.settings.showMembersPanel ?? true;
+    this.settingsDraft = { ...this.settings, ...changes };
+    if (
+      !explicit &&
+      store.getState().client.conflicts.some((item) => item.key === 'multiplayer-settings')
+    ) {
+      this.changed();
+      return;
+    }
+    const editRevision = ++this.settingsEditRevision;
     this.changed();
-    this.settings = await mpFetch<MultiplayerSettings>(
-      '/api/multiplayer/settings',
-      put(this.settings),
+    this.settingsSaveQueue = this.settingsSaveQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (
+          !explicit &&
+          store.getState().client.conflicts.some((item) => item.key === 'multiplayer-settings')
+        )
+          return;
+        const value = this.settingsDraft;
+        if (!value) return;
+        try {
+          const current = api.endpoints.getMultiplayerSettings.select()(store.getState()).data;
+          if (!current) throw new MultiplayerError('request_failed');
+          const result = await store
+            .dispatch(
+              api.endpoints.updateMultiplayerSettings.initiate({
+                value,
+                revision: current.revision,
+                etag: current.etag,
+              }),
+            )
+            .unwrap();
+          store.dispatch(
+            api.util.updateQueryData('getMultiplayerSettings', undefined, () => result),
+          );
+          if (editRevision === this.settingsEditRevision) {
+            this.settingsDraft = undefined;
+            store.dispatch(clearConflict('multiplayer-settings'));
+          }
+        } catch (error) {
+          if (isRevisionConflict(error)) {
+            store.dispatch(
+              setConflict({ key: 'multiplayer-settings', resource: 'multiplayerSettings' }),
+            );
+            store.dispatch(api.util.invalidateTags(['Multiplayer']));
+          }
+          throw multiplayerError(error);
+        } finally {
+          this.changed();
+        }
+      });
+    await this.settingsSaveQueue;
+  }
+
+  async retryIdentityConflict() {
+    const draft = this.settingsDraft;
+    if (!draft) return;
+    await store
+      .dispatch(api.endpoints.getMultiplayerSettings.initiate(undefined, { forceRefetch: true }))
+      .unwrap();
+    await this.saveIdentity(
+      {
+        playerName: draft.playerName,
+        playerColor: draft.playerColor,
+        showMembersPanel: draft.showMembersPanel,
+      },
+      true,
     );
-    this.showMembersPanel = this.settings.showMembersPanel ?? true;
+  }
+
+  discardIdentityConflict() {
+    this.settingsDraft = undefined;
+    store.dispatch(clearConflict('multiplayer-settings'));
+    void store.dispatch(
+      api.endpoints.getMultiplayerSettings.initiate(undefined, { forceRefetch: true }),
+    );
     this.changed();
   }
 
   /** Owner visibility is a pure local preference; the backend never writes these arrays. */
   toggleOwner(ownerId: string, visible: boolean) {
-    const hidden = this.markerPreferences.hiddenOwners;
-    const shown = this.markerPreferences.shownOwners;
-    if (visible) {
-      if (!hidden.includes(ownerId)) return;
-      this.markerPreferences = {
-        ...this.markerPreferences,
-        hiddenOwners: hidden.filter((id) => id !== ownerId),
-      };
-    } else if (shown.includes(ownerId)) {
-      // A departed owner explicitly shown goes back to hidden-by-default on uncheck.
-      this.markerPreferences = {
-        ...this.markerPreferences,
-        shownOwners: shown.filter((id) => id !== ownerId),
-      };
-    } else {
-      if (hidden.includes(ownerId)) return;
-      this.markerPreferences = {
-        ...this.markerPreferences,
-        hiddenOwners: [...hidden, ownerId],
-      };
-    }
+    const currentPreferences = this.markerPreferences;
+    const next = nextMarkerPreferences(currentPreferences, ownerId, visible, {
+      selfId: this.selfId,
+      activeOwners: (this.status.members || []).map((member) => member.peerId),
+    });
+    // The transition returns the same object when the toggle changes nothing, so nothing is written.
+    if (next === currentPreferences) return;
+    this.markerDraft = next;
     this.changed();
     // Serial writes: the last toggle's snapshot wins, and a failure only logs (the local state
     // already reflects the user's choice; the next toggle rewrites the file).
-    const next = this.markerPreferences;
-    this.markerWrite = this.markerWrite.then(() =>
-      mpFetch<MarkerPreferences>('/api/marker-preferences', put(next)).then(
-        () => undefined,
-        () => {
-          reportClientLog('http_request_failed', 'marker preferences save failed');
-        },
-      ),
-    );
+    void this.saveMarkerPreferences();
   }
 
-  /**
-   * Whether another owner's markers render. Active members default visible, departed owners
-   * default hidden (unless explicitly shown), and a manual hide always wins.
-   */
-  ownerVisible(ownerId: string) {
-    if (this.markerPreferences.hiddenOwners.includes(ownerId)) return false;
-    if (ownerId === this.selfId) return true;
-    if (this.markerPreferences.shownOwners.includes(ownerId)) return true;
-    return (this.status.members || []).some((member) => member.peerId === ownerId);
+  private markerSaving = false;
+  private async saveMarkerPreferences(explicit = false) {
+    if (this.markerSaving || !this.markerDraft) return;
+    if (
+      !explicit &&
+      store.getState().client.conflicts.some((item) => item.key === 'marker-preferences')
+    )
+      return;
+    this.markerSaving = true;
+    try {
+      while (this.markerDraft) {
+        const value: MarkerPreferences = this.markerDraft!;
+        const current = api.endpoints.getMarkerPreferences.select()(store.getState()).data;
+        if (!current) return;
+        const saved = await store
+          .dispatch(
+            api.endpoints.updateMarkerPreferences.initiate({
+              value,
+              revision: current.revision,
+              etag: current.etag,
+            }),
+          )
+          .unwrap();
+        store.dispatch(api.util.updateQueryData('getMarkerPreferences', undefined, () => saved));
+        if (this.markerDraft === value) {
+          this.markerDraft = undefined;
+          store.dispatch(clearConflict('marker-preferences'));
+        }
+      }
+    } catch (error) {
+      if (isRevisionConflict(error)) {
+        store.dispatch(setConflict({ key: 'marker-preferences', resource: 'markerPreferences' }));
+        store.dispatch(api.util.invalidateTags(['Preferences']));
+      } else
+        reportClientLog('http_request_failed', 'marker preferences save failed', String(error));
+    } finally {
+      this.markerSaving = false;
+      this.changed();
+    }
+  }
+
+  async retryMarkerConflict() {
+    if (!this.markerDraft) return;
+    await store
+      .dispatch(api.endpoints.getMarkerPreferences.initiate(undefined, { forceRefetch: true }))
+      .unwrap();
+    await this.saveMarkerPreferences(true);
+  }
+
+  discardMarkerConflict() {
+    this.markerDraft = undefined;
+    store.dispatch(clearConflict('marker-preferences'));
+    void store.dispatch(
+      api.endpoints.getMarkerPreferences.initiate(undefined, { forceRefetch: true }),
+    );
+    this.changed();
   }
 
   ownerName(ownerId: string) {
@@ -275,6 +406,10 @@ class MultiplayerStore {
 export const multiplayer = new MultiplayerStore();
 
 export function useMultiplayer() {
+  useSelector(api.endpoints.getMultiplayerStatus.select());
+  useSelector(api.endpoints.getMultiplayerSettings.select());
+  useSelector(api.endpoints.getMarkerPreferences.select());
+  useSelector((state: RootState) => state.client.multiplayer);
   useSyncExternalStore(multiplayer.subscribe, multiplayer.snapshot);
   return multiplayer;
 }

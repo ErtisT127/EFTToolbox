@@ -52,7 +52,12 @@ type Props = {
   onReady: (map: L.Map | null) => void;
   onError?: (error: string) => void;
   onProgress?: (value: number) => void;
+  onTileBusy?: (busy: boolean) => void;
   players: Map<string, PlayerState>;
+  playerSource?: {
+    current: Map<string, PlayerState>;
+    subscribe: (listener: () => void) => () => void;
+  };
   playerFollow?: boolean;
   playerAutoZoom?: { enabled: boolean; zoomLevel: number };
   readOnly?: boolean;
@@ -75,11 +80,26 @@ export function MapCanvas(props: Props) {
   const builtins = useRef<BuiltinMarkers | null>(null);
   const renderUsers = useRef<(items: Annotation[]) => void>(() => {});
   const renderPlayers = useRef<(players: Map<string, PlayerState>) => void>(() => {});
+  const basemapProgress = useRef(0);
+  const iconsSettled = useRef(false);
   const [ready, setReady] = useState(0);
+  // Progress arrives from several sources (basemap, tiles, marker icons) and can land out of order,
+  // so the loading overlay only ever moves forward. It holds at 92 until the builtin icons have
+  // painted too; otherwise a phone would show the map with its markers still missing.
+  const reportSettled = () => {
+    if (iconsSettled.current && basemapProgress.current >= 92) current.current.onProgress?.(95);
+  };
+  const reportProgress = (value: number) => {
+    if (value > basemapProgress.current) basemapProgress.current = value;
+    current.current.onProgress?.(basemapProgress.current);
+    reportSettled();
+  };
   const mount = (map: L.Map) => {
     const host = map.getContainer();
     const p = current.current;
     mapRef.current = map;
+    basemapProgress.current = 0;
+    iconsSettled.current = false;
     let zoomTimer: ReturnType<typeof setTimeout>;
     const fadeMarkers = () => {
       clearTimeout(zoomTimer);
@@ -110,6 +130,10 @@ export function MapCanvas(props: Props) {
       p.data,
       () => userLayer.current?.getLayers() || [],
       (floorId) => current.current.onActivateFloor(floorId),
+      () => {
+        iconsSettled.current = true;
+        reportSettled();
+      },
     ).addTo(map);
     const preview = L.layerGroup().addTo(map);
     const selection = new Set<string>();
@@ -140,11 +164,12 @@ export function MapCanvas(props: Props) {
     };
     window.addEventListener('resize', refreshPixelRatio);
     let followedPosition = '';
+    const playerMarkers = new Map<string, { marker: L.Marker; element: HTMLDivElement }>();
     function paintPlayers(players: Map<string, PlayerState>) {
       const p = current.current;
       const layer = playerLayer.current;
       if (!layer) return;
-      layer.clearLayers();
+      const visibleIds = new Set<string>();
       const self = [...players.values()].find(
         (player) => player.isSelf && player.mapId === p.data.id,
       );
@@ -163,11 +188,34 @@ export function MapCanvas(props: Props) {
       }
       for (const player of players.values()) {
         if (player.mapId !== p.data.id) continue;
-        const element = document.createElement('div');
-        element.className = 'player-marker';
+        visibleIds.add(player.playerId);
+        let entry = playerMarkers.get(player.playerId);
+        if (!entry) {
+          const element = document.createElement('div');
+          element.className = 'player-marker';
+          entry = {
+            element,
+            marker: L.marker(latLng(player.mapPosition), {
+              pane: 'player',
+              icon: L.divIcon({
+                html: element,
+                className: 'player-anchor',
+                iconSize: [28, 28],
+                iconAnchor: [14, 14],
+              }),
+              interactive: false,
+              keyboard: false,
+            }),
+          };
+          playerMarkers.set(player.playerId, entry);
+          layer.addLayer(entry.marker);
+        } else {
+          entry.marker.setLatLng(latLng(player.mapPosition));
+        }
+        const element = entry.element;
         // Every arrow carries its owner's multiplayer colour — your own included, so the panel's
         // choice is what you see; the CSS keeps the accent for an unset one.
-        if (player.color) element.style.background = player.color;
+        element.style.background = player.color || '';
         // The arrow tip points up at zero degrees; rotate it to the player's heading.
         element.style.transform = `rotate(${player.heading}deg)`;
         element.style.opacity =
@@ -177,23 +225,18 @@ export function MapCanvas(props: Props) {
             ? '0.35'
             : '1';
         element.title = player.displayName;
-        layer.addLayer(
-          L.marker(latLng(player.mapPosition), {
-            pane: 'player',
-            icon: L.divIcon({
-              html: element,
-              className: 'player-anchor',
-              iconSize: [28, 28],
-              iconAnchor: [14, 14],
-            }),
-            interactive: false,
-            keyboard: false,
-          }),
-        );
+      }
+      for (const [playerId, entry] of playerMarkers) {
+        if (visibleIds.has(playerId)) continue;
+        layer.removeLayer(entry.marker);
+        playerMarkers.delete(playerId);
       }
     }
     renderPlayers.current = paintPlayers;
-    paintPlayers(p.players);
+    paintPlayers(p.playerSource?.current || p.players);
+    const unsubscribePlayers = p.playerSource?.subscribe(() =>
+      paintPlayers(p.playerSource!.current),
+    );
     let space = false;
     type Gesture = {
       kind: Tool | 'pan' | 'box';
@@ -761,6 +804,7 @@ export function MapCanvas(props: Props) {
     setReady((value) => value + 1);
     return () => {
       window.removeEventListener('resize', refreshPixelRatio);
+      unsubscribePlayers?.();
       current.current.onTemporaryHand(false);
       clearTimeout(zoomTimer);
       clearBrush();
@@ -801,23 +845,34 @@ export function MapCanvas(props: Props) {
   };
 
   const { data, preference, items } = props;
+  // The workspace hands out a fresh preference object (and fresh arrays) on every render, so key the
+  // marker refresh on the values that actually change what it draws. Depending on the object itself
+  // rebuilt every marker on each render and wiped the hover tooltip as the pointer moved.
+  const hiddenCategories = preference.hiddenCategories.join('\u0000');
+  const selectedTasks = preference.selectedTasks.join('\u0000');
   useEffect(() => {
-    builtins.current?.setPreference(preference);
+    builtins.current?.setPreference(current.current.preference);
   }, [
     data,
-    preference,
     preference.floorId,
-    preference.hiddenCategories,
-    preference.selectedTasks,
     preference.taskFilterActive,
+    hiddenCategories,
+    selectedTasks,
     ready,
   ]);
   useEffect(() => {
     renderUsers.current(items);
   }, [items, preference.floorId, preference.showAnnotations, props.ownerVisibility, ready]);
   useEffect(() => {
-    renderPlayers.current(props.players);
-  }, [props.players, preference.floorId, props.playerFollow, props.playerAutoZoom, ready]);
+    if (!props.playerSource) renderPlayers.current(props.players);
+  }, [
+    props.players,
+    props.playerSource,
+    preference.floorId,
+    props.playerFollow,
+    props.playerAutoZoom,
+    ready,
+  ]);
   useEffect(() => {
     if (props.tool === 'select' || props.tool === 'edit') mapRef.current?.doubleClickZoom.enable();
     else mapRef.current?.doubleClickZoom.disable();
@@ -829,7 +884,9 @@ export function MapCanvas(props: Props) {
       className={`tool-${props.tool}`}
       onMount={mount}
       onError={props.onError}
-      onProgress={props.onProgress}
+      onProgress={reportProgress}
+      onTileBusy={props.onTileBusy}
+      readOnly={props.readOnly}
     />
   );
 }

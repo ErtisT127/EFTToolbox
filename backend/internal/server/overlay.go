@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode"
 
+	defaults "efttoolbox/backend/internal/defaults"
 	"efttoolbox/backend/internal/gamewatch"
 	"efttoolbox/backend/internal/mapper"
 	contracts "efttoolbox/contracts"
@@ -48,6 +49,8 @@ type overlayHub struct {
 	browseActive      map[string]bool
 	indexMu           sync.RWMutex
 	indexes           map[string]regionIndexSnapshot
+	locationsMu       sync.RWMutex
+	locations         map[string]map[string]string
 	overlapDedup      *overlapDedup
 	mobile            *mobileManager
 	mobileBase        http.Handler
@@ -139,35 +142,17 @@ func (d *overlapDedup) firstOccurrence(key overlapKey) bool {
 }
 
 func defaultOverlaySettings() contracts.OverlaySettings {
-	return contracts.OverlaySettings{
-		SchemaVersion: 1, Visible: true, Shape: "square", Width: 384, Height: 384, Left: 24, Top: 24, LockAspect: true, SvgResolution: 2048,
-		Opacity: ptr(defaultOpacity), Backdrop: false, SvgQualityMode: stringPtr("auto"),
-		FollowCenter: true, FollowFloor: true, FollowZoom: true, TargetZoom: 2, MapZooms: []contracts.MapZoomOverride{},
-		Hotkeys: contracts.OverlayHotkeys{ZoomIn: "Ctrl+Alt+Shift+PageUp", ZoomOut: "Ctrl+Alt+Shift+PageDown", FloorUp: "Alt+PageUp", FloorDown: "Alt+PageDown", Recognition: "Ctrl+Alt+R"},
-	}
+	return defaults.UserSettings().Overlay
 }
 
 func defaultRecognitionSettings() contracts.RecognitionSettings {
-	return contracts.RecognitionSettings{
-		SchemaVersion: 1, OcrConfidence: 0.5, NameSimilarity: 0.65, TemplateSimilarity: 0.6,
-		CaptureWidth: 640, CaptureHeight: 640, AutoPush: true,
-		TemplateMatching: true, TemplateStrict: false,
-		OcrUpscale: 2, OcrMinLength: 3, CandidateLimit: 8,
-		TemplateMinScale: 0.5, TemplateMaxScale: 1.8, IconWindowRatio: 1.6,
-		AutoClose: true, AutoCloseSeconds: 5,
-		Opacity: 100,
-		// A tall strip reads better than a wide bar: the rows stack in one column and the list scrolls.
-		// Both sides sit on the contract's step so the dashboard sliders show them exactly, and the
-		// width clears the widest price at the default text size.
-		WindowWidth: 440, WindowHeight: 512, WindowLeft: 0, WindowTop: 0, Visible: false,
-	}
+	return defaults.UserSettings().Recognition
 }
 
 // The overlay's opacity is optional in the contract so that a settings file written before it
 // existed can be told apart from a deliberate 0% 鈥?a required field would decode as 0 there.
 const defaultOpacity = 100
 
-func ptr(value int) *int             { return &value }
 func stringPtr(value string) *string { return &value }
 
 // Key names are physical positions, not characters: the same shortcut has to mean the same key on
@@ -269,7 +254,7 @@ func canonicalHotkey(value string) string {
 }
 
 func (h *overlayHub) normalize(v *contracts.OverlaySettings) bool {
-	if v.SchemaVersion != 1 || !slices.Contains([]string{"square", "circle"}, v.Shape) || !slices.Contains([]int{1024, 2048, 4096, 8192}, v.SvgResolution) || !finite(v.TargetZoom) || len(v.MapZooms) > 1000 || !normalizeHotkeys(&v.Hotkeys) {
+	if v.SchemaVersion != contracts.ContractSchemaVersion || !slices.Contains([]string{"square", "circle"}, v.Shape) || !slices.Contains([]int{1024, 2048, 4096, 8192}, v.SvgResolution) || !finite(v.TargetZoom) || len(v.MapZooms) > 1000 || !normalizeHotkeys(&v.Hotkeys) {
 		return false
 	}
 	if v.SvgQualityMode == nil {
@@ -300,7 +285,7 @@ func (h *overlayHub) normalize(v *contracts.OverlaySettings) bool {
 		if !finite(z.Zoom) || seen[z.MapId] {
 			return false
 		}
-		if _, err := h.store.load(z.MapId); err != nil {
+		if !h.store.hasMap(z.MapId) {
 			return false
 		}
 		seen[z.MapId] = true
@@ -342,6 +327,12 @@ func localRequest(w http.ResponseWriter, r *http.Request) bool {
 func (h *overlayHub) publish(e contracts.ServerEvent) {
 	e.Status = h.status
 	e.SentAt = time.Now().UTC().Format(time.RFC3339Nano)
+	// The local annotation owner id rides on every event: the cast and the overlay need it for the
+	// shared owner-visibility rule, and a rotated identity then propagates without an extra fetch.
+	if h.multiplayer != nil {
+		owner := h.multiplayer.selfID()
+		e.OwnerId = &owner
+	}
 	if e.OperationId == nil {
 		id := fmt.Sprintf("backend-%d", time.Now().UnixNano())
 		e.OperationId = &id
@@ -382,6 +373,28 @@ func (h *overlayHub) changed(kind, mapID, operationID string) {
 	}
 }
 
+func (h *overlayHub) preferencesChanged(value contracts.Preferences, mapID, operationID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	e := contracts.ServerEvent{Type: "preferences_changed", MapId: &mapID, OperationId: &operationID, Preferences: &value}
+	h.publish(e)
+	if h.mobile != nil {
+		h.mobile.publishFilters(&value, mapID)
+	}
+}
+
+// markerPreferencesChanged mirrors preferencesChanged for the owner-visibility lists: the cast
+// page renders markers with the same hidden/shown owners as the dashboard map.
+func (h *overlayHub) markerPreferencesChanged(value contracts.MarkerPreferences, operationID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	e := contracts.ServerEvent{Type: "marker_preferences_changed", OperationId: &operationID, MarkerPreferences: &value}
+	h.publish(e)
+	if h.mobile != nil {
+		h.mobile.publishMarkerPreferences(value)
+	}
+}
+
 func (h *overlayHub) mobileSnapshot() contracts.ServerEvent {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -389,17 +402,33 @@ func (h *overlayHub) mobileSnapshot() contracts.ServerEvent {
 	for _, player := range h.players {
 		players = append(players, player)
 	}
-	prefs := contracts.Preferences{SchemaVersion: 1, Maps: []contracts.MapPreference{}, StickerUsage: []contracts.StickerUsage{}}
+	prefs := defaults.MapPreferences()
 	_ = readJSON(h.store.userPath("map-preferences.json"), &prefs)
 	normalizeMapPreferences(&prefs)
 	view := h.view
 	monitorStatus := h.monitorStatus
 	event := contracts.ServerEvent{Type: "snapshot", Status: h.status, SentAt: time.Now().UTC().Format(time.RFC3339Nano), Players: &players, Preferences: &prefs, OverlayView: &view, GameMonitorStatus: &monitorStatus}
+	if h.multiplayer != nil {
+		// The phone cannot read the multiplayer settings, so the roster and the local owner id it
+		// needs for the shared owner-visibility rule ride on the snapshot.
+		status := h.multiplayer.status()
+		event.MultiplayerStatus = &status
+		owner := h.multiplayer.selfID()
+		event.OwnerId = &owner
+	}
+	// Marker preferences are global (not mode-scoped): the cast mirrors the dashboard's
+	// owner-visibility filters from the same file the marker-preferences API serves.
+	var markerPrefs contracts.MarkerPreferences
+	if readJSON(filepath.Join(h.store.root, "user", "marker-preferences.json"), &markerPrefs) == nil && validMarkerPreferences(markerPrefs) {
+		event.MarkerPreferences = &markerPrefs
+	}
 	if settings, err := h.settings(); err == nil {
 		event.OverlaySettings = &settings
 	}
 	if user, err := h.userSettings(); err == nil {
 		event.RecognitionSettings = &user.Recognition
+		language := user.Language
+		event.Language = &language
 	}
 	if h.recognitionStart != nil {
 		event.RecognitionStart = h.recognitionStart
@@ -433,13 +462,27 @@ func (h *overlayHub) websocket(ctx context.Context, w http.ResponseWriter, r *ht
 		players = append(players, p)
 	}
 	annotations := []contracts.SharedAnnotation{}
-	prefs := contracts.Preferences{SchemaVersion: 1, Maps: []contracts.MapPreference{}, StickerUsage: []contracts.StickerUsage{}}
+	prefs := defaults.MapPreferences()
 	_ = readJSON(h.store.userPath("map-preferences.json"), &prefs)
 	normalizeMapPreferences(&prefs)
 	settings, settingsErr := h.settings()
 	view := h.view
 	monitorStatus := h.monitorStatus
 	e := contracts.ServerEvent{Type: "snapshot", Status: h.status, SentAt: time.Now().UTC().Format(time.RFC3339Nano), Players: &players, Annotations: &annotations, Preferences: &prefs, OverlayView: &view, GameMonitorStatus: &monitorStatus}
+	if h.multiplayer != nil {
+		// The overlay applies the same owner-visibility rule as the dashboard, so its snapshot carries
+		// the roster and the local owner id; live changes follow on multiplayer_changed.
+		status := h.multiplayer.status()
+		e.MultiplayerStatus = &status
+		owner := h.multiplayer.selfID()
+		e.OwnerId = &owner
+	}
+	// Owner visibility is global (not mode-scoped); the overlay renders the same owner lists the
+	// dashboard's layer panel edits.
+	var markerPrefs contracts.MarkerPreferences
+	if readJSON(filepath.Join(h.store.root, "user", "marker-preferences.json"), &markerPrefs) == nil && validMarkerPreferences(markerPrefs) {
+		e.MarkerPreferences = &markerPrefs
+	}
 	if settingsErr == nil {
 		e.OverlaySettings = &settings
 	}
@@ -519,52 +562,61 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 		mapRoot, err := filepath.Abs(h.store.activeUpstream())
 		if err != nil || h.store.repository() == nil {
 			if err == nil {
-				err = errors.New("mode repository unavailable")
+				err = errors.New("mode_repository_unavailable")
 			}
 			dataError(w, err)
 			return
 		}
-		jsonResponse(w, contracts.OverlayBootstrap{SchemaVersion: 1, MapDirectory: filepath.Join(mapRoot, "maps"), AssetDirectory: filepath.Join(root, "upstream", "assets"), TileDirectory: filepath.Join(root, "upstream", "tiles"), TileManifestFile: filepath.Join(root, "upstream", "tiles", "manifest.json"), PreferencesFile: h.store.userPath("map-preferences.json"), AnnotationsDirectory: filepath.Join(h.store.userRoot(), "maps"), OverlaySettingsFile: filepath.Join(root, "user", "user-settings.json"), StickersFile: filepath.Join(root, "upstream", "stickers.json"), WebsocketPath: "/ws", LogPipeName: h.pipe})
+		jsonResponse(w, contracts.OverlayBootstrap{SchemaVersion: contracts.ContractSchemaVersion, MapDirectory: filepath.Join(mapRoot, "maps"), AssetDirectory: filepath.Join(root, "upstream", "assets"), TileDirectory: filepath.Join(root, "upstream", "tiles"), TileManifestFile: filepath.Join(root, "upstream", "tiles", "manifest.json"), PreferencesFile: h.store.userPath("map-preferences.json"), MarkerPreferencesFile: filepath.Join(root, "user", "marker-preferences.json"), AnnotationsDirectory: filepath.Join(h.store.userRoot(), "maps"), OverlaySettingsFile: filepath.Join(root, "user", "user-settings.json"), StickersFile: filepath.Join(root, "upstream", "stickers.json"), WebsocketPath: "/ws", LogPipeName: h.pipe})
 	})
 	mux.HandleFunc("GET /api/user-settings", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
 			return
 		}
-		value, err := h.userSettings()
-		if err != nil {
-			if code := userSettingsErrorCode(err); code != "" {
-				apiError(w, http.StatusInternalServerError, code)
-			} else {
-				apiError(w, http.StatusInternalServerError, "request_failed")
+		value, revision, etag, err := ReadVersionedRepair(h.store.files, filepath.Join("user", "user-settings.json"), defaultUserSettings(), func(value *contracts.UserSettings) error {
+			if _, code := h.prepareUserSettings(value, false); code != "" {
+				return errors.New(code)
 			}
+			return nil
+		})
+		if err != nil {
+			apiError(w, http.StatusInternalServerError, "user_settings_invalid")
 			return
 		}
-		jsonResponse(w, value)
+		versionedJSONResponse(w, value, revision, etag)
 	})
 	mux.HandleFunc("POST /api/data/reset-user-settings", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
 			return
 		}
-		value := defaultUserSettings()
-		if err := h.applyUserSettings(value, operationID(r), true, true); err != nil {
+		value, revision, etag, err := h.resetUserSettings(operationID(r))
+		if err != nil {
 			apiError(w, http.StatusInternalServerError, "user_settings_reset_failed")
 			return
 		}
-		jsonResponse(w, value)
+		versionedJSONResponse(w, value, revision, etag)
 	})
 	mux.HandleFunc("PUT /api/user-settings", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
+			return
+		}
+		expected, ok := requireRevision(w, r)
+		if !ok {
 			return
 		}
 		var value contracts.UserSettings
 		if !decodeUpdate(w, r, &value) {
 			return
 		}
-		if _, code := h.prepareUserSettings(&value, true); code != "" {
-			apiError(w, http.StatusBadRequest, code)
+		saved, revision, etag, err := h.applyUserSettingsUpdate(expected, func(current *contracts.UserSettings) error {
+			*current = value
+			return nil
+		}, operationID(r), true, true)
+		if errors.Is(err, errRevisionConflict) {
+			versionedConflict(w, revision, etag)
 			return
 		}
-		if err := h.applyUserSettings(value, operationID(r), true, true); err != nil {
+		if err != nil {
 			if code := userSettingsErrorCode(err); code != "" {
 				apiError(w, http.StatusBadRequest, code)
 			} else {
@@ -572,60 +624,76 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 			}
 			return
 		}
-		jsonResponse(w, value)
+		versionedJSONResponse(w, saved, revision, etag)
 	})
 	mux.HandleFunc("GET /api/overlay-settings", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
 			return
 		}
-		v, err := h.settings()
-		if err != nil {
-			if code := userSettingsErrorCode(err); code != "" {
-				apiError(w, http.StatusInternalServerError, code)
-			} else {
-				dataError(w, err)
+		v, revision, etag, err := ReadVersionedRepair(h.store.files, filepath.Join("user", "user-settings.json"), defaultUserSettings(), func(value *contracts.UserSettings) error {
+			if _, code := h.prepareUserSettings(value, false); code != "" {
+				return errors.New(code)
 			}
+			return nil
+		})
+		if err != nil {
+			apiError(w, http.StatusInternalServerError, "user_settings_invalid")
 			return
 		}
-		jsonResponse(w, v)
+		versionedJSONResponse(w, v.Overlay, revision, etag)
 	})
 	mux.HandleFunc("PUT /api/overlay-settings", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
+			return
+		}
+		expected, ok := requireRevision(w, r)
+		if !ok {
 			return
 		}
 		var v contracts.OverlaySettings
 		if !decodeUpdate(w, r, &v) {
 			return
 		}
-		current, err := h.userSettings()
+		current, revision, etag, err := h.applyUserSettingsUpdate(expected, func(current *contracts.UserSettings) error {
+			current.Overlay = v
+			return nil
+		}, operationID(r), true, false)
+		if errors.Is(err, errRevisionConflict) {
+			versionedConflict(w, revision, etag)
+			return
+		}
 		if err != nil {
-			dataError(w, err)
+			if code := userSettingsErrorCode(err); code != "" {
+				apiError(w, http.StatusBadRequest, code)
+			} else {
+				dataError(w, err)
+			}
 			return
 		}
-		current.Overlay = v
-		if _, code := h.prepareUserSettings(&current, false); code != "" {
-			apiError(w, 400, "overlay_settings_invalid")
-			return
-		}
-		if err := h.applyUserSettings(current, operationID(r), true, false); err != nil {
-			dataError(w, err)
-			return
-		}
-		jsonResponse(w, current.Overlay)
+		versionedJSONResponse(w, current.Overlay, revision, etag)
 	})
 	mux.HandleFunc("GET /api/recognition-settings", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
 			return
 		}
-		value, err := h.userSettings()
+		value, revision, etag, err := ReadVersionedRepair(h.store.files, filepath.Join("user", "user-settings.json"), defaultUserSettings(), func(value *contracts.UserSettings) error {
+			if _, code := h.prepareUserSettings(value, false); code != "" {
+				return errors.New(code)
+			}
+			return nil
+		})
 		if err != nil {
-			dataError(w, err)
+			apiError(w, http.StatusInternalServerError, "user_settings_invalid")
 			return
 		}
-		jsonResponse(w, value.Recognition)
+		versionedJSONResponse(w, value.Recognition, revision, etag)
 	})
 	mux.HandleFunc("PUT /api/recognition-settings", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
+			return
+		}
+		expected, ok := requireRevision(w, r)
+		if !ok {
 			return
 		}
 		var value contracts.RecognitionSettings
@@ -633,17 +701,23 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 			apiError(w, http.StatusBadRequest, "recognition_settings_invalid")
 			return
 		}
-		current, err := h.userSettings()
+		current, revision, etag, err := h.applyUserSettingsUpdate(expected, func(current *contracts.UserSettings) error {
+			current.Recognition = value
+			return nil
+		}, operationID(r), true, false)
+		if errors.Is(err, errRevisionConflict) {
+			versionedConflict(w, revision, etag)
+			return
+		}
 		if err != nil {
-			dataError(w, err)
+			if code := userSettingsErrorCode(err); code != "" {
+				apiError(w, http.StatusBadRequest, code)
+			} else {
+				dataError(w, err)
+			}
 			return
 		}
-		current.Recognition = value
-		if err := h.applyUserSettings(current, operationID(r), true, false); err != nil {
-			dataError(w, err)
-			return
-		}
-		jsonResponse(w, value)
+		versionedJSONResponse(w, current.Recognition, revision, etag)
 	})
 	mux.HandleFunc("POST /api/recognition/request", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
@@ -1078,7 +1152,7 @@ func validPoint(p contracts.MapPoint) bool {
 // applyRemotePlayer projects a teammate's world position with the LOCAL calibration and feeds it
 // into the same player fan-out the dashboard, overlay and cast already consume. Players on maps
 // this machine does not have are still stored (raw world coordinates); rendering filters by map.
-// Projection runs OUTSIDE hub.mu: projectPlayerOnMap re-enters it via currentBasemap.
+// Projection runs OUTSIDE hub.mu: projectPlayer re-enters it via currentBasemap.
 func (h *overlayHub) applyRemotePlayer(playerID, displayName, color, mapID string, world contracts.WorldPosition, heading float64) {
 	if !safeID.MatchString(playerID) || len(playerID) > 100 {
 		return
@@ -1114,14 +1188,15 @@ func operationID(r *http.Request) *string { id := r.Header.Get("X-Operation-ID")
 
 // projectPlayer is shared by the screenshot watcher and multiplayer remote updates.
 func (h *overlayHub) projectPlayer(v playerInput) (contracts.PlayerState, error) {
-	m, err := h.store.load(v.MapId)
+	repo := h.store.repository()
+	m, err := h.store.loadFromRepository(v.MapId, repo, "zh")
 	if err != nil {
 		return contracts.PlayerState{}, errors.New("player_invalid")
 	}
-	return h.projectPlayerOnMap(m, v)
+	return h.projectPlayerOnMode(m, repo.mode, v)
 }
 
-func (h *overlayHub) projectPlayerOnMap(m contracts.MapData, v playerInput) (contracts.PlayerState, error) {
+func (h *overlayHub) projectPlayerOnMode(m contracts.MapData, mode string, v playerInput) (contracts.PlayerState, error) {
 	if !safeID.MatchString(v.PlayerId) || len(v.PlayerId) > 100 || len(v.DisplayName) > 200 ||
 		!finite(v.WorldPosition.X) || !finite(v.WorldPosition.Y) || !finite(v.WorldPosition.Z) || math.Abs(v.WorldPosition.X) > 1e7 || math.Abs(v.WorldPosition.Y) > 1e7 || math.Abs(v.WorldPosition.Z) > 1e7 || !finite(v.Heading) || math.Abs(v.Heading) > 1e7 {
 		return contracts.PlayerState{}, errors.New("player_invalid")
@@ -1139,7 +1214,7 @@ func (h *overlayHub) projectPlayerOnMap(m contracts.MapData, v playerInput) (con
 	}
 	var snapshot regionIndexSnapshot
 	if followFloor {
-		snapshot = h.regionIndex(m.Id, h.currentBasemap(m))
+		snapshot = h.regionIndex(m.Id, h.currentBasemap(m, mode))
 	}
 	resolution, overlaps := mapper.ResolveWithDiagnostics(snapshot.index, v.WorldPosition, followFloor)
 	for _, pair := range overlaps {
@@ -1168,10 +1243,10 @@ func (h *overlayHub) selfColor() string {
 			return color
 		}
 	}
-	return defaultPlayerColor
+	return defaults.MultiplayerSettings().PlayerColor
 }
 
-func (h *overlayHub) currentBasemap(m contracts.MapData) string {
+func (h *overlayHub) currentBasemap(m contracts.MapData, mode string) string {
 	h.mu.Lock()
 	connected := h.overlayConnected()
 	view := h.view
@@ -1180,7 +1255,7 @@ func (h *overlayHub) currentBasemap(m contracts.MapData) string {
 		return view.Basemap
 	}
 	var preferences contracts.Preferences
-	if readJSON(h.store.userPath("map-preferences.json"), &preferences) == nil {
+	if mode != "" && readJSON(filepath.Join(h.store.root, "user", "modes", mode, "map-preferences.json"), &preferences) == nil {
 		normalizeMapPreferences(&preferences)
 		if preferences.SelectedMap == m.Id {
 			for _, preference := range preferences.Maps {

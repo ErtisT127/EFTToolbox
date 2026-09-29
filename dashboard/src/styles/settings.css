@@ -23,6 +23,35 @@
 .settings-tabs button {
   justify-content: flex-start;
 }
+.settings-tab-actions {
+  margin-top: auto;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.settings-tab-actions button {
+  width: 100%;
+}
+.data-management {
+  max-width: 760px;
+}
+.data-management-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--border);
+}
+.data-management-row h2 {
+  margin: 0;
+  font-size: var(--text-md);
+}
+.data-management-row p {
+  margin: var(--space-1) 0 0;
+}
+.data-management-row button {
+  flex: 0 0 auto;
+}
 .settings-content {
   container-type: inline-size;
   overflow: auto;

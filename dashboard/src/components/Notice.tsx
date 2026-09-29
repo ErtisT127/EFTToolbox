@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { notices, useNotices, type Notice as NoticeMessage } from '../stores/noticeStore';
-import { useLocale } from '../hooks/useLocale';
+import { useLocale, type LocaleKey } from '../hooks/useLocale';
 
 // Long enough to read and act on, short enough that it clears itself out of the way.
 const LifetimeMs = 5000;
@@ -23,15 +23,9 @@ function NoticeItem({ notice }: { notice: NoticeMessage }) {
       onFocus={() => setPaused(true)}
       onBlur={() => setPaused(false)}
     >
-      <span>{notice.message}</span>
-      {notice.retry && (
-        <button
-          className="notice-action"
-          onClick={() => {
-            notice.retry?.();
-            notices.dismiss(notice.id);
-          }}
-        >
+      <span>{notice.messageKey ? t(notice.messageKey as LocaleKey) : notice.message}</span>
+      {notices.hasRetry(notice.id) && (
+        <button className="notice-action" onClick={() => notices.retry(notice.id)}>
           {t('common.retry')}
         </button>
       )}

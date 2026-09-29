@@ -1,14 +1,14 @@
 import { useSyncExternalStore } from 'react';
+import { useSelector } from 'react-redux';
 import type {
   GameMonitorSettings as ContractMonitorSettings,
   GameMonitorStatus as ContractMonitorStatus,
 } from '../../../contracts/ts/ipc.gen';
-import {
-  loadUserSettings,
-  patchUserSettingsCache,
-  request,
-  updateUserSettings,
-} from './workspaceStore';
+import { isRevisionConflict } from './api';
+import { api } from './api';
+import { errorKeyOf } from '../lib/errors';
+import { store, type RootState } from './store';
+import { clearConflict, setConflict, setGameMonitorState } from './clientState';
 
 export type GameMode = 'pvp' | 'pve' | 'pvp-season';
 
@@ -25,13 +25,53 @@ type MonitorEvent = {
 };
 
 class GameMonitorStore {
-  settings?: GameMonitorSettings;
-  status?: GameMonitorStatus;
-  loading = false;
-  error = '';
-  resourceRevision = 0;
-  mapRevision = 0;
-  browsing: Record<'screenshots' | 'logs', boolean> = { screenshots: false, logs: false };
+  get settingsDraft() {
+    return store.getState().client.gameMonitor.settingsDraft;
+  }
+  set settingsDraft(value: GameMonitorSettings | undefined) {
+    store.dispatch(setGameMonitorState({ settingsDraft: value }));
+  }
+  get settings() {
+    return (
+      this.settingsDraft ||
+      api.endpoints.getGameMonitorSettings.select()(store.getState()).data?.value
+    );
+  }
+  get status() {
+    return api.endpoints.getGameMonitorStatus.select()(store.getState()).data;
+  }
+  get loading() {
+    return store.getState().client.gameMonitor.loading;
+  }
+  set loading(value: boolean) {
+    store.dispatch(setGameMonitorState({ loading: value }));
+  }
+  get error() {
+    return store.getState().client.gameMonitor.error;
+  }
+  set error(value: string) {
+    store.dispatch(setGameMonitorState({ error: value }));
+  }
+  get resourceRevision() {
+    return store.getState().client.gameMonitor.resourceRevision;
+  }
+  set resourceRevision(value: number) {
+    store.dispatch(setGameMonitorState({ resourceRevision: value }));
+  }
+  get mapRevision() {
+    return store.getState().client.gameMonitor.mapRevision;
+  }
+  set mapRevision(value: number) {
+    store.dispatch(setGameMonitorState({ mapRevision: value }));
+  }
+  get browsing() {
+    return store.getState().client.gameMonitor.browsing;
+  }
+  set browsing(value: Record<'screenshots' | 'logs', boolean>) {
+    store.dispatch(setGameMonitorState({ browsing: value }));
+  }
+  private saveQueue = Promise.resolve();
+  private editRevision = 0;
   private version = 0;
   private listeners = new Set<() => void>();
 
@@ -48,38 +88,101 @@ class GameMonitorStore {
   async initialize() {
     this.loading = true;
     try {
-      const [userSettings, status] = await Promise.all([
-        loadUserSettings(),
-        request<GameMonitorStatus>('/api/game-monitor/status'),
+      await Promise.all([
+        store
+          .dispatch(
+            api.endpoints.getGameMonitorSettings.initiate(undefined, { forceRefetch: true }),
+          )
+          .unwrap(),
+        store
+          .dispatch(api.endpoints.getGameMonitorStatus.initiate(undefined, { forceRefetch: true }))
+          .unwrap(),
       ]);
-      this.settings = userSettings.gameMonitor;
-      this.status = status;
+      this.settingsDraft = undefined;
       this.error = '';
     } catch (error) {
-      this.error = error instanceof Error ? error.message : 'errors.request_failed';
+      this.error = errorKeyOf(error, 'errors.request_failed');
     } finally {
       this.loading = false;
       this.changed();
     }
   }
 
-  async update(changes: Partial<GameMonitorSettings>) {
-    const previous = this.settings;
-    const next = { ...this.settings, ...changes } as GameMonitorSettings;
-    this.settings = next;
+  async update(changes: Partial<GameMonitorSettings>, explicit = false) {
+    const current = this.settings;
+    if (!current) return;
+    const next = { ...current, ...changes };
+    const revision = ++this.editRevision;
+    this.settingsDraft = next;
     this.changed();
-    try {
-      this.settings = (
-        await updateUserSettings((current) => ({
-          ...current,
-          gameMonitor: next,
-        }))
-      ).gameMonitor;
-      this.error = '';
-    } catch (error) {
-      if (this.settings === next) this.settings = previous;
-      this.error = error instanceof Error ? error.message : 'errors.request_failed';
-    }
+    if (
+      !explicit &&
+      store.getState().client.conflicts.some((item) => item.key === 'game-monitor-settings')
+    )
+      return;
+    this.saveQueue = this.saveQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (
+          !explicit &&
+          store.getState().client.conflicts.some((item) => item.key === 'game-monitor-settings')
+        )
+          return;
+        const value = this.settingsDraft;
+        if (!value) return;
+        try {
+          const versioned = api.endpoints.getGameMonitorSettings.select()(store.getState()).data;
+          if (!versioned) throw new Error('errors.request_failed');
+          const saved = await store
+            .dispatch(
+              api.endpoints.updateGameMonitorSettings.initiate({
+                value,
+                revision: versioned.revision,
+                etag: versioned.etag,
+              }),
+            )
+            .unwrap();
+          store.dispatch(
+            api.util.updateQueryData('getGameMonitorSettings', undefined, () => saved),
+          );
+          if (revision === this.editRevision) {
+            this.settingsDraft = undefined;
+            this.error = '';
+            store.dispatch(clearConflict('game-monitor-settings'));
+          }
+        } catch (error) {
+          if (isRevisionConflict(error)) {
+            store.dispatch(
+              setConflict({ key: 'game-monitor-settings', resource: 'gameMonitorSettings' }),
+            );
+            store.dispatch(api.util.invalidateTags(['Settings']));
+          }
+          this.error = isRevisionConflict(error)
+            ? 'errors.revision_conflict'
+            : errorKeyOf(error, 'errors.request_failed');
+        } finally {
+          this.changed();
+        }
+      });
+    await this.saveQueue;
+  }
+
+  retry() {
+    if (this.error === 'errors.revision_conflict')
+      return store
+        .dispatch(api.endpoints.getGameMonitorSettings.initiate(undefined, { forceRefetch: true }))
+        .unwrap()
+        .then(() => this.update(this.settingsDraft || this.settings || {}, true));
+    return this.settings ? this.update(this.settings) : this.initialize();
+  }
+
+  discardConflict() {
+    this.settingsDraft = undefined;
+    this.error = '';
+    store.dispatch(clearConflict('game-monitor-settings'));
+    void store.dispatch(
+      api.endpoints.getGameMonitorSettings.initiate(undefined, { forceRefetch: true }),
+    );
     this.changed();
   }
 
@@ -88,9 +191,9 @@ class GameMonitorStore {
     this.browsing = { ...this.browsing, [kind]: true };
     this.changed();
     try {
-      const result = await request<{ path?: string } | string>(`/api/game-monitor/browse/${kind}`, {
-        method: 'POST',
-      });
+      const result = await store
+        .dispatch(api.endpoints.browseGameMonitorDirectory.initiate(kind))
+        .unwrap();
       const path = typeof result === 'string' ? result : result.path;
       // An empty path intentionally disables this watcher when the dialog is cancelled.
       if (path !== undefined)
@@ -98,7 +201,7 @@ class GameMonitorStore {
           [kind === 'screenshots' ? 'screenshotDirectory' : 'logDirectory']: path,
         });
     } catch (error) {
-      this.error = error instanceof Error ? error.message : 'errors.request_failed';
+      this.error = errorKeyOf(error, 'errors.request_failed');
       this.changed();
     } finally {
       this.browsing = { ...this.browsing, [kind]: false };
@@ -108,35 +211,27 @@ class GameMonitorStore {
 
   handleEvent(event: MonitorEvent) {
     if (event.gameMonitorSettings || event.monitorSettings) {
-      this.settings = event.gameMonitorSettings || event.monitorSettings;
+      store.dispatch(api.util.invalidateTags(['Settings']));
     }
     const incomingStatus = event.gameMonitorStatus || event.monitorStatus;
     const previousMap = this.status?.mapId;
-    if (incomingStatus) this.status = incomingStatus;
+    if (incomingStatus)
+      void store.dispatch(
+        api.util.upsertQueryData('getGameMonitorStatus', undefined, incomingStatus),
+      );
     if (
       event.type === 'map_changed' &&
       incomingStatus?.mapId &&
       incomingStatus.mapId !== previousMap
     )
       this.mapRevision++;
-    if (incomingStatus && this.settings)
-      this.settings = { ...this.settings, mode: incomingStatus.mode };
-    if (event.mode && this.settings) this.settings = { ...this.settings, mode: event.mode };
-    if (event.type === 'snapshot' && incomingStatus && !this.settings) {
-      this.settings = {
-        schemaVersion: 1,
-        screenshotDirectory: '',
-        logDirectory: '',
-        deleteScreenshots: false,
-        autoMapSwitch: true,
-        mode: incomingStatus.mode,
-      };
-    }
-    if (
-      this.settings &&
-      (event.gameMonitorSettings || event.monitorSettings || incomingStatus || event.mode)
-    )
-      patchUserSettingsCache((current) => ({ ...current, gameMonitor: this.settings! }));
+    if (event.mode && incomingStatus)
+      void store.dispatch(
+        api.util.upsertQueryData('getGameMonitorStatus', undefined, {
+          ...incomingStatus,
+          mode: event.mode,
+        }),
+      );
     if (event.type === 'resources_changed') this.resourceRevision++;
     this.changed();
   }
@@ -145,6 +240,9 @@ class GameMonitorStore {
 export const gameMonitor = new GameMonitorStore();
 
 export function useGameMonitor() {
+  useSelector(api.endpoints.getGameMonitorSettings.select());
+  useSelector(api.endpoints.getGameMonitorStatus.select());
+  useSelector((state: RootState) => state.client.gameMonitor);
   useSyncExternalStore(gameMonitor.subscribe, gameMonitor.snapshot);
   return gameMonitor;
 }

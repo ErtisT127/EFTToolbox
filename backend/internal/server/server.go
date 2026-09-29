@@ -14,16 +14,14 @@ import (
 	contracts "efttoolbox/contracts"
 )
 
-const ProtocolVersion = "1"
-
 func New(ctx context.Context, version string, assets http.FileSystem, dataRoot string) http.Handler {
 	if err := InstallLogging(filepath.Join(dataRoot, "..", "logs")); err != nil {
 		log.Printf("initialize daily log writer: %v", err)
 	}
 	logWriter := installedLogWriter
-	status := contracts.Status{ProtocolVersion: ProtocolVersion, AppVersion: version, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	status := contracts.Status{ProtocolVersion: contracts.ContractProtocolVersion, AppVersion: version, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	mux := http.NewServeMux()
-	store := &mapStore{root: dataRoot}
+	store := &mapStore{root: dataRoot, files: &VersionedFileStore{root: dataRoot}}
 	hub := &overlayHub{store: store, status: status, players: map[string]contracts.PlayerState{}, clients: map[chan contracts.ServerEvent]bool{}, browseActive: map[string]bool{}, indexes: map[string]regionIndexSnapshot{}, overlapDedup: newOverlapDedup()}
 	mobile := newMobileManager(ctx, assets, hub)
 	hub.mobile = mobile
@@ -31,9 +29,11 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 	multiplayer := newMultiplayerManager(ctx, hub)
 	hub.multiplayer = multiplayer
 	store.multiplayer = multiplayer
+	store.hub = hub
 	store.changed = hub.changed
 	store.calibrationReset = hub.invalidateCalibrationIndexes
 	items := newItemsManager(ctx, store, hub)
+	store.items = items
 	store.modeChanged = items.cancelUpdate
 	if logWriter != nil {
 		hub.logWriter = logWriter
@@ -45,6 +45,9 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 	multiplayer.register(mux)
 	items.register(mux)
 	hub.registerGameMonitor(mux)
+	if err := store.ensureCalibrationDefaults(); err != nil {
+		log.Printf("initialize calibration defaults: %v", err)
+	}
 	hub.startGameMonitor(ctx)
 	if logWriter != nil {
 		mux.HandleFunc("POST /api/logs", func(w http.ResponseWriter, r *http.Request) {

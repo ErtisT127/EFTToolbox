@@ -615,6 +615,14 @@ output {
 .sticker-title {
   font-weight: var(--weight-bold);
 }
+.sticker-head .icon-button {
+  border: 0;
+  background: transparent;
+}
+.sticker-head .icon-button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
 .sticker-body {
   display: flex;
   flex: 1;

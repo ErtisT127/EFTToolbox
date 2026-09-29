@@ -31,7 +31,7 @@ export function RecognitionSettingsTab() {
   return (
     <>
       <fieldset>
-        <legend>{t('settings.recognitionGroup.thresholds')}</legend>
+        <legend>{t('recognition.groups.thresholds')}</legend>
         <RecognitionTuningFields
           settings={settings}
           fields={['ocrConfidence', 'nameSimilarity']}
@@ -40,9 +40,13 @@ export function RecognitionSettingsTab() {
         />
       </fieldset>
       <fieldset>
-        <legend>{t('settings.recognitionGroup.ocr')}</legend>
+        <legend>{t('recognition.groups.ocr')}</legend>
         <div className="settings-field">
-          {label('recognition-upscale', t('items.ocrUpscale'), t('items.ocrUpscaleHint'))}
+          {label(
+            'recognition-upscale',
+            t('recognition.ocrUpscale'),
+            t('recognition.ocrUpscaleHint'),
+          )}
           <RangeSlider
             id="recognition-upscale"
             value={settings.ocrUpscale}
@@ -54,7 +58,11 @@ export function RecognitionSettingsTab() {
           />
         </div>
         <div className="settings-field">
-          {label('recognition-min-length', t('items.ocrMinLength'), t('items.ocrMinLengthHint'))}
+          {label(
+            'recognition-min-length',
+            t('recognition.ocrMinLength'),
+            t('recognition.ocrMinLengthHint'),
+          )}
           <RangeSlider
             id="recognition-min-length"
             value={settings.ocrMinLength}
@@ -66,15 +74,15 @@ export function RecognitionSettingsTab() {
         </div>
       </fieldset>
       <fieldset>
-        <legend>{t('settings.recognitionGroup.template')}</legend>
+        <legend>{t('recognition.groups.template')}</legend>
         <label className="settings-check">
           <input
             type="checkbox"
             checked={settings.templateMatching}
             onChange={(event) => save({ templateMatching: event.target.checked })}
           />
-          <HintTooltip content={t('items.templateMatchingHint')}>
-            {t('items.templateMatching')}
+          <HintTooltip content={t('recognition.templateMatchingHint')}>
+            {t('recognition.templateMatching')}
           </HintTooltip>
         </label>
         <label className="settings-check">
@@ -85,8 +93,8 @@ export function RecognitionSettingsTab() {
             disabled={!settings.templateMatching}
             onChange={(event) => save({ templateStrict: event.target.checked })}
           />
-          <HintTooltip content={t('items.templateStrictHint')}>
-            {t('items.templateStrict')}
+          <HintTooltip content={t('recognition.templateStrictHint')}>
+            {t('recognition.templateStrict')}
           </HintTooltip>
         </label>
         <RecognitionTuningFields
@@ -98,8 +106,8 @@ export function RecognitionSettingsTab() {
         <div className="settings-field">
           {label(
             'recognition-candidates',
-            t('items.candidateLimit'),
-            t('items.candidateLimitHint'),
+            t('recognition.candidateLimit'),
+            t('recognition.candidateLimitHint'),
           )}
           <RangeSlider
             id="recognition-candidates"
@@ -114,8 +122,8 @@ export function RecognitionSettingsTab() {
         <div className="settings-field">
           {label(
             'recognition-scale-min',
-            t('items.templateMinScale'),
-            t('items.templateMinScaleHint'),
+            t('recognition.templateMinScale'),
+            t('recognition.templateMinScaleHint'),
           )}
           <RangeSlider
             id="recognition-scale-min"
@@ -131,8 +139,8 @@ export function RecognitionSettingsTab() {
         <div className="settings-field">
           {label(
             'recognition-scale-max',
-            t('items.templateMaxScale'),
-            t('items.templateMaxScaleHint'),
+            t('recognition.templateMaxScale'),
+            t('recognition.templateMaxScaleHint'),
           )}
           <RangeSlider
             id="recognition-scale-max"
@@ -148,8 +156,8 @@ export function RecognitionSettingsTab() {
         <div className="settings-field">
           {label(
             'recognition-icon-window',
-            t('items.iconWindowRatio'),
-            t('items.iconWindowRatioHint'),
+            t('recognition.iconWindowRatio'),
+            t('recognition.iconWindowRatioHint'),
           )}
           <RangeSlider
             id="recognition-icon-window"
@@ -164,7 +172,7 @@ export function RecognitionSettingsTab() {
         </div>
       </fieldset>
       <fieldset>
-        <legend>{t('settings.recognitionGroup.capture')}</legend>
+        <legend>{t('recognition.groups.capture')}</legend>
         <RecognitionTuningFields
           settings={settings}
           fields={['captureWidth']}
@@ -173,14 +181,16 @@ export function RecognitionSettingsTab() {
         />
       </fieldset>
       <fieldset>
-        <legend>{t('settings.recognitionGroup.window')}</legend>
+        <legend>{t('recognition.groups.window')}</legend>
         <label className="settings-check">
           <input
             type="checkbox"
             checked={settings.autoPush}
             onChange={(event) => save({ autoPush: event.target.checked })}
           />
-          <HintTooltip content={t('items.autoPushHint')}>{t('items.autoPush')}</HintTooltip>
+          <HintTooltip content={t('recognition.autoPushHint')}>
+            {t('recognition.autoPush')}
+          </HintTooltip>
         </label>
         <label className="settings-check">
           <input
@@ -190,13 +200,15 @@ export function RecognitionSettingsTab() {
             disabled={!settings.autoPush}
             onChange={(event) => save({ autoClose: event.target.checked })}
           />
-          <HintTooltip content={t('items.autoCloseHint')}>{t('items.autoClose')}</HintTooltip>
+          <HintTooltip content={t('recognition.autoCloseHint')}>
+            {t('recognition.autoClose')}
+          </HintTooltip>
         </label>
         <div className="settings-field">
           {label(
             'recognition-close-delay',
-            t('items.autoCloseDelay'),
-            t('items.autoCloseDelayHint'),
+            t('recognition.autoCloseDelay'),
+            t('recognition.autoCloseDelayHint'),
           )}
           <select
             id="recognition-close-delay"
@@ -213,7 +225,7 @@ export function RecognitionSettingsTab() {
         </div>
         {/* How much of the game shows through the panel; it does nothing while nothing is pushed. */}
         <div className="settings-field">
-          {label('recognition-opacity', t('settings.opacity'), t('items.recognitionOpacityHint'))}
+          {label('recognition-opacity', t('minimap.opacity'), t('recognition.opacityHint'))}
           <RangeSlider
             id="recognition-opacity"
             value={settings.opacity}
@@ -229,8 +241,8 @@ export function RecognitionSettingsTab() {
             the overlay wrote back, and both are moot while the panel is never pushed. */}
         <div className={`settings-field${settings.autoPush ? '' : ' is-disabled'}`}>
           <span>
-            <HintTooltip content={t('items.recognitionWindowHint')}>
-              {t('items.recognitionWindowSize')}
+            <HintTooltip content={t('recognition.windowHint')}>
+              {t('recognition.windowSize')}
             </HintTooltip>
           </span>
           <span className="recognition-position">
@@ -239,8 +251,8 @@ export function RecognitionSettingsTab() {
         </div>
         <div className={`settings-field${settings.autoPush ? '' : ' is-disabled'}`}>
           <span>
-            <HintTooltip content={t('items.recognitionWindowHint')}>
-              {t('items.recognitionWindowPosition')}
+            <HintTooltip content={t('recognition.windowHint')}>
+              {t('recognition.windowPosition')}
             </HintTooltip>
           </span>
           <span className="recognition-position">

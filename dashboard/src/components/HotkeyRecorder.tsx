@@ -127,7 +127,7 @@ export function HotkeyRecorder({
             className="hotkey-warning"
             id={`${id}-warning`}
             role="img"
-            aria-label={error ?? t('settings.hotkeyTaken')}
+            aria-label={error ?? t('settings.hotkeys.taken')}
           >
             <TriangleAlert size={14} aria-hidden="true" />
           </span>
@@ -145,11 +145,11 @@ export function HotkeyRecorder({
         >
           <span className="hotkey-value" id={`${id}-value`} aria-live="polite">
             {recording && !keys.length ? (
-              <span className="hotkey-hint">{t('settings.hotkeyRecording')}</span>
+              <span className="hotkey-hint">{t('settings.hotkeys.recording')}</span>
             ) : keys.length ? (
               keys.map((key) => <kbd key={key}>{key}</kbd>)
             ) : (
-              <span className="hotkey-hint">{t('settings.hotkeyEmpty')}</span>
+              <span className="hotkey-hint">{t('settings.hotkeys.empty')}</span>
             )}
           </span>
         </button>
@@ -157,7 +157,7 @@ export function HotkeyRecorder({
           type="button"
           className="hotkey-clear"
           disabled={!value}
-          aria-label={t('settings.hotkeyClearFor', { label })}
+          aria-label={t('settings.hotkeys.clearFor', { label })}
           onClick={() => onChange('')}
         >
           <X size={14} />

@@ -134,5 +134,5 @@ internal sealed class TileLayerRenderer : IDisposable
         while (ready.TryDequeue(out _)) { }
         Visible = [];
     }
-    public void Dispose() => Clear();
+    public void Dispose() { Clear(); workers.Dispose(); }
 }

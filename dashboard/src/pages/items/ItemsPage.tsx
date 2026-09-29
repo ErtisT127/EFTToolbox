@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -22,7 +23,6 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type {
-  ItemsCatalog,
   ItemsCatalogItem,
   ItemsRequirement,
   ItemsSettings,
@@ -34,11 +34,23 @@ import { AppPopover } from '../../components/AppPopover';
 import { AppTooltip } from '../../components/HintTooltip';
 import { RecognitionTuningFields } from '../../components/RecognitionTuningFields';
 import { useLocale, type LocaleKey, type Translate } from '../../hooks/useLocale';
-import { useGameMonitor } from '../../stores/gameMonitorStore';
 import { notices } from '../../stores/noticeStore';
-import { reportClientLog, request } from '../../stores/workspaceStore';
-import { DataLoadError } from '../../lib/errors';
-import { useItemsRevision } from '../../stores/resourceStore';
+import { reportClientLog } from '../../stores/workspaceStore';
+import { DataLoadError, errorKeyOf } from '../../lib/errors';
+import {
+  api,
+  useGetItemsQuery,
+  useGetItemsSettingsQuery,
+  useGetItemsUpdateStatusQuery,
+} from '../../stores/api';
+import { store } from '../../stores/store';
+import type { RootState } from '../../stores/store';
+import {
+  clearConflict,
+  pauseConflict,
+  setItemsSettingsDraft,
+  submitItemsSettings,
+} from '../../stores/clientState';
 import { useOverlay } from '../../stores/overlayStore';
 import {
   filterItems,
@@ -92,11 +104,16 @@ const emptyStatus: ItemsUpdateStatus = {
 
 export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { t, locale } = useLocale();
-  const monitor = useGameMonitor();
-  const revision = useItemsRevision();
-  const [catalog, setCatalog] = useState<ItemsCatalog>();
-  const [settings, setSettings] = useState<ItemsSettings>();
-  const [status, setStatus] = useState(emptyStatus);
+  const catalogQuery = useGetItemsQuery(locale);
+  const settingsQuery = useGetItemsSettingsQuery();
+  const statusQuery = useGetItemsUpdateStatusQuery(undefined, { pollingInterval: 1000 });
+  const catalog = catalogQuery.data;
+  const status = statusQuery.data || emptyStatus;
+  const settingsDraft = useSelector((state: RootState) => state.client.itemsSettingsDraft);
+  const settingsConflict = useSelector((state: RootState) =>
+    state.client.conflicts.find((item) => item.key === 'items-settings'),
+  );
+  const settings = settingsDraft || settingsQuery.data?.value;
   const [loadError, setLoadError] = useState<DataLoadError | null>(null);
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
@@ -146,26 +163,15 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [refreshing, setRefreshing] = useState(false);
   const [tableNode, setTableNode] = useState<HTMLDivElement | null>(null);
   const reportedRun = useRef<string | undefined>(undefined);
-  const statusRevision = useRef(0);
-  const settingsRevision = useRef(0);
-  const settingsSaveQueue = useRef(Promise.resolve());
 
   const startUpdate = useCallback(
     (includeImages = false) => {
-      const statusRequest = ++statusRevision.current;
       setDialog('update');
-      void request<ItemsUpdateStatus>('/api/items/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ includeImages }),
-      })
-        .then((nextStatus) => {
-          if (statusRequest === statusRevision.current) setStatus(nextStatus);
-        })
+      void store
+        .dispatch(api.endpoints.updateItems.initiate({ includeImages }))
+        .unwrap()
         .catch((reason: unknown) => {
-          notices.push(
-            t(reason instanceof Error ? (reason.message as LocaleKey) : 'errors.request_failed'),
-          );
+          notices.push(t(errorKeyOf(reason, 'errors.request_failed') as LocaleKey));
         });
     },
     [t],
@@ -177,63 +183,24 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   }, [search]);
 
   useEffect(() => {
-    let active = true;
-    setRefreshing(true);
-    void request<ItemsCatalog>(`/api/items?locale=${encodeURIComponent(locale)}`)
-      .then((nextCatalog) => {
-        if (active) setCatalog(nextCatalog);
-      })
-      .catch((reason: unknown) => {
-        // A catalog the page cannot read is fatal, so it goes through the shared page-level error
-        // boundary instead of a bespoke box.
-        if (active)
-          setLoadError(
-            new DataLoadError(
-              reason instanceof Error ? reason.message : 'errors.items_not_available',
-              'items',
-              reason,
-            ),
-          );
-      })
-      .finally(() => {
-        if (active) setRefreshing(false);
-      });
-    const settingsLoadRevision = settingsRevision.current;
-    void request<ItemsSettings>('/api/items-settings')
-      .then((nextSettings) => {
-        if (!active || settingsLoadRevision !== settingsRevision.current) return;
-        setSettings(nextSettings);
-        setCategory(nextSettings.category || '');
-        setSort(nextSettings.sort || 'id');
-        setDescending(nextSettings.descending);
-      })
-      .catch(() => {
-        // Preferences are not worth blocking the table: keep the defaults and report in a notice.
-        if (active) notices.push(t('errors.items_settings_invalid'));
-      });
-    const statusRequest = ++statusRevision.current;
-    void request<ItemsUpdateStatus>('/api/items/update')
-      .then((nextStatus) => {
-        if (active && statusRequest === statusRevision.current) setStatus(nextStatus);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [locale, monitor.settings?.mode, revision, t]);
+    setRefreshing(catalogQuery.isFetching);
+  }, [catalogQuery.isFetching]);
 
   useEffect(() => {
-    if (!status.running) return;
-    const timer = window.setInterval(() => {
-      const statusRequest = ++statusRevision.current;
-      void request<ItemsUpdateStatus>('/api/items/update')
-        .then((nextStatus) => {
-          if (statusRequest === statusRevision.current) setStatus(nextStatus);
-        })
-        .catch(() => undefined);
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [status.running]);
+    if (catalogQuery.isError || settingsQuery.isError) {
+      notices.push(t('errors.items_settings_invalid'));
+      setLoadError(new DataLoadError('errors.items_not_available', 'items'));
+    } else if (catalog && settings) {
+      setLoadError(null);
+    }
+  }, [catalogQuery.isError, settingsQuery.isError, catalog, settings, t]);
+
+  useEffect(() => {
+    if (!settings || settingsDraft) return;
+    setCategory(settings.category || '');
+    setSort(settings.sort || 'id');
+    setDescending(settings.descending);
+  }, [settings, settingsDraft]);
 
   // A failed background update is not tied to a control the page can put a message next to, so it
   // reports through the shared notice pipeline with a retry. The raw backend detail stays out of
@@ -270,33 +237,8 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
 
   const saveSettings = (changes: Partial<ItemsSettings>) => {
     if (!settings) return;
-    const revision = ++settingsRevision.current;
-    const previous = { settings, category, sort, descending };
     const next = { ...settings, ...changes };
-    setSettings(next);
-    settingsSaveQueue.current = settingsSaveQueue.current.then(async () => {
-      try {
-        const saved = await request<ItemsSettings>('/api/items-settings', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(next),
-        });
-        if (revision === settingsRevision.current) {
-          setSettings(saved);
-          setCategory(saved.category || '');
-          setSort(saved.sort || 'id');
-          setDescending(saved.descending);
-        }
-      } catch {
-        if (revision === settingsRevision.current) {
-          setSettings(previous.settings);
-          setCategory(previous.category);
-          setSort(previous.sort);
-          setDescending(previous.descending);
-        }
-        notices.push(t('errors.items_settings_invalid'));
-      }
-    });
+    store.dispatch(setItemsSettingsDraft(next));
   };
   const changeSort = (next: ItemSort) => {
     const nextState =
@@ -314,18 +256,16 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
     saveSettings({ category: next });
   };
   const cancelUpdate = () => {
-    const statusRequest = ++statusRevision.current;
-    void request<ItemsUpdateStatus>('/api/items/update/cancel', { method: 'POST' })
-      .then((nextStatus) => {
-        if (statusRequest === statusRevision.current) setStatus(nextStatus);
-      })
+    void store
+      .dispatch(api.endpoints.cancelItemsUpdate.initiate())
+      .unwrap()
       .catch(() => notices.push(t('errors.request_failed')));
   };
 
   // The recognition endpoints answer with contract error codes; the ones a reader can act on get
   // their own sentence instead of the generic failure.
   const recognitionErrorKey = (reason: unknown) => {
-    const code = reason instanceof Error ? reason.message : '';
+    const code = errorKeyOf(reason, '');
     if (code === 'errors.overlay_unavailable') return 'errors.recognition_unavailable';
     if (
       code === 'errors.recognition_request_invalid' ||
@@ -358,23 +298,22 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
       setRecognitionImageRequestId(requestId);
       recognitionImageRequestRef.current = requestId;
       overlay.requestRecognition(requestId);
-      void request('/api/recognition/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId, imageData: data }),
-      }).catch((reason: unknown) => {
-        // Nothing is pending once the request is refused; the notice says why.
-        if (recognitionImageRequestRef.current === requestId) {
-          setRecognitionImage('');
-          setRecognitionName('');
-          setRecognitionImageRequestId('');
-          recognitionImageRequestRef.current = '';
-          overlay.clearRecognition(requestId);
-        }
-        const message = t(recognitionErrorKey(reason) as LocaleKey);
-        notices.push(message);
-        reportClientLog('recognition_request_failed', message, String(reason));
-      });
+      void store
+        .dispatch(api.endpoints.startRecognition.initiate({ requestId, imageData: data }))
+        .unwrap()
+        .catch((reason: unknown) => {
+          // Nothing is pending once the request is refused; the notice says why.
+          if (recognitionImageRequestRef.current === requestId) {
+            setRecognitionImage('');
+            setRecognitionName('');
+            setRecognitionImageRequestId('');
+            recognitionImageRequestRef.current = '';
+            overlay.clearRecognition(requestId);
+          }
+          const message = t(recognitionErrorKey(reason) as LocaleKey);
+          notices.push(message);
+          reportClientLog('recognition_request_failed', message, String(reason));
+        });
     };
     reader.onerror = () => {
       if (importRevision !== recognitionImportRevision.current) return;
@@ -452,10 +391,47 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
             <ScanLine size={18} aria-hidden="true" />
           </span>
           <span className="items-recognition-label">
-            <b>{t('items.recognition')}</b>
+            <b>{t('recognition.title')}</b>
           </span>
         </button>
       </div>
+      {settingsConflict && (
+        <div className="items-conflict" role="alert">
+          <span>{t('errors.revision_conflict')}</span>
+          <button type="button" onClick={() => store.dispatch(pauseConflict('items-settings'))}>
+            {t('errors.conflict_keep_local')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void store
+                .dispatch(
+                  api.endpoints.getItemsSettings.initiate(undefined, { forceRefetch: true }),
+                )
+                .unwrap()
+                .then(() => {
+                  store.dispatch(setItemsSettingsDraft(undefined));
+                  store.dispatch(clearConflict('items-settings'));
+                });
+            }}
+          >
+            {t('errors.conflict_load_remote')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void store
+                .dispatch(
+                  api.endpoints.getItemsSettings.initiate(undefined, { forceRefetch: true }),
+                )
+                .unwrap()
+                .then(() => store.dispatch(submitItemsSettings()));
+            }}
+          >
+            {t('errors.conflict_retry')}
+          </button>
+        </div>
+      )}
       <div
         className="items-categories"
         aria-label={t('items.categories')}
@@ -476,7 +452,7 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
             aria-pressed={category === value}
             onClick={() => changeCategory(value)}
           >
-            {t(`items.category.${value}`)}
+            {t(`data.category.${value}`)}
           </button>
         ))}
       </div>
@@ -599,9 +575,9 @@ function RecognitionPage({
   // The label only carries states the reader has to act on: waiting is the import hint's job,
   // running is the mask's, and a finished import is announced by its notice.
   const status = result?.error
-    ? t('items.recognitionFailed')
+    ? t('recognition.failed')
     : result && rows.length === 0
-      ? t('items.recognitionNoMatches')
+      ? t('recognition.noMatches')
       : '';
 
   return (
@@ -615,7 +591,7 @@ function RecognitionPage({
         >
           <ArrowLeft size={18} />
         </button>
-        <h2 className="items-recognition-title">{t('items.recognitionTitle')}</h2>
+        <h2 className="items-recognition-title">{t('recognition.title')}</h2>
         <button
           type="button"
           className="items-recognition-clear"
@@ -623,7 +599,7 @@ function RecognitionPage({
           disabled={!image && !result}
         >
           <Eraser size={15} aria-hidden="true" />
-          {t('items.recognitionClear')}
+          {t('recognition.clear')}
         </button>
       </div>
       <div className="items-recognition-grid">
@@ -631,7 +607,7 @@ function RecognitionPage({
             box is the pointer target. */}
         <label
           className={`items-recognition-preview${image ? ' is-filled' : ''}`}
-          title={t('items.recognitionImport')}
+          title={t('recognition.import')}
         >
           <input
             type="file"
@@ -649,23 +625,23 @@ function RecognitionPage({
             ) : (
               <>
                 <ImagePlus size={30} aria-hidden="true" />
-                <span>{t('items.recognitionPreviewEmpty')}</span>
+                <span>{t('recognition.previewEmpty')}</span>
               </>
             )}
           </span>
           <span className="items-recognition-filename" title={imageName || undefined}>
-            {imageName || (image ? '' : t('items.recognitionPreviewFormats'))}
+            {imageName || (image ? '' : t('recognition.previewFormats'))}
           </span>
         </label>
         <div className="items-recognition-output">
           {pending && (
             <div className="items-recognition-loading" role="status">
               <LoaderCircle className="items-spin" size={22} aria-hidden="true" />
-              {t('items.recognitionWorking')}
+              {t('recognition.working')}
             </div>
           )}
           <div className="items-recognition-heading">
-            <h3>{t('items.recognitionOcr')}</h3>
+            <h3>{t('recognition.ocrText')}</h3>
             {status && (
               <span className={result?.error ? 'is-error' : undefined} role="status">
                 {status}
@@ -673,7 +649,7 @@ function RecognitionPage({
             )}
           </div>
           <p className="items-recognition-text">{ocrText || '—'}</p>
-          <h3>{t('items.recognitionResults')}</h3>
+          <h3>{t('recognition.results')}</h3>
           <div className="items-recognition-results">
             <div className="items-recognition-result is-head">
               <span />
@@ -690,7 +666,7 @@ function RecognitionPage({
                   className="item-name"
                   title={
                     row.templateConfidence > 0
-                      ? `${row.name} · ${t('items.templateSimilarity')} ${row.templateConfidence.toFixed(2)}`
+                      ? `${row.name} · ${t('recognition.templateSimilarity')} ${row.templateConfidence.toFixed(2)}`
                       : row.name
                   }
                 >
@@ -710,7 +686,7 @@ function RecognitionPage({
         </div>
         <div className="items-recognition-settings">
           <div className="items-recognition-settings-head">
-            <h3 className="items-recognition-settings-title">{t('items.recognitionSettings')}</h3>
+            <h3 className="items-recognition-settings-title">{t('recognition.settings')}</h3>
           </div>
           {settings && (
             <>
@@ -718,11 +694,11 @@ function RecognitionPage({
               <button
                 type="button"
                 className="items-recognition-detailed"
-                title={t('items.recognitionDetailedHint')}
+                title={t('recognition.detailedHint')}
                 onClick={onOpenSettings}
               >
                 <SlidersHorizontal size={14} aria-hidden="true" />
-                {t('items.recognitionDetailed')}
+                {t('recognition.detailed')}
               </button>
             </>
           )}
@@ -944,11 +920,11 @@ function UpdateDialog({
   const phaseDetail = status.running
     ? status.phase === 'download'
       ? t('items.currentResource', {
-          resource: t(`items.resource.${downloadSteps[Math.max(0, downloading)].id}`, {
+          resource: t(`data.resource.${downloadSteps[Math.max(0, downloading)].id}`, {
             defaultValue: status.detail,
           }),
         })
-      : t(`items.phaseDetail.${status.phase}`, { defaultValue: '' })
+      : t(`data.phaseDetail.${status.phase}`, { defaultValue: '' })
     : status.error
       ? status.error === 'cancelled'
         ? t('items.cancelledDescription')
@@ -981,7 +957,7 @@ function UpdateDialog({
       >
         <div className="panel-title">
           <span id="items-dialog-title">
-            {recognition ? t('items.recognitionTitle') : t('items.updateTitle')}
+            {recognition ? t('recognition.title') : t('items.updateTitle')}
           </span>
           <button
             type="button"
@@ -997,8 +973,8 @@ function UpdateDialog({
             <span className="items-recognition-badge is-large">
               <ScanLine size={26} aria-hidden="true" />
             </span>
-            <strong>{t('items.recognitionTitle')}</strong>
-            <p>{t('items.recognitionPlaceholder')}</p>
+            <strong>{t('recognition.title')}</strong>
+            <p>{t('recognition.placeholder')}</p>
             <div className="items-dialog-actions">
               <button type="button" onClick={onClose}>
                 {t('common.close')}
@@ -1048,7 +1024,7 @@ function UpdateDialog({
                       {done ? <CheckCircle2 size={15} /> : <span className="items-stage-dot" />}
                     </span>
                     <div className="items-stage-body">
-                      <b className={active ? 'is-active' : ''}>{t(`items.phase.${phase}`)}</b>
+                      <b className={active ? 'is-active' : ''}>{t(`data.phase.${phase}`)}</b>
                       {phase === 'download' && (
                         <ul className="items-update-resources">
                           {downloadSteps.map((step, stepIndex) => (
@@ -1065,7 +1041,7 @@ function UpdateDialog({
                                 status.running && downloading === stepIndex ? chipRef : undefined
                               }
                             >
-                              {t(`items.resource.${step.id}`)}
+                              {t(`data.resource.${step.id}`)}
                             </li>
                           ))}
                         </ul>

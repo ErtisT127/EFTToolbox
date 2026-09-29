@@ -1,11 +1,10 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
-import zhCN from './locales/zh-CN';
-import enUS from './locales/en-US';
+import { messages, defaultLocale } from '../../../contracts/ts/messages.gen';
 
 void i18n.use(initReactI18next).init({
-  resources: { 'zh-CN': { translation: zhCN }, 'en-US': { translation: enUS } },
-  lng: 'zh-CN',
+  resources: messages,
+  lng: defaultLocale,
   fallbackLng: 'en-US',
   interpolation: { escapeValue: false },
 });

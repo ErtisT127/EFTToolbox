@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { useSelector } from 'react-redux';
 import i18n from '../i18n';
 import type { LocaleKey } from '../hooks/useLocale';
 import type {
@@ -10,40 +11,106 @@ import type {
   RecognitionResult,
   RecognitionSettings,
 } from '../../../contracts/ts/ipc.gen';
-import {
-  loadUserSettings,
-  patchUserSettingsCache,
-  request,
-  reportClientLog,
-  updateUserSettings,
-  workspace,
-} from './workspaceStore';
+import { reportClientLog, workspace } from './workspaceStore';
 import { gameMonitor } from './gameMonitorStore';
 import { multiplayer } from './multiplayerStore';
 import { notices } from './noticeStore';
-import { resources } from './resourceStore';
+import { api, isRevisionConflict } from './api';
+import { errorKeyOf } from '../lib/errors';
+import { store, type RootState } from './store';
+import { setOverlayState } from './clientState';
 
 class OverlayStore {
-  settings?: OverlaySettings;
-  recognitionSettings?: RecognitionSettings;
-  recognitionResult?: RecognitionResult;
+  get settingsDraft() {
+    return store.getState().client.overlay.settingsDraft;
+  }
+  set settingsDraft(value: OverlaySettings | undefined) {
+    store.dispatch(setOverlayState({ settingsDraft: value }));
+  }
+  get recognitionSettingsDraft() {
+    return store.getState().client.overlay.recognitionSettingsDraft;
+  }
+  set recognitionSettingsDraft(value: RecognitionSettings | undefined) {
+    store.dispatch(setOverlayState({ recognitionSettingsDraft: value }));
+  }
+  get settings() {
+    return (
+      this.settingsDraft || api.endpoints.getOverlaySettings.select()(store.getState()).data?.value
+    );
+  }
+  get recognitionSettings() {
+    return (
+      this.recognitionSettingsDraft ||
+      api.endpoints.getRecognitionSettings.select()(store.getState()).data?.value
+    );
+  }
+  get recognitionResult() {
+    return store.getState().client.overlay.recognitionResult;
+  }
+  set recognitionResult(value: RecognitionResult | undefined) {
+    store.dispatch(setOverlayState({ recognitionResult: value }));
+  }
   /** The run the backend says is in flight; both displays show their loading state from it. */
-  recognitionPending = false;
+  get recognitionPending() {
+    return store.getState().client.overlay.recognitionPending;
+  }
+  set recognitionPending(value: boolean) {
+    store.dispatch(setOverlayState({ recognitionPending: value }));
+  }
   private activeRecognitionId = '';
   private recognitionRevision = 0;
   private recognitionSaved = 0;
   private recognitionSaving = false;
-  private persistedRecognitionSettings?: RecognitionSettings;
   /** The import the items page is waiting for; empty when nothing is pending. */
-  recognitionRequestId = '';
-  view?: OverlayView;
+  get recognitionRequestId() {
+    return store.getState().client.overlay.recognitionRequestId;
+  }
+  set recognitionRequestId(value: string) {
+    store.dispatch(setOverlayState({ recognitionRequestId: value }));
+  }
+  get view() {
+    return store.getState().client.overlay.view;
+  }
+  set view(value: OverlayView | undefined) {
+    store.dispatch(setOverlayState({ view: value }));
+  }
   players = new Map<string, PlayerState>();
-  connected = false;
-  error = '';
-  loading = false;
-  calibrationEpoch = 0;
-  calibrationMapId = '';
-  saving = false;
+  get connected() {
+    return store.getState().client.overlay.connected;
+  }
+  set connected(value: boolean) {
+    if (this.connected !== value) store.dispatch(setOverlayState({ connected: value }));
+  }
+  get error() {
+    return store.getState().client.overlay.error;
+  }
+  set error(value: string) {
+    store.dispatch(setOverlayState({ error: value }));
+  }
+  get loading() {
+    return store.getState().client.overlay.loading;
+  }
+  set loading(value: boolean) {
+    store.dispatch(setOverlayState({ loading: value }));
+  }
+  get calibrationEpoch() {
+    return store.getState().client.overlay.calibrationEpoch;
+  }
+  set calibrationEpoch(value: number) {
+    store.dispatch(setOverlayState({ calibrationEpoch: value }));
+  }
+  get calibrationMapId() {
+    return store.getState().client.overlay.calibrationMapId;
+  }
+  set calibrationMapId(value: string) {
+    store.dispatch(setOverlayState({ calibrationMapId: value }));
+  }
+  get saving() {
+    return store.getState().client.overlay.saving;
+  }
+  set saving(value: boolean) {
+    store.dispatch(setOverlayState({ saving: value }));
+  }
   private version = 0;
   private revision = 0;
   private saved = 0;
@@ -70,12 +137,9 @@ class OverlayStore {
     const expected = requestId || this.recognitionRequestId || this.activeRecognitionId;
     if (!requestId || requestId === this.recognitionRequestId) this.recognitionRequestId = '';
     this.changed();
-    // A DELETE answers with no body, so it goes through fetch rather than the JSON request helper.
-    const query = expected ? `?requestId=${encodeURIComponent(expected)}` : '';
-    void fetch(`/api/recognition-result${query}`, { method: 'DELETE' })
-      .then((response) => {
-        if (!response.ok) throw new Error(String(response.status));
-      })
+    void store
+      .dispatch(api.endpoints.clearRecognitionResult.initiate(expected || undefined))
+      .unwrap()
       .catch((reason: unknown) =>
         reportClientLog(
           'recognition_clear_failed',
@@ -90,7 +154,7 @@ class OverlayStore {
    */
   saveRecognitionSettings(changes: Partial<RecognitionSettings>) {
     if (!this.recognitionSettings) return;
-    this.recognitionSettings = { ...this.recognitionSettings, ...changes };
+    this.recognitionSettingsDraft = { ...this.recognitionSettings, ...changes };
     this.recognitionRevision++;
     this.changed();
     void this.flushRecognitionSettings();
@@ -101,24 +165,58 @@ class OverlayStore {
     try {
       while (this.recognitionSaved < this.recognitionRevision) {
         const revision = this.recognitionRevision;
-        const value = this.recognitionSettings!;
         try {
-          const saved = await request<RecognitionSettings>('/api/recognition-settings', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(value),
-          });
-          this.persistedRecognitionSettings = saved;
+          const cached =
+            api.endpoints.getRecognitionSettings.select()(store.getState()).data ||
+            (await store
+              .dispatch(api.endpoints.getRecognitionSettings.initiate(undefined))
+              .unwrap());
+          const result = await store
+            .dispatch(
+              api.endpoints.updateRecognitionSettings.initiate({
+                value: this.recognitionSettingsDraft!,
+                revision: cached.revision,
+                etag: cached.etag,
+              }),
+            )
+            .unwrap();
+          store.dispatch(
+            api.util.updateQueryData('getRecognitionSettings', undefined, () => result),
+          );
           this.recognitionSaved = revision;
-          if (revision === this.recognitionRevision) this.recognitionSettings = saved;
+          if (revision === this.recognitionRevision) this.recognitionSettingsDraft = undefined;
         } catch (reason: unknown) {
           if (revision !== this.recognitionRevision) continue;
-          this.recognitionSettings = this.persistedRecognitionSettings;
           this.recognitionSaved = revision;
-          const message = i18n.t(
-            reason instanceof Error ? (reason.message as LocaleKey) : 'errors.request_failed',
+          if (isRevisionConflict(reason)) store.dispatch(api.util.invalidateTags(['Settings']));
+          else this.recognitionSettingsDraft = undefined;
+          const key = isRevisionConflict(reason)
+            ? 'errors.revision_conflict'
+            : (errorKeyOf(reason, 'errors.request_failed') as LocaleKey);
+          const message = i18n.t(key);
+          notices.push(
+            message,
+            isRevisionConflict(reason)
+              ? () => {
+                  this.recognitionRevision++;
+                  void store
+                    .dispatch(
+                      api.endpoints.getRecognitionSettings.initiate(undefined, {
+                        forceRefetch: true,
+                      }),
+                    )
+                    .unwrap()
+                    .then(() => this.flushRecognitionSettings())
+                    .catch((error: unknown) =>
+                      reportClientLog(
+                        'recognition_settings_load_failed',
+                        'Recognition settings could not be read',
+                        String(error),
+                      ),
+                    );
+                }
+              : undefined,
           );
-          notices.push(message);
           reportClientLog('recognition_settings_save_failed', message, String(reason));
         }
       }
@@ -146,29 +244,34 @@ class OverlayStore {
       return;
     }
     notices.push(
-      i18n.t('items.recognitionCompleteNotice', { total: result.rows.length }),
+      i18n.t('recognition.completeNotice', { total: result.rows.length }),
       undefined,
       'success',
     );
   }
-  async load() {
+  async load(force = false) {
     this.loading = true;
     this.changed();
     try {
-      this.settings = (await loadUserSettings()).overlay;
+      await store
+        .dispatch(api.endpoints.getOverlaySettings.initiate(undefined, { forceRefetch: force }))
+        .unwrap();
       this.error = '';
     } catch (e) {
-      this.error = e instanceof Error ? e.message : 'errors.request_failed';
+      this.error = errorKeyOf(e, 'errors.request_failed');
     } finally {
       this.loading = false;
       this.changed();
     }
     // The recognition rail is not fatal to the rest of the app, so it loads on its own and reports
     // through the log rather than the page-level error state.
-    if (!this.recognitionSettings) {
+    if (force || !this.recognitionSettings) {
       try {
-        this.recognitionSettings = await request<RecognitionSettings>('/api/recognition-settings');
-        this.persistedRecognitionSettings = this.recognitionSettings;
+        await store
+          .dispatch(
+            api.endpoints.getRecognitionSettings.initiate(undefined, { forceRefetch: force }),
+          )
+          .unwrap();
         this.changed();
       } catch (e) {
         reportClientLog(
@@ -182,15 +285,16 @@ class OverlayStore {
   /** Visibility belongs to the overlay, not to this copy: writing a stored `visible` back would
    *  hide a panel the user turned on with the shortcut. */
   private merged(changes: Partial<OverlaySettings>) {
-    if (!this.settings) return undefined;
+    const settings = this.settings;
+    if (!settings) return undefined;
     const visible = this.view?.connected ? { visible: this.view.visible } : {};
-    return { ...this.settings, ...visible, ...changes };
+    return { ...settings, ...visible, ...changes };
   }
   update(changes: Partial<OverlaySettings>) {
     const next = this.merged(changes);
     if (!next) return;
     clearTimeout(this.soonTimer);
-    this.settings = next;
+    this.settingsDraft = next;
     this.revision++;
     this.changed();
     void this.save();
@@ -200,7 +304,7 @@ class OverlayStore {
   updateSoon(changes: Partial<OverlaySettings>) {
     const next = this.merged(changes);
     if (!next) return;
-    this.settings = next;
+    this.settingsDraft = next;
     this.revision++;
     this.changed();
     clearTimeout(this.soonTimer);
@@ -213,18 +317,30 @@ class OverlayStore {
     try {
       while (this.saved < this.revision) {
         const revision = this.revision;
-        const aggregate = await updateUserSettings((current) => ({
-          ...current,
-          overlay: this.settings!,
-        }));
+        const cached =
+          api.endpoints.getOverlaySettings.select()(store.getState()).data ||
+          (await store.dispatch(api.endpoints.getOverlaySettings.initiate(undefined)).unwrap());
+        const saved = await store
+          .dispatch(
+            api.endpoints.updateOverlaySettings.initiate({
+              value: this.settingsDraft!,
+              revision: cached.revision,
+              etag: cached.etag,
+            }),
+          )
+          .unwrap();
+        store.dispatch(api.util.updateQueryData('getOverlaySettings', undefined, () => saved));
         this.saved = revision;
-        if (revision === this.revision) this.settings = aggregate.overlay;
+        if (revision === this.revision) this.settingsDraft = undefined;
       }
       // Nothing pending means nothing was sent: clearing the error here would make a retry look
       // like it recovered when it never asked the server anything.
       if (this.saved >= this.revision && this.saved > 0) this.error = '';
     } catch (e) {
-      this.error = e instanceof Error ? e.message : 'errors.request_failed';
+      if (isRevisionConflict(e)) store.dispatch(api.util.invalidateTags(['Settings']));
+      this.error = isRevisionConflict(e)
+        ? 'errors.revision_conflict'
+        : errorKeyOf(e, 'errors.request_failed');
     } finally {
       this.saving = false;
       this.changed();
@@ -232,19 +348,20 @@ class OverlayStore {
   }
   /** Replays whatever failed: a pending save when there is one, otherwise a fresh read. */
   async retry() {
+    if (this.error === 'errors.revision_conflict') {
+      await store
+        .dispatch(api.endpoints.getOverlaySettings.initiate(undefined, { forceRefetch: true }))
+        .unwrap();
+    }
     if (this.saved < this.revision) return this.save();
     return this.load();
   }
   async command(command: OverlayCommand) {
     try {
-      await request('/api/overlay/command', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(command),
-      });
+      await store.dispatch(api.endpoints.sendOverlayCommand.initiate(command)).unwrap();
       this.error = '';
     } catch (e) {
-      this.error = e instanceof Error ? e.message : 'errors.request_failed';
+      this.error = errorKeyOf(e, 'errors.request_failed');
     }
     this.changed();
   }
@@ -274,8 +391,28 @@ class OverlayStore {
           const e = JSON.parse(String(event.data)) as ServerEvent & Record<string, unknown>;
           const protocolVersion = String(e.status?.protocolVersion || '');
           if (protocolVersion !== '1') throw new Error('Unsupported protocol');
+          if (e.type === 'resources_changed') {
+            store.dispatch(api.util.invalidateTags(['Maps', 'Items', 'Preferences']));
+          }
+          if (e.type === 'items_changed') store.dispatch(api.util.invalidateTags(['Items']));
+          if (e.type === 'annotations_changed' && e.mapId)
+            store.dispatch(api.util.invalidateTags([{ type: 'Annotations', id: e.mapId }]));
+          if (e.type === 'calibration_changed' && e.mapId)
+            store.dispatch(
+              api.util.invalidateTags([
+                { type: 'Calibration', id: `${e.mapId}:svg` },
+                { type: 'Calibration', id: `${e.mapId}:tiles` },
+              ]),
+            );
+          if (
+            e.overlaySettings ||
+            e.recognitionSettings ||
+            e.gameMonitorSettings ||
+            e.monitorSettings
+          )
+            store.dispatch(api.util.invalidateTags(['Settings']));
+          if (e.multiplayerStatus) store.dispatch(api.util.invalidateTags(['Multiplayer']));
           gameMonitor.handleEvent(e);
-          resources.handleEvent(e);
           if (e.multiplayerStatus) multiplayer.handleStatus(e.multiplayerStatus);
           this.connected = true;
           clearTimeout(stale);
@@ -295,14 +432,6 @@ class OverlayStore {
           if (e.type === 'player_remove' && e.playerId) {
             this.players = new Map(this.players);
             this.players.delete(e.playerId);
-          }
-          if (e.overlaySettings && !this.saving && this.saved === this.revision) {
-            this.settings = e.overlaySettings;
-            patchUserSettingsCache((current) => ({ ...current, overlay: e.overlaySettings! }));
-          }
-          if (e.recognitionSettings && !this.recognitionSaving) {
-            this.recognitionSettings = e.recognitionSettings;
-            this.persistedRecognitionSettings = e.recognitionSettings;
           }
           if (e.recognitionStart) {
             this.activeRecognitionId = e.recognitionStart.requestId;
@@ -349,6 +478,9 @@ class OverlayStore {
 }
 export const overlay = new OverlayStore();
 export function useOverlay() {
+  useSelector(api.endpoints.getOverlaySettings.select());
+  useSelector(api.endpoints.getRecognitionSettings.select());
+  useSelector((state: RootState) => state.client.overlay);
   useSyncExternalStore(overlay.subscribe, overlay.snapshot);
   return overlay;
 }

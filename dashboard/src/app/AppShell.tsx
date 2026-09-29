@@ -15,6 +15,8 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { DataLoadError } from '../lib/errors';
 import { notices } from '../stores/noticeStore';
 import { ItemsPage } from '../pages/items/ItemsPage';
+import { api } from '../stores/api';
+import { store } from '../stores/store';
 
 type SettingsTab = 'system' | 'map' | 'recognition' | 'hotkeys';
 
@@ -82,24 +84,24 @@ export function AppShell() {
     setPage('settings');
   };
   const openDataDirectory = () => {
-    void fetch('/api/data/open-user-settings')
-      .then((response) => {
-        if (!response.ok) notices.push(t('errors.data_directory_open_failed'));
-      })
+    void store
+      .dispatch(api.endpoints.openDataDirectory.initiate('user-settings'))
+      .unwrap()
       .catch(() => notices.push(t('errors.data_directory_open_failed')));
   };
   const resetModuleData = (module: 'map' | 'calibrator' | 'settings') => {
-    const url =
+    const reset =
       module === 'settings'
-        ? '/api/data/reset-user-settings'
-        : module === 'calibrator'
-          ? '/api/data/reset-calibration'
-          : '/api/data/reset-user-settings';
-    void fetch(url, { method: 'POST' })
-      .then((response) => {
-        if (!response.ok) throw new Error('reset failed');
-        return workspace.initialize();
-      })
+        ? store.dispatch(api.endpoints.resetUserSettings.initiate()).unwrap()
+        : store
+            .dispatch(
+              api.endpoints.resetData.initiate(
+                module === 'calibrator' ? 'calibration' : 'map-preferences',
+              ),
+            )
+            .unwrap();
+    void reset
+      .then(() => workspace.initialize())
       .catch(() => notices.push(t('errors.data_reset_failed')));
   };
   const boundaryActions = (module: 'calibrator' | 'settings') => ({
@@ -150,7 +152,7 @@ export function AppShell() {
         <footer className="statusbar">
           <span className={`connection ${overlay.connected ? 'connected' : ''}`}>
             <Radio size={12} aria-hidden="true" />
-            {t(overlay.connected ? 'status.connected' : 'status.reconnecting')}
+            {t(overlay.connected ? 'common.connected' : 'common.reconnecting')}
           </span>
           <div
             className="save-status"
@@ -176,17 +178,19 @@ export function AppShell() {
       <ConfirmDialog
         open={pendingReset !== null}
         title={t(
-          pendingReset === 'calibrator' ? 'calibrator.resetDataTitle' : 'settingsError.resetTitle',
+          pendingReset === 'calibrator'
+            ? 'calibrator.resetDataTitle'
+            : 'settings.pageError.resetTitle',
         )}
         message={t(
           pendingReset === 'calibrator'
             ? 'calibrator.resetDataConfirm'
-            : 'settingsError.resetConfirm',
+            : 'settings.pageError.resetConfirm',
         )}
         confirmLabel={t(
           pendingReset === 'calibrator'
             ? 'calibrator.resetDataConfirmButton'
-            : 'settingsError.resetConfirmButton',
+            : 'settings.pageError.resetConfirmButton',
         )}
         danger
         onConfirm={() => {

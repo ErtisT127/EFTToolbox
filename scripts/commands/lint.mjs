@@ -21,6 +21,7 @@ jsTool('eslint/bin/eslint.js', [
   'dashboard/src',
   'dashboard/test',
   'contracts/generate.mjs',
+  'contracts/check.mjs',
   'scripts',
   'eslint.config.mjs',
   '--max-warnings=0',
@@ -28,12 +29,11 @@ jsTool('eslint/bin/eslint.js', [
 jsTool('typescript/bin/tsc', ['--noEmit', '-p', 'dashboard/tsconfig.json']);
 jsTool('prettier/bin/prettier.cjs', ['--check', '.']);
 run(process.execPath, ['contracts/generate.mjs', '--check']);
+run(process.execPath, ['scripts/generate-defaults.mjs', '--check']);
 
 console.log('Dashboard i18n');
-const localeDir = path.join(root, 'dashboard', 'src', 'i18n', 'locales');
 const cjk = /[一-鿿]/;
 for (const file of sources(path.join(root, 'dashboard', 'src'))) {
-  if (file.startsWith(localeDir)) continue;
   if (cjk.test(readFileSync(file, 'utf8'))) {
     console.error(`Hardcoded Chinese outside the locale files: ${path.relative(root, file)}`);
     process.exit(1);

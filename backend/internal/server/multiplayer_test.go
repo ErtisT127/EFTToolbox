@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,9 +11,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	defaults "efttoolbox/backend/internal/defaults"
 	contracts "efttoolbox/contracts"
 
 	"github.com/pion/stun/v4"
@@ -23,6 +27,32 @@ import (
 func multiplayerFixture(t *testing.T) (string, http.Handler, *overlayHub, *multiplayerManager) {
 	root, handler, hub, manager := multiplayerFixtureWithID(t, "")
 	return root, handler, hub, manager
+}
+
+func TestPeerSnapshotsSerializeConcurrentSaves(t *testing.T) {
+	root := t.TempDir()
+	m := &multiplayerManager{
+		store:      &mapStore{root: root, files: &VersionedFileStore{root: root}},
+		knownPeers: map[string]peerRecord{},
+	}
+	const count = 32
+	var wait sync.WaitGroup
+	for i := 0; i < count; i++ {
+		wait.Add(1)
+		go func(i int) {
+			defer wait.Done()
+			id := fmt.Sprintf("peer-%d", i)
+			m.recordPeer(id, "player", "#123456", multiplayerRoleGuest)
+		}(i)
+	}
+	wait.Wait()
+	peers := map[string]peerRecord{}
+	if err := readJSON(filepath.Join(root, "user", "multiplayer-peers.json"), &peers); err != nil {
+		t.Fatal(err)
+	}
+	if len(peers) != count {
+		t.Fatalf("saved %d peers, want %d", len(peers), count)
+	}
 }
 
 func multiplayerFixtureWithID(t *testing.T, peerID string) (string, http.Handler, *overlayHub, *multiplayerManager) {
@@ -58,7 +88,7 @@ func mapStoreFixture(t *testing.T) (string, *mapStore, *overlayHub) {
 	if err := os.WriteFile(filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture_zh.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	store := &mapStore{root: root}
+	store := &mapStore{root: root, files: &VersionedFileStore{root: root}}
 	repo, err := newModeRepository(root, "pvp")
 	if err != nil {
 		t.Fatal(err)
@@ -77,6 +107,13 @@ func localCall(handler http.Handler, method, path string, value any) *httptest.R
 	request.RemoteAddr = "127.0.0.1:1234"
 	request.Host = "localhost"
 	request.Header.Set("Content-Type", "application/json")
+	if method == http.MethodPut {
+		get := httptest.NewRequest(http.MethodGet, path, nil)
+		get.RemoteAddr, get.Host = request.RemoteAddr, request.Host
+		current := httptest.NewRecorder()
+		handler.ServeHTTP(current, get)
+		request.Header.Set("If-Match", current.Header().Get("ETag"))
+	}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
@@ -94,32 +131,225 @@ func waitFor(t *testing.T, timeout time.Duration, condition func() bool) {
 	t.Fatal("condition not met in time")
 }
 
-func TestShareText(t *testing.T) {
-	custom := buildShareText(multiplayerModeCustom, "192.168.1.5:47990", "", "abcd1234abcd1234")
-	for _, want := range []string{
-		shareHeader,
-		"模式: 局域网",
-		"房主: 192.168.1.5:47990",
-		"密码: abcd1234abcd1234",
-	} {
-		if !strings.Contains(custom, want) {
-			t.Fatalf("custom share text missing %q: %s", want, custom)
-		}
+// TestMultiplayerInvite locks the structured invite contract for both hosting modes: the share
+// text is assembled on the Dashboard from these fields, so the backend must emit exactly
+// "mode / host as address:port / optional stun server / key" and nothing else.
+func TestMultiplayerInvite(t *testing.T) {
+	_, _, _, manager := multiplayerFixture(t)
+	t.Cleanup(manager.leave)
+
+	status, failure := manager.host(contracts.MultiplayerHostRequest{Mode: multiplayerModeCustom, Address: stringPtr("127.0.0.1"), Port: "0", Key: stringPtr("testkey0000000000")})
+	if failure != nil {
+		t.Fatalf("custom host: %+v", failure)
 	}
-	if strings.Contains(custom, "房间") || strings.Contains(custom, "STUN:") {
-		t.Fatalf("custom share text has stale lines: %s", custom)
+	invite := status.Invite
+	if invite == nil {
+		t.Fatal("custom status has no invite")
+	}
+	if invite.Mode != multiplayerModeCustom || invite.Key != "testkey0000000000" || invite.StunServer != nil {
+		t.Fatalf("custom invite fields: %+v", invite)
+	}
+	if host, port, err := net.SplitHostPort(invite.Host); err != nil || host != "127.0.0.1" || port == "" {
+		t.Fatalf("custom invite host must be address:port: %q", invite.Host)
+	}
+	manager.leave()
+
+	stunServer := fakeStunServer(t, func(from *net.UDPAddr) *net.UDPAddr { return from })
+	stunStatus, failure := manager.host(contracts.MultiplayerHostRequest{Mode: multiplayerModeStun, Address: stringPtr(""), Port: "0", StunServer: stringPtr(stunServer), Key: stringPtr("testkey0000000001")})
+	if failure != nil {
+		t.Fatalf("stun host: %+v", failure)
+	}
+	invite = stunStatus.Invite
+	if invite == nil {
+		t.Fatal("stun status has no invite")
+	}
+	if invite.Mode != multiplayerModeStun || invite.Key != "testkey0000000001" || invite.StunServer == nil || *invite.StunServer != stunServer {
+		t.Fatalf("stun invite fields: %+v", invite)
+	}
+	if _, _, err := net.SplitHostPort(invite.Host); err != nil {
+		t.Fatalf("stun invite host must be address:port: %q", invite.Host)
+	}
+}
+
+// TestSignalRequestValidation covers the custom-mode TCP signaler: request shape, key gate,
+// room capacity, and answer propagation all use the shared signal schema error codes.
+func TestSignalRequestValidation(t *testing.T) {
+	newListener := func(capacity bool, accept func(string) (string, *apiFailure)) *signalListener {
+		return &signalListener{key: "roomkey123", capacity: func() bool { return capacity }, accept: accept}
+	}
+	call := func(s *signalListener, body string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/signal", strings.NewReader(body))
+		s.handleSignal(response, request)
+		return response
+	}
+	decode := func(t *testing.T, response *httptest.ResponseRecorder) signalResponse {
+		t.Helper()
+		var body signalResponse
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatalf("signal response body: %s", response.Body.String())
+		}
+		return body
 	}
 
-	stun := buildShareText(multiplayerModeStun, "203.0.113.7:51240", "stun.l.google.com:19302", "efefefefefefefef")
-	for _, want := range []string{
-		"模式: STUN",
-		"房主: 203.0.113.7:51240",
-		"STUN: stun.l.google.com:19302",
-		"密码: efefefefefefefef",
+	accepting := newListener(true, func(offer string) (string, *apiFailure) { return "answer:" + offer, nil })
+	response := call(accepting, `{"offer":"offer-sdp","key":"roomkey123"}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("valid signal rejected: %d %s", response.Code, response.Body.String())
+	}
+	if body := decode(t, response); body.Answer != "answer:offer-sdp" {
+		t.Fatalf("signal answer mismatch: %+v", body)
+	}
+
+	for _, tc := range []struct {
+		name string
+		body string
+		code int
+		want string
+	}{
+		{"broken json", `{"offer"`, http.StatusBadRequest, string(contracts.SignalErrorMultiplayerSignalInvalid)},
+		{"missing offer", `{"key":"roomkey123"}`, http.StatusBadRequest, string(contracts.SignalErrorMultiplayerSignalInvalid)},
+		{"wrong key", `{"offer":"offer-sdp","key":"badkey"}`, http.StatusForbidden, string(contracts.SignalErrorMultiplayerKeyInvalid)},
 	} {
-		if !strings.Contains(stun, want) {
-			t.Fatalf("stun share text missing %q: %s", want, stun)
+		response := call(accepting, tc.body)
+		if response.Code != tc.code {
+			t.Fatalf("%s: status %d, want %d", tc.name, response.Code, tc.code)
 		}
+		if body := decode(t, response); body.Error != tc.want {
+			t.Fatalf("%s: error %q, want %q", tc.name, body.Error, tc.want)
+		}
+	}
+
+	full := newListener(false, func(string) (string, *apiFailure) { return "", nil })
+	response = call(full, `{"offer":"offer-sdp","key":"roomkey123"}`)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("full room: status %d, want 503", response.Code)
+	}
+	if body := decode(t, response); body.Error != string(contracts.SignalErrorMultiplayerRoomFull) {
+		t.Fatalf("full room: error %q", body.Error)
+	}
+
+	failing := newListener(true, func(string) (string, *apiFailure) {
+		return "", failDetail(http.StatusForbidden, "multiplayer_key_invalid", "detail-x")
+	})
+	response = call(failing, `{"offer":"offer-sdp","key":"roomkey123"}`)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("accept failure: status %d, want 403", response.Code)
+	}
+	if body := decode(t, response); body.Error != string(contracts.SignalErrorMultiplayerKeyInvalid) || body.Detail != "detail-x" {
+		t.Fatalf("accept failure: %+v", body)
+	}
+}
+
+// TestStunSignalValidation covers the STUN-mode UDP signaler, which consumes the same
+// signalRequest schema over datagrams and replies with the same signalResponse codes.
+func TestStunSignalValidation(t *testing.T) {
+	listenerConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var accepted atomic.Bool
+	listener := newStunListener(listenerConn, "roomkey123", func() bool { return true }, func(offer string) (string, *apiFailure) {
+		accepted.Store(true)
+		return "answer:" + offer, nil
+	})
+	t.Cleanup(listener.close)
+
+	client, err := net.DialUDP("udp", nil, listenerConn.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	exchange := func(t *testing.T, payload string) string {
+		t.Helper()
+		if _, err := client.Write([]byte(payload)); err != nil {
+			t.Fatal(err)
+		}
+		buffer := make([]byte, 4096)
+		if err := client.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		n, err := client.Read(buffer)
+		if err != nil {
+			t.Fatalf("no datagram reply: %v", err)
+		}
+		return string(buffer[:n])
+	}
+	var decode struct {
+		Answer string `json:"answer"`
+		Error  string `json:"error"`
+	}
+
+	// Broken JSON is dropped silently, so the next valid exchange must still succeed.
+	if _, err := client.Write([]byte(`{"offer"`)); err != nil {
+		t.Fatal(err)
+	}
+	if reply := exchange(t, `{"offer":"offer-sdp","key":"roomkey123"}`); json.Unmarshal([]byte(reply), &decode) != nil || decode.Answer != "answer:offer-sdp" || !accepted.Load() {
+		t.Fatalf("valid stun signal: %s", reply)
+	}
+
+	if reply := exchange(t, `{"offer":"offer-sdp","key":"badkey"}`); json.Unmarshal([]byte(reply), &decode) != nil || decode.Error != string(contracts.SignalErrorMultiplayerKeyInvalid) {
+		t.Fatalf("stun wrong key: %s", reply)
+	}
+}
+
+// TestStunListenerOutlivesProbeDeadline locks the fix for the stale read deadline: the STUN
+// probe bounds its exchange with a 3s deadline on the signaling socket, and the listener that
+// reuses the same socket must read without it, or the room stops answering joins after 3s.
+func TestStunListenerOutlivesProbeDeadline(t *testing.T) {
+	stunServer := fakeStunServer(t, func(from *net.UDPAddr) *net.UDPAddr { return from })
+	conn, mapped, failure := bindStunSignaling(stunServer)
+	if failure != nil {
+		t.Fatalf("bind stun signaling: %+v", failure)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	listener := newStunListener(conn, "roomkey123", func() bool { return true }, func(offer string) (string, *apiFailure) {
+		return "answer:" + offer, nil
+	})
+	t.Cleanup(listener.close)
+
+	time.Sleep(3200 * time.Millisecond)
+	client, err := net.DialUDP("udp", nil, mapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if _, err := client.Write([]byte(`{"offer":"offer-sdp","key":"roomkey123"}`)); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, 4096)
+	if err := client.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	n, err := client.Read(buffer)
+	if err != nil {
+		t.Fatalf("no stun signal reply after probe deadline: %v", err)
+	}
+	var decode struct {
+		Answer string `json:"answer"`
+	}
+	if json.Unmarshal(buffer[:n], &decode) != nil || decode.Answer != "answer:offer-sdp" {
+		t.Fatalf("unexpected stun signal reply: %s", buffer[:n])
+	}
+}
+
+// TestUnknownWireTypeRejectsPeer locks the wire envelope contract: only the schema-declared
+// frame types are accepted, and an unknown type must not mutate room state.
+func TestUnknownWireTypeRejectsPeer(t *testing.T) {
+	_, _, hub, manager := multiplayerFixture(t)
+	_ = hub
+	manager.mu.Lock()
+	manager.role = multiplayerRoleHost
+	manager.peers["aaaaaaaaaaaaaaaa"] = &multiplayerPeer{id: "aaaaaaaaaaaaaaaa"}
+	manager.mu.Unlock()
+
+	manager.handleCtlMessage(&multiplayerPeer{}, wireEnvelope{Type: "mystery", Data: mustJSON(map[string]string{"x": "y"})})
+	manager.handleCtlMessage(&multiplayerPeer{}, wireEnvelope{Type: strings.ToUpper(contracts.WireTypePos)})
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if len(manager.peers) != 1 || manager.roster != nil || manager.role != multiplayerRoleHost {
+		t.Fatalf("unknown wire type mutated room state: peers=%d roster=%v role=%q", len(manager.peers), manager.roster, manager.role)
 	}
 }
 
@@ -289,7 +519,7 @@ func TestRoomCapacityAtHello(t *testing.T) {
 	manager.mu.Unlock()
 
 	pending := &multiplayerPeer{lastPong: time.Now()}
-	hello := mustJSON(wireHello{PeerID: "aaaaaaaaaaaaaaaa", Name: "Late", Color: "#d4a24e"})
+	hello := mustJSON(wireHello{PeerId: "aaaaaaaaaaaaaaaa", Name: "Late", Color: "#d4a24e"})
 	manager.handleCtlMessage(pending, wireEnvelope{Type: "hello", Data: hello})
 	manager.mu.Lock()
 	count := len(manager.peers)
@@ -397,5 +627,92 @@ func TestMarkerPreferences(t *testing.T) {
 	duplicate := contracts.MarkerPreferences{SchemaVersion: 1, HiddenOwners: []string{"a", "a"}, ShownOwners: []string{}}
 	if response := localCall(handler, "PUT", "/api/marker-preferences", duplicate); response.Code != 400 {
 		t.Fatalf("duplicate owner accepted: %s", response.Body.String())
+	}
+}
+
+func TestMultiplayerDataResetRestoresDefaultsAndRotatesIdentity(t *testing.T) {
+	root, handler, _, manager := multiplayerFixture(t)
+	oldID := manager.selfID()
+	settings := manager.currentSettings()
+	settings.PlayerName = "Changed"
+	settings.PlayerColor = "#123456"
+	if err := manager.saveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	manager.recordPeer("aaaaaaaaaaaaaaaa", "Known", "#123456", multiplayerRoleGuest)
+	manager.saveStunList([]string{"custom:3478"}, []string{"custom-nat:3478"})
+
+	response := localCall(handler, "POST", "/api/data/reset/multiplayer", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("multiplayer reset failed: %d %s", response.Code, response.Body.String())
+	}
+	settings = manager.currentSettings()
+	if settings.PlayerId == oldID || settings.PlayerName != "玩家-"+settings.PlayerId[:4] || settings.PlayerColor != defaults.MultiplayerSettings().PlayerColor {
+		t.Fatalf("multiplayer settings were not reset: %+v", settings)
+	}
+	if len(manager.knownPeers) != 0 {
+		t.Fatalf("known peers were not reset: %+v", manager.knownPeers)
+	}
+	if got := manager.currentStunServers(); len(got) != len(defaults.StunServers()) || got[0] != defaults.StunServers()[0] {
+		t.Fatalf("STUN servers were not reset: %v", got)
+	}
+	if got := manager.currentStunNatServers(); len(got) != len(defaults.StunNatServers()) || got[0] != defaults.StunNatServers()[0] {
+		t.Fatalf("NAT servers were not reset: %v", got)
+	}
+	var identity identityFile
+	if err := readJSON(filepath.Join(root, "user", "multiplayer-id.json"), &identity); err != nil || identity.PeerID != settings.PlayerId {
+		t.Fatalf("identity file was not reset: %+v %v", identity, err)
+	}
+}
+
+func TestMultiplayerDataResetIsRejectedInRoom(t *testing.T) {
+	_, handler, _, manager := multiplayerFixture(t)
+	oldID := manager.selfID()
+	manager.mu.Lock()
+	manager.role = multiplayerRoleHost
+	manager.mu.Unlock()
+	response := localCall(handler, "POST", "/api/data/reset/multiplayer", nil)
+	if response.Code != http.StatusConflict || manager.selfID() != oldID {
+		t.Fatalf("in-room reset was not rejected: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestResetAnnotationsClearsMultiplayerCache(t *testing.T) {
+	_, _, _, manager := multiplayerFixture(t)
+	item := contracts.Annotation{Id: "remote-mark", OwnerId: "aaaaaaaaaaaaaaaa", FloorId: "ground", Kind: "marker", Points: []contracts.MapPoint{{X: 5, Y: 5}}, Color: "#5FD3C4", Width: 3, TextSize: 15}
+	if !manager.applyRemoteAnnotations(item.OwnerId, "fixture", []contracts.Annotation{item}) {
+		t.Fatal("remote annotation was not applied")
+	}
+	if err := manager.store.resetAnnotations(); err != nil {
+		t.Fatal(err)
+	}
+	if len(manager.remoteDocs) != 0 {
+		t.Fatalf("remote annotation cache survived reset: %+v", manager.remoteDocs)
+	}
+	var document contracts.Annotations
+	if err := readJSON(filepath.Join(manager.store.userRoot(), "maps", "fixture.annotations.json"), &document); err != nil || len(document.Items) != 0 {
+		t.Fatalf("annotation document was not reset: %+v %v", document, err)
+	}
+}
+
+func TestMapPreferenceResetClearsAppliedMapInEveryMode(t *testing.T) {
+	_, store, _ := mapStoreFixture(t)
+	pveRoot := filepath.Join(store.root, "user", "modes", "pve")
+	for _, modeRoot := range []string{store.userRoot(), pveRoot} {
+		if err := os.MkdirAll(modeRoot, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.saveTo(modeRoot, "game-monitor-state.json", gameMonitorState{SchemaVersion: 1, MapID: "fixture"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.resetMapPreferences(); err != nil {
+		t.Fatal(err)
+	}
+	for _, modeRoot := range []string{store.userRoot(), pveRoot} {
+		var state gameMonitorState
+		if err := readJSON(filepath.Join(modeRoot, "game-monitor-state.json"), &state); err != nil || state.MapID != "" {
+			t.Fatalf("applied map survived reset in %s: %+v %v", modeRoot, state, err)
+		}
 	}
 }
