@@ -43,6 +43,8 @@
   place-items: center;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
   padding: max(var(--space-4), env(safe-area-inset-top))
     max(var(--space-4), env(safe-area-inset-right)) max(var(--space-4), env(safe-area-inset-bottom))
     max(var(--space-4), env(safe-area-inset-left));
@@ -62,6 +64,8 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
   padding: var(--space-5);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -287,6 +291,8 @@
   max-width: calc(100dvw - 24px);
   padding: var(--space-1);
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
 }
 
 .cast-address-list button {

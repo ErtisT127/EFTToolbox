@@ -100,9 +100,8 @@ func (h *overlayHub) monitorSessionChanged(generation uint64) {
 	h.mu.Lock()
 	initialized := h.sessionGeneration != 0
 	h.sessionGeneration = generation
-	h.detectedMapID = ""
-	h.pendingMap = ""
-	h.pendingMode = ""
+	// The pending map stays sticky across session and configuration resets: it is
+	// only consumed by a position update or replaced by a newer detection.
 	if initialized {
 		h.publish(contracts.ServerEvent{Type: "game_monitor_changed", GameMonitorStatus: &h.monitorStatus})
 	}

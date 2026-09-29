@@ -541,6 +541,7 @@
     "noSelectedNode": "Pick a STUN server",
     "useServerCreate": "Create room with this server",
     "stunDownloadFailed": "List download failed",
+    "stunDownloadDone": "Updated the STUN server list ({{count}} servers, NAT-check list included)",
     "inviteTitle": "Invite",
     "copyAll": "Copy all",
     "copyValue": "Copy {{field}}",

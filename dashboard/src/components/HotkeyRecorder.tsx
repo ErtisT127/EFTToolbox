@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { TriangleAlert, X } from 'lucide-react';
 import { useLocale } from '../hooks/useLocale';
+import { isImeComposing } from '../lib/ime';
 
 // Keys named after the physical position they occupy, never after the character they type: the
 // same shortcut has to mean the same key on AZERTY or QWERTZ as it does on QWERTY. Backspace is
@@ -94,6 +95,8 @@ export function HotkeyRecorder({
   useEffect(() => () => notify.current?.(false), []);
   const record = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (!recording) return;
+    // An IME's own keys (the 229 process key, its space and escape) are not shortcuts.
+    if (isImeComposing(event)) return;
     // Tab has to keep moving focus: swallowing it would trap the keyboard here. Leaving the field
     // closes the recorder anyway.
     if (event.code === 'Tab') return;

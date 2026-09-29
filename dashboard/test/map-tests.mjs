@@ -19,6 +19,7 @@ import {
   ownerVisibleFor,
   ownerVisibilityFor,
 } from '../src/pages/map/lib/visibility.ts';
+import { isImeComposing } from '../src/lib/ime.ts';
 
 const root = new URL('../../data/upstream/', import.meta.url);
 const assetsRoot = new URL('assets/', root);
@@ -406,4 +407,13 @@ test('owner toggle writes the side that makes the choice stick', () => {
   const unshown = nextMarkerPreferences(shown, departed, false, context);
   assert.deepEqual(unshown.shownOwners, []);
   assert.deepEqual(unshown.hiddenOwners, [departed]);
+});
+
+// An IME's own keys (including its Escape and Space) carry isComposing; some Chromium builds only
+// expose them through the legacy 229 process key, so both have to count as "the IME is typing".
+test('ime composition keys are recognised so shortcuts can stand down', () => {
+  assert.equal(isImeComposing({ isComposing: true, keyCode: 27 }), true);
+  assert.equal(isImeComposing({ isComposing: false, keyCode: 229 }), true);
+  assert.equal(isImeComposing({ isComposing: false, keyCode: 32 }), false);
+  assert.equal(isImeComposing({}), false);
 });

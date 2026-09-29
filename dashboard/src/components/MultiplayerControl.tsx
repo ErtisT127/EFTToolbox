@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
+import { isImeComposing, useImeComposition } from '../lib/ime';
 import {
   ArrowLeft,
   ArrowUpDown,
@@ -132,6 +133,7 @@ export function MultiplayerControl() {
     if (!open) return;
     closeButton.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isImeComposing(event)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         close();
@@ -713,6 +715,18 @@ function IdentitySection({
   onSave: (changes: { playerName?: string; playerColor?: string }) => void;
 }) {
   const { t } = useLocale();
+  const saveName = (value: string) => {
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== selfName) onSave({ playerName: trimmed });
+  };
+  // The name only saves on blur, so a blur that lands while the candidate window is open waits for
+  // the finished text instead of persisting the half-typed pinyin the field still shows.
+  const deferredBlur = useRef<string | null>(null);
+  const { composing, composerProps } = useImeComposition((value) => {
+    if (deferredBlur.current === null) return;
+    deferredBlur.current = null;
+    saveName(value);
+  });
   return (
     <>
       <label htmlFor="mp-name">{t('multiplayer.name')}</label>
@@ -721,9 +735,14 @@ function IdentitySection({
         value={name}
         maxLength={40}
         placeholder={t('multiplayer.namePlaceholder')}
+        {...composerProps}
         onChange={(event) => onName(event.target.value)}
-        onBlur={() => {
-          if (name.trim() && name.trim() !== selfName) onSave({ playerName: name.trim() });
+        onBlur={(event) => {
+          if (composing.current) {
+            deferredBlur.current = event.currentTarget.value;
+            return;
+          }
+          saveName(event.currentTarget.value);
         }}
       />
       <label>{t('multiplayer.colorLabel')}</label>
@@ -1192,6 +1211,11 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
         return fresh.map((server) => ({ server, probe: probed.get(server) }));
       });
       setSelected((current) => (fresh.includes(current) ? current : ''));
+      notices.push(
+        t('multiplayer.stunDownloadDone', { count: fresh.length }),
+        undefined,
+        'success',
+      );
     } catch {
       notices.push(t('multiplayer.stunDownloadFailed'));
     } finally {
@@ -1318,7 +1342,7 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
           disabled={downloading}
           onClick={() => void download()}
         >
-          <Download size={16} className={downloading ? 'spin' : ''} />
+          <Download size={16} className={downloading ? 'download-bounce' : ''} />
         </button>
       </div>
       {searchOpen && (

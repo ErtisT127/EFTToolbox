@@ -39,6 +39,13 @@ func TestParseModeAndLogLine(t *testing.T) {
 	if !ok || event.Map != "factory_day_preset" {
 		t.Fatalf("log event = %#v, %v", event, ok)
 	}
+	event, ok = ParseLogLine("2026-09-18 21:35:35.100|1.1.5.1.47473|TRACE|application|TRACE-NetworkGameCreate profileStatus: LocateHostView RaidMode: Online, Location: bigmap, shortId: ABC123")
+	if !ok || event.Map != "bigmap" {
+		t.Fatalf("network game create event = %#v, %v", event, ok)
+	}
+	if _, ok := ParseLogLine("2026-09-18 21:35:35.100|1.1.5.1.47473|Info|application|Loaded Location: somewhere"); ok {
+		t.Fatal("Location without NetworkGameCreate must not be treated as a map event")
+	}
 }
 
 func TestNewestSessionUsesTimestampWithVersionSuffix(t *testing.T) {

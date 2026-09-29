@@ -4,6 +4,7 @@ import type { Sticker, StickerUsage } from '../../../../contracts/ts/ipc.gen';
 import { useLocale, type LocaleKey } from '../../hooks/useLocale';
 import { SearchInput } from '../../components/SearchInput';
 import { mapDisplay } from '../../../../contracts/ts/map-display.gen';
+import { isImeComposing } from '../../lib/ime';
 
 // The built-in glyphs. They replace the old four emoji groups, so the picker has one curated set
 // rather than two overlapping ones.
@@ -138,6 +139,7 @@ export function StickerPicker({ stickers, recent, onPick, onClose }: Props) {
 
   useEffect(() => {
     function key(event: KeyboardEvent) {
+      if (isImeComposing(event)) return;
       if (event.key === 'Escape') {
         event.stopPropagation();
         onClose();

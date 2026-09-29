@@ -319,6 +319,14 @@ const clientState = createSlice({
     clearCalibrationEditor(state, action: PayloadAction<string>) {
       delete state.calibrationEditors[action.payload];
     },
+    // Clears the working draft after a save or a context switch while keeping the undo history:
+    // wiping past/future here made the undo stack empty itself before the user could ever use it.
+    clearCalibrationEditorDraft(state, action: PayloadAction<string>) {
+      const editor = state.calibrationEditors[action.payload];
+      if (!editor) return;
+      editor.draft = undefined;
+      editor.savedRevision = editor.editRevision;
+    },
   },
 });
 
@@ -351,5 +359,6 @@ export const {
   setCalibrationEditorHistory,
   setCalibrationEditorSaveState,
   clearCalibrationEditor,
+  clearCalibrationEditorDraft,
 } = clientState.actions;
 export const clientReducer = clientState.reducer;

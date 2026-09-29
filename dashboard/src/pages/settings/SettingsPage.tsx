@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
+import { isImeComposing } from '../../lib/ime';
 import { useOverlay } from '../../stores/overlayStore';
 import { useGameMonitor } from '../../stores/gameMonitorStore';
 import { notices } from '../../stores/noticeStore';
@@ -160,6 +161,7 @@ export function SettingsPage({ initialTab }: { initialTab?: SettingsTab }) {
                 className={tab === key ? 'active' : ''}
                 onClick={() => setTab(key)}
                 onKeyDown={(e) => {
+                  if (isImeComposing(e)) return;
                   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
                   e.preventDefault();
                   const step = e.key === 'ArrowDown' ? 1 : settingsTabs.length - 1;

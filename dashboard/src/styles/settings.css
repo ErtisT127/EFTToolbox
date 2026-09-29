@@ -55,6 +55,8 @@
 .settings-content {
   container-type: inline-size;
   overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
   padding: var(--space-6);
 }
 .settings-content h1 {

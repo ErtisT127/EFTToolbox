@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import { useLocale } from '../hooks/useLocale';
+import { isImeComposing } from '../lib/ime';
 
 export function ConfirmDialog({
   open,
@@ -25,6 +26,7 @@ export function ConfirmDialog({
     if (!open) return;
     confirm.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isImeComposing(event)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         onCancel();

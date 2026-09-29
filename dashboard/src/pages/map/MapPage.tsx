@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
+import { isImeComposing } from '../../lib/ime';
 import {
   Brush,
   Check,
@@ -365,6 +366,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   useEffect(() => {
     if (!panel) return;
     function key(event: KeyboardEvent) {
+      if (isImeComposing(event)) return;
       if (event.key === 'Escape') {
         if (closeTimer.current) clearTimeout(closeTimer.current);
         panelUsed.current = false;
@@ -636,6 +638,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
             <div
               className="tool-group"
               onKeyDown={(event) => {
+                if (isImeComposing(event)) return;
                 if (event.key === 'Escape') {
                   event.stopPropagation();
                   closeToolSettings();
@@ -874,6 +877,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                       void submitPosition();
                     }}
                     onKeyDown={(event) => {
+                      if (isImeComposing(event)) return;
                       if (event.key === 'Escape') {
                         setEditingCoordinates(false);
                         setScreenshotName('');

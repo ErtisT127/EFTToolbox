@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
+import { isImeComposing, useImeComposition } from '../../lib/ime';
 import {
   Hand,
   MousePointer2,
@@ -48,6 +49,7 @@ import { api, isRevisionConflict } from '../../stores/api';
 import { store, type RootState } from '../../stores/store';
 import {
   clearCalibrationEditor,
+  clearCalibrationEditorDraft,
   clearConflict,
   setCalibrationEditorDraft,
   setCalibrationEditorHistory,
@@ -481,7 +483,9 @@ export function CalibratorPage() {
           JSON.stringify(store.getState().client.calibrationEditors[key]?.draft) ===
           JSON.stringify(payload)
         )
-          store.dispatch(clearCalibrationEditor(key));
+          // Keep past/future: wiping the whole editor here emptied the undo stack before the user
+          // could ever touch it, since this runs on every debounced save.
+          store.dispatch(clearCalibrationEditorDraft(key));
         else
           store.dispatch(
             setCalibrationEditorSaveState({
@@ -589,14 +593,38 @@ export function CalibratorPage() {
     selectRegion(region);
     return true;
   };
-  const update = (patch: Partial<CalibrationRegion>, persist = true) => {
+  const update = (patch: Partial<CalibrationRegion>, persist = true, record = persist) => {
     if (!draft || !doc) return;
     const next = { ...draft, ...patch };
     setDraft(next);
     if (!isValidRegion(next)) return;
     const nextDoc = { ...doc, regions: doc.regions.map((r) => (r.id === next.id ? next : r)) };
-    applyDocument(nextDoc, persist ? 'debounce' : 'none', persist);
+    applyDocument(nextDoc, persist ? 'debounce' : 'none', record);
   };
+  // One undo step per typing burst, not per character: the first change after a second of idle
+  // pushes the pre-edit document, and everything typed within the window joins that step.
+  const lastNameRecordAt = useRef(0);
+  const recordNameStep = () => {
+    const now = Date.now();
+    if (now - lastNameRecordAt.current <= 1000) return false;
+    lastNameRecordAt.current = now;
+    return true;
+  };
+  // The region name saves through the 600ms debounce. While the IME is composing, the text stays
+  // in the input and the local draft only: dispatching the document on every keystroke makes React
+  // rewrite the input's value mid-composition, and a real IME (verified with Sogou/TSF) cancels its
+  // composition when the focused field is written to — pinyin never reaches the screen. The finished
+  // text arrives with compositionend and is dispatched and persisted once.
+  const { composing: composingName, composerProps: nameComposerProps } = useImeComposition(
+    (value) => {
+      // Nothing was dispatched while composing, so only the confirmed document tells us whether
+      // this commit still has something to persist.
+      const saved = confirmedDocRef.current?.regions.find(
+        (region) => region.id === draft?.id,
+      )?.name;
+      if (saved !== value) update({ name: value });
+    },
+  );
   const updateRectangleField = (axis: 'x' | 'z', edge: 'min' | 'max', value: number) => {
     if (!draft) return;
     const rectangle = { ...draft.rectangle };
@@ -725,6 +753,30 @@ export function CalibratorPage() {
     const region = next.regions.find((item) => item.id === selected);
     if (region) setDraft(structuredClone(region));
   };
+  // Page-scoped undo shortcuts: a browser page only sees keys while its window is focused, so these
+  // can never swallow system input the way the overlay's registered hotkeys do. Inside text fields
+  // the browser's own undo stays in charge. The ref keeps the handler reading the current history
+  // without re-registering on every render.
+  const undoRedoRef = useRef({ undo, redo });
+  undoRedoRef.current = { undo, redo };
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (isImeComposing(event) || event.altKey) return;
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLowerCase();
+      if (key !== 'z' && key !== 'y') return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest('input,textarea,select,[contenteditable="true"]')
+      )
+        return;
+      event.preventDefault();
+      if (key === 'y' || event.shiftKey) undoRedoRef.current.redo();
+      else undoRedoRef.current.undo();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   const draftErrors = useMemo(() => {
     if (!draft) return {} as Record<string, string>;
     const errors: Record<string, string> = {};
@@ -753,9 +805,9 @@ export function CalibratorPage() {
   const toggleBasemap = () => {
     if (!preference || !hasBasemapToggle) return;
     flushSave();
-    setSelected(null);
-    setDraft(null);
-    updateTreeSelection({ type: 'map', mapId: calibratorMapId });
+    // The sidebar stays where it is: the tree selection outlives the switch, and when the other
+    // basemap's document arrives the selection effect re-selects the region — or falls back to the
+    // floor, since regions belong to one basemap's document.
     void toggleBasemapForMap(calibratorMapId);
   };
   useEffect(() => {
@@ -766,7 +818,8 @@ export function CalibratorPage() {
     confirmedDocRef.current = null;
     setSelected(null);
     setDraft(null);
-    store.dispatch(clearCalibrationEditor(activeCalibrationKey));
+    // Keep past/future so the undo history survives switching maps or basemaps and back.
+    store.dispatch(clearCalibrationEditorDraft(activeCalibrationKey));
     setConfirmDelete(false);
     rectangleHistory.current = false;
     if (treeSelection.mapId !== calibratorMapId)
@@ -825,6 +878,12 @@ export function CalibratorPage() {
     t,
   ]);
   useEffect(() => {
+    // While the user edits a field in this panel, the draft may legitimately diverge from the
+    // document: an invalid intermediate value (an emptied name, crossed y-range) never dispatches.
+    // Re-applying the selection here would roll the field back under the caret — and with an IME
+    // open, the composing name lives in the draft alone as well.
+    if (detailRef.current?.contains(document.activeElement)) return;
+    if (composingName.current) return;
     if (treeSelection.mapId !== calibratorMapId || !activeDoc || !preference || !currentMapData)
       return;
     const selection = calibratorPreference.selection;
@@ -861,6 +920,7 @@ export function CalibratorPage() {
     if (!region) return;
     setSelected(region.id);
     setDraft(structuredClone(region));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- composingName is a ref read for the guards above
   }, [
     calibratorPreference.selection,
     calibratorMapId,
@@ -1003,7 +1063,7 @@ export function CalibratorPage() {
       )}
       <aside id="calibrator-tree" className={`calibrator-tree ${collapsed ? 'collapsed' : ''}`}>
         {!collapsed && (
-          <div ref={treeContentRef} className="tree-content">
+          <div ref={treeContentRef} className="tree-content" onScroll={rememberTreeScroll}>
             {w.catalog.map((map) => {
               const data = mapData.get(map.id);
               const mapBasemap: Basemap = data
@@ -1393,8 +1453,20 @@ export function CalibratorPage() {
                 maxLength={64}
                 value={draft.name}
                 aria-invalid={draftErrors.name ? 'true' : undefined}
-                onChange={(e) => update({ name: e.target.value })}
-                onBlur={rollbackDraft}
+                {...nameComposerProps}
+                onChange={(e) => {
+                  const name = e.target.value;
+                  if (composingName.current) {
+                    // Keep the DOM value in sync locally so React never writes it back while the
+                    // IME holds the composition.
+                    setDraft((current) => (current ? { ...current, name } : current));
+                  } else {
+                    update({ name }, true, recordNameStep());
+                  }
+                }}
+                onBlur={() => {
+                  if (!composingName.current) rollbackDraft();
+                }}
               />
               <div className="field-meta">
                 {draftErrors.name ? (

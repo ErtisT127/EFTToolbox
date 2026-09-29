@@ -572,6 +572,17 @@
   box-sizing: border-box;
 }
 
+/* The detail panel skins every text-like input with its own box, which leaks into the shared
+   stepper and draws a second frame inside it on focus. Put the bare, borderless stepper input
+   back: the container's own border is the only frame this control gets. */
+.calibrator-detail .number-stepper-control input:not([type='checkbox']):not([type='radio']) {
+  min-height: 0;
+  padding: var(--space-2);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
 .conflict-warning {
   display: flex;
   align-items: flex-start;

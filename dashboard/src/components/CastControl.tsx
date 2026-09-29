@@ -1,6 +1,7 @@
 import { Check, ChevronDown, Copy, Smartphone, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useEffect, useRef, useState } from 'react';
+import { isImeComposing } from '../lib/ime';
 import { useLocale } from '../hooks/useLocale';
 import { notices } from '../stores/noticeStore';
 import { reportThrottledFailure } from '../stores/workspaceStore';
@@ -73,6 +74,7 @@ export function CastControl() {
     if (!open) return;
     closeButton.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isImeComposing(event)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         if (suggestOpen) {

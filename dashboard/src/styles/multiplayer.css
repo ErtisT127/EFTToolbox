@@ -46,6 +46,8 @@
   place-items: center;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
   padding: max(var(--space-4), env(safe-area-inset-top))
     max(var(--space-4), env(safe-area-inset-right)) max(var(--space-4), env(safe-area-inset-bottom))
     max(var(--space-4), env(safe-area-inset-left));
@@ -65,6 +67,8 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
   padding: var(--space-5);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -781,6 +785,8 @@
   padding: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--border);
@@ -879,18 +885,24 @@
   font-size: var(--text-xs);
 }
 
-.spin {
-  animation: mp-spin 1s linear infinite;
+/* A download reads as motion toward the tray, not as rotation: while the request is in flight the
+   icon dips toward the button's bottom edge and settles back. */
+.download-bounce {
+  animation: mp-download-bounce 1s ease-in-out infinite;
 }
 
-@keyframes mp-spin {
-  to {
-    transform: rotate(360deg);
+@keyframes mp-download-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(2.5px);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .spin {
+  .download-bounce {
     animation: none;
   }
 }

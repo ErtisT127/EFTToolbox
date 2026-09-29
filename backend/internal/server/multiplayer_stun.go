@@ -208,6 +208,14 @@ func natCheck(servers []string) contracts.NatCheckResult {
 	return compareNAT(servers)
 }
 
+// natCheckAttempts bounds the fan-out: public STUN servers rot constantly, so the whole list is
+// never swept — the first two answers decide and the rest of the flight is abandoned.
+const natCheckAttempts = 6
+
+// natCheckDeadline covers the whole flight: every request races at once, so one deadline bounds
+// the endpoint no matter how many peers are dead.
+const natCheckDeadline = 2 * time.Second
+
 // compareNAT is the network half of natCheck, split out so tests can inject peers.
 func compareNAT(servers []string) contracts.NatCheckResult {
 	if len(servers) < 2 {
@@ -218,9 +226,64 @@ func compareNAT(servers []string) contracts.NatCheckResult {
 		return contracts.NatCheckResult{Kind: "unknown", Message: strPtr("multiplayer_nat_unreachable")}
 	}
 	defer func() { _ = conn.Close() }()
-	first, errFirst := stunMappedAddr(conn, servers[0], 2*time.Second)
-	second, errSecond := stunMappedAddr(conn, servers[1], 2*time.Second)
-	if errFirst != nil || errSecond != nil {
+	// Both mappings must come from this one socket: the comparison is only meaningful when the
+	// local endpoint is fixed and the remote varies. The requests race instead of queueing, so a
+	// rotten list costs the shared deadline rather than a timeout per dead server.
+	requests := make(map[[stun.TransactionIDSize]byte]bool, natCheckAttempts)
+	sent := 0
+	for _, server := range servers {
+		if sent >= natCheckAttempts {
+			break
+		}
+		host, port, err := splitStunAddress(server)
+		if err != nil {
+			continue
+		}
+		raddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(host, port))
+		if err != nil {
+			continue
+		}
+		request := stun.MustBuild(stun.TransactionID, stun.BindingRequest)
+		if _, err := conn.WriteToUDP(request.Raw, raddr); err != nil {
+			continue
+		}
+		requests[request.TransactionID] = true
+		sent++
+	}
+	if sent < 2 {
+		return contracts.NatCheckResult{Kind: "unknown", Message: strPtr("multiplayer_nat_unreachable")}
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(natCheckDeadline)); err != nil {
+		return contracts.NatCheckResult{Kind: "unknown", Message: strPtr("multiplayer_nat_unreachable")}
+	}
+	var first, second *net.UDPAddr
+	buffer := make([]byte, 1500)
+	for second == nil {
+		n, _, err := conn.ReadFromUDP(buffer)
+		if err != nil {
+			break
+		}
+		response := &stun.Message{Raw: buffer[:n]}
+		if err := response.Decode(); err != nil {
+			continue
+		}
+		// Consuming the ID stops retransmissions from counting a server twice.
+		if !requests[response.TransactionID] {
+			continue
+		}
+		delete(requests, response.TransactionID)
+		var mapped stun.XORMappedAddress
+		if err := mapped.GetFrom(response); err != nil {
+			continue
+		}
+		addr := &net.UDPAddr{IP: mapped.IP, Port: mapped.Port}
+		if first == nil {
+			first = addr
+		} else {
+			second = addr
+		}
+	}
+	if first == nil || second == nil {
 		return contracts.NatCheckResult{Kind: "unknown", Message: strPtr("multiplayer_nat_unreachable")}
 	}
 	if first.IP.Equal(second.IP) && first.Port == second.Port {

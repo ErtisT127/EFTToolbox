@@ -683,6 +683,8 @@
   min-width: 264px;
   max-height: var(--popover-available-height, 60vh);
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
   padding: 14px 16px;
   border: 0;
   border-radius: 6px;

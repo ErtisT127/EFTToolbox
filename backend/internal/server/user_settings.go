@@ -165,13 +165,14 @@ func (h *overlayHub) updateUserSettings(expected string, update func(*contracts.
 	mobile := h.mobile
 	oldMode := h.monitorSettings.Mode
 	oldLogDirectory := h.monitorSettings.LogDirectory
-	oldScreenshotDirectory := h.monitorSettings.ScreenshotDirectory
 	if monitorChanged {
 		h.monitorSettings = value.GameMonitor
 		h.monitorStatus.Mode = value.GameMonitor.Mode
 		h.monitorStatus.ScreenshotWatching = value.GameMonitor.ScreenshotDirectory != ""
 		h.monitorStatus.LogWatching = value.GameMonitor.LogDirectory != ""
-		if oldLogDirectory != value.GameMonitor.LogDirectory || oldScreenshotDirectory != value.GameMonitor.ScreenshotDirectory || oldMode != value.GameMonitor.Mode {
+		// A screenshot-directory change is the recovery path for a previously
+		// misconfigured watcher, so the pending map must survive it.
+		if oldLogDirectory != value.GameMonitor.LogDirectory || oldMode != value.GameMonitor.Mode {
 			h.detectedMapID = ""
 			h.pendingMap = ""
 			h.pendingMode = ""

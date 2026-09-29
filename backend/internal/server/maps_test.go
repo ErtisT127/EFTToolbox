@@ -8,10 +8,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	defaults "efttoolbox/backend/internal/defaults"
 	contracts "efttoolbox/contracts"
 )
 
@@ -447,7 +449,7 @@ func TestCalibrationResetRestoresDefaultsAndPreservesOtherUserData(t *testing.T)
 		t.Fatalf("calibration reset failed: %d %s", response.Code, response.Body.String())
 	}
 	var documents contracts.CalibrationDocuments
-	if err := readJSON(filepath.Join(root, "user", "calibration", "maps.calibration.json"), &documents); err != nil || documents.SchemaVersion != 1 || documents.Maps == nil || len(documents.Maps) != 0 {
+	if err := readJSON(filepath.Join(root, "user", "calibration", "maps.calibration.json"), &documents); err != nil || !reflect.DeepEqual(documents, defaults.CalibrationDocuments()) {
 		t.Fatalf("calibration documents were not restored to defaults: %+v %v", documents, err)
 	}
 	var preferences contracts.CalibratorPreferences

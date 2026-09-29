@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { isImeComposing } from '../lib/ime';
 
 export function NumericField({
   label,
@@ -63,6 +64,7 @@ export function NumericField({
           onBlur?.();
         }}
         onKeyDown={(event) => {
+          if (isImeComposing(event)) return;
           if (event.key === 'Enter') {
             commit(event.currentTarget.value);
             event.currentTarget.blur();

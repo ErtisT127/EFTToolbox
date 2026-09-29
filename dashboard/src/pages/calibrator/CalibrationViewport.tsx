@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
+import { isImeComposing } from '../../lib/ime';
 import type {
   CalibrationRegion,
   MapData,
@@ -493,6 +494,7 @@ export function CalibrationViewport(props: Props) {
       unlockTooltips(true);
     };
     const key = (event: KeyboardEvent) => {
+      if (isImeComposing(event)) return;
       if (
         event.target instanceof HTMLElement &&
         event.target.closest('input,textarea,select,[contenteditable="true"]')

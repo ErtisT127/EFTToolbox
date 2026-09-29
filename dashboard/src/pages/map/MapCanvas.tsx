@@ -2,6 +2,7 @@ import { mapDisplay } from '../../../../contracts/ts/map-display.gen';
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import { useTranslation } from 'react-i18next';
+import { isImeComposing } from '../../lib/ime';
 import type {
   Annotation,
   MapData,
@@ -543,7 +544,7 @@ export function MapCanvas(props: Props) {
       host.classList.remove('panning');
     }
     function keydown(event: KeyboardEvent) {
-      if (typing(event)) return;
+      if (typing(event) || isImeComposing(event)) return;
       if (event.code === 'Space') {
         event.preventDefault();
         if (!space) {
@@ -615,7 +616,8 @@ export function MapCanvas(props: Props) {
       }
     }
     function keyup(event: KeyboardEvent) {
-      if (event.code === 'Space') {
+      // Only the map's own hold is cleared: an IME's candidate keys must not touch the tool state.
+      if (event.code === 'Space' && space && !isImeComposing(event) && !typing(event)) {
         cancelGesture();
         space = false;
         host.classList.remove('panning');

@@ -760,6 +760,8 @@ output {
   max-height: 200px;
   resize: vertical;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
   font: inherit;

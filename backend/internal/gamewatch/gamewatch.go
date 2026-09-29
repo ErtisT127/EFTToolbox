@@ -85,9 +85,10 @@ type LogEvent struct {
 }
 
 var (
-	modePattern    = regexp.MustCompile(`Session mode:\s*([^\s|]+)`)
-	scenePattern   = regexp.MustCompile(`scene preset path:\s*(maps/[A-Za-z0-9_]+\.bundle)`)
-	sessionPattern = regexp.MustCompile(`(?i)^log_(\d{4}\.\d{1,2}\.\d{1,2}_\d{1,2}-\d{1,2}-\d{1,2})(?:_.*)?$`)
+	modePattern     = regexp.MustCompile(`Session mode:\s*([^\s|]+)`)
+	scenePattern    = regexp.MustCompile(`scene preset path:\s*(maps/[A-Za-z0-9_]+\.bundle)`)
+	locationPattern = regexp.MustCompile(`TRACE-NetworkGameCreate.*?Location:\s*([^,|\s]+)`)
+	sessionPattern  = regexp.MustCompile(`(?i)^log_(\d{4}\.\d{1,2}\.\d{1,2}_\d{1,2}-\d{1,2}-\d{1,2})(?:_.*)?$`)
 )
 
 func ParseLogLine(line string) (LogEvent, bool) {
@@ -100,6 +101,9 @@ func ParseLogLine(line string) (LogEvent, bool) {
 	}
 	if match := scenePattern.FindStringSubmatch(line); match != nil {
 		out.Map, matched = strings.TrimSuffix(filepath.Base(match[1]), filepath.Ext(match[1])), true
+	}
+	if match := locationPattern.FindStringSubmatch(line); match != nil {
+		out.Map, matched = match[1], true
 	}
 	return out, matched
 }
@@ -345,6 +349,9 @@ func (m *Monitor) Run(ctx context.Context) {
 			m.consumeTailLines(ctx, lines, generation)
 			m.processPendingDeletes(&pendingDelete, &deleteFailureLogged)
 			if tick%rootScanTicks == 0 {
+				if screenshotWatcher == nil {
+					startScreenshotWatcher(config.ScreenshotDirectory)
+				}
 				logRoot, rootModTime = scanSessionRoot(logRoot, rootModTime, config.LogDirectory, &session, &switchSession)
 				if session != "" {
 					scanApplicationFiles(session, &activeApplication, tails, generation, false, startTail, m.callbacks)
@@ -530,12 +537,15 @@ func recoverApplicationState(path string) (LogEvent, bool, error) {
 	}
 	modeOffset := findLastAnchor(file, info.Size(), []byte("Session mode:"))
 	mapOffset := findLastAnchor(file, info.Size(), []byte("scene preset path:"))
-	if modeOffset < 0 && mapOffset < 0 {
+	networkOffset := findLastAnchor(file, info.Size(), []byte("TRACE-NetworkGameCreate"))
+	if modeOffset < 0 && mapOffset < 0 && networkOffset < 0 {
 		return LogEvent{}, false, nil
 	}
 	start := modeOffset
-	if start < 0 || (mapOffset >= 0 && mapOffset < start) {
-		start = mapOffset
+	for _, offset := range []int64{mapOffset, networkOffset} {
+		if offset >= 0 && (start < 0 || offset < start) {
+			start = offset
+		}
 	}
 	return scanLogRange(file, start)
 }

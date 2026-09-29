@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Minus, Plus } from 'lucide-react';
 import type { NumericLimit } from '../../../contracts/ts/ipc.gen';
+import { isImeComposing } from '../lib/ime';
 
 export function NumberStepper({
   label,
@@ -92,6 +93,7 @@ export function NumberStepper({
             onBlur?.();
           }}
           onKeyDown={(e) => {
+            if (isImeComposing(e)) return;
             if (e.key === 'Enter') {
               commit(e.currentTarget.value);
               e.currentTarget.blur();

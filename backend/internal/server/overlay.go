@@ -280,16 +280,20 @@ func (h *overlayHub) normalize(v *contracts.OverlaySettings) bool {
 		v.MapZooms = []contracts.MapZoomOverride{}
 	}
 	seen := map[string]bool{}
-	for i := range v.MapZooms {
+	for i := 0; i < len(v.MapZooms); {
 		z := &v.MapZooms[i]
 		if !finite(z.Zoom) || seen[z.MapId] {
 			return false
 		}
-		if !h.store.hasMap(z.MapId) {
-			return false
-		}
 		seen[z.MapId] = true
 		z.Zoom = clampLimit(z.Zoom, contracts.MapZoomOverrideLimits.Zoom)
+		// Overrides for maps that left the catalogue are dropped, not rejected: a stale id must
+		// never invalidate the whole settings file.
+		if !h.store.hasMap(z.MapId) {
+			v.MapZooms = append(v.MapZooms[:i], v.MapZooms[i+1:]...)
+			continue
+		}
+		i++
 	}
 	return true
 }
@@ -376,6 +380,15 @@ func (h *overlayHub) changed(kind, mapID, operationID string) {
 func (h *overlayHub) preferencesChanged(value contracts.Preferences, mapID, operationID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// A manual selection counts as the applied map, so the auto-switch can
+	// recognize "already switched" and only mark a pending detection consumed.
+	if mapID != "" && mapID != h.appliedMapID {
+		if _, err := h.store.loadFromMode(mapID, h.monitorSettings.Mode); err == nil {
+			h.appliedMapID = mapID
+			h.monitorStatus.MapId = mapID
+			_ = h.persistAppliedMap()
+		}
+	}
 	e := contracts.ServerEvent{Type: "preferences_changed", MapId: &mapID, OperationId: &operationID, Preferences: &value}
 	h.publish(e)
 	if h.mobile != nil {

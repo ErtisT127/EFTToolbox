@@ -541,6 +541,7 @@
     "noSelectedNode": "请选择一个 STUN 服务器",
     "useServerCreate": "使用此服务器创建房间",
     "stunDownloadFailed": "服务器列表下载失败",
+    "stunDownloadDone": "已更新 STUN 服务器列表（{{count}} 个，含 NAT 检测列表）",
     "inviteTitle": "邀请信息",
     "copyAll": "复制全部",
     "copyValue": "复制{{field}}",
