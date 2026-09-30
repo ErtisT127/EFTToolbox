@@ -9,11 +9,13 @@ $env:GOROOT = $null
 $serverProcess = $null
 $forceRebuild = $Rebuild -or ($args -contains '--rebuild')
 try {
+    Write-Host '[1/4] Checking dependencies'
     & pnpm.cmd install --frozen-lockfile
     if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
     if (-not (Test-Path 'data/upstream/catalog_zh.json')) { throw 'Map cache missing; run pnpm toolbox data refresh first.' }
     & pnpm.cmd toolbox data fonts --check
     if ($LASTEXITCODE -ne 0) { throw 'Display resources missing or changed; run pnpm toolbox data fonts.' }
+    Write-Host '[2/4] Checking dashboard build'
     $env:EFT_TOOLBOX_DASHBOARD_DEV = '1'
     $dashboardCacheValid = $false
     if (-not $forceRebuild) {
@@ -28,6 +30,7 @@ try {
         & node scripts/cli.mjs cache save dashboard
         if ($LASTEXITCODE -ne 0) { throw 'Dashboard cache save failed' }
     }
+    Write-Host '[3/4] Checking Go backend build'
     New-Item -ItemType Directory -Force build | Out-Null
     $backendCacheValid = $false
     if (-not $forceRebuild) {
@@ -37,13 +40,16 @@ try {
     if ($backendCacheValid) {
         Write-Host 'Backend unchanged; using cached executable.'
     } else {
+        Write-Host 'Building Go backend (the first build can take longer)'
         & go build -o build/EFTToolbox.exe ./backend/cmd/EFTToolbox
         if ($LASTEXITCODE -ne 0) { throw 'Backend build failed' }
         & node scripts/cli.mjs cache save backend
         if ($LASTEXITCODE -ne 0) { throw 'Backend cache save failed' }
     }
+    Write-Host 'Building overlay'
     & dotnet publish overlay/Overlay.csproj -c Release -o build/overlay --no-self-contained
     if ($LASTEXITCODE -ne 0) { throw 'Overlay build failed' }
+    Write-Host "[4/4] Starting http://127.0.0.1:$Port (Ctrl+C to stop)"
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = Join-Path $projectRoot 'build/EFTToolbox.exe'
     $startInfo.Arguments = "-port $Port -dev-stdin -data `"$(Join-Path $projectRoot 'data')`""

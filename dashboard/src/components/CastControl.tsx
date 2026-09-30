@@ -104,19 +104,6 @@ export function CastControl() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [open, suggestOpen]);
 
-  useEffect(() => {
-    if (!suggestOpen) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (!target) return;
-      if (addressToggle.current?.contains(target)) return;
-      if (document.querySelector('.cast-address-popover')?.contains(target)) return;
-      setSuggestOpen(false);
-    };
-    window.addEventListener('pointerdown', onPointerDown, true);
-    return () => window.removeEventListener('pointerdown', onPointerDown, true);
-  }, [suggestOpen]);
-
   const start = async () => {
     if (requesting) return;
     setRequesting('start');
@@ -249,6 +236,7 @@ export function CastControl() {
                     placement="bottom-start"
                     className="cast-address-popover"
                     matchReferenceWidth
+                    onDismiss={() => setSuggestOpen(false)}
                   >
                     <div
                       className="cast-address-list"

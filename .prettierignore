@@ -9,6 +9,7 @@ contracts/go/
 contracts/ts/
 contracts/version.gen.mjs
 dashboard/src/defaults.gen.ts
+dashboard/src/third-party.gen.ts
 .zcode/
 overlay/packages.lock.json
 pnpm-lock.yaml

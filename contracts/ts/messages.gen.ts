@@ -101,7 +101,8 @@ const zhCN = {
       "map": "地图",
       "hotkeys": "快捷键",
       "recognition": "图像识别",
-      "system": "系统"
+      "system": "系统",
+      "about": "关于"
     },
     "sections": {
       "general": "通用",
@@ -113,11 +114,38 @@ const zhCN = {
       "en": "English",
       "applying": "正在应用语言设置…"
     },
+    "closeBehavior": {
+      "label": "关闭窗口时",
+      "ask": "每次询问",
+      "tray": "最小化到托盘",
+      "exit": "直接退出"
+    },
+    "updateCheck": {
+      "label": "自动检查更新"
+    },
     "hotkeys": {
       "recording": "按下按键…",
       "empty": "未设置",
       "taken": "该快捷键已被占用",
       "clearFor": "清除{{label}}快捷键"
+    },
+    "about": {
+      "byline": "By.",
+      "sponsor": "赞赏作者",
+      "openRepository": "打开项目仓库",
+      "openAuthor": "打开作者主页",
+      "rewardTitle": "赞赏作者",
+      "updateTitle": "软件更新",
+      "updateIdle": "尚未检查更新",
+      "updateLatest": "当前已是最新版本",
+      "updateAvailable": "发现新版本 {{version}}",
+      "updateFailed": "检查更新失败，请稍后重试",
+      "check": "检查更新",
+      "recheck": "重新检查",
+      "checking": "正在检查…",
+      "licensesTitle": "致谢",
+      "licenseEntry": "{{name}}（{{license}}）",
+      "newBadge": "NEW"
     }
   },
   "minimap": {
@@ -503,9 +531,6 @@ const zhCN = {
     "joinRoom": "加入房间",
     "useStun": "使用 STUN 联机",
     "joinWithStun": "使用 STUN 加入",
-    "pasteInvite": "粘贴邀请信息",
-    "pasteInvitePlaceholder": "粘贴房主复制的完整邀请信息",
-    "pasteParse": "解析并填入",
     "connecting": "正在连接房间…",
     "copied": "邀请信息已复制",
     "copyFailed": "邀请信息复制失败",
@@ -535,6 +560,8 @@ const zhCN = {
     "currentNode": "定位当前节点",
     "probeAll": "全部测速",
     "sort": "排序",
+    "stunSourceHost": "服务器列表：域名",
+    "stunSourceIp": "服务器列表：IP",
     "sortLatency": "延迟",
     "search": "搜索",
     "searchPlaceholder": "输入地址过滤",
@@ -546,7 +573,7 @@ const zhCN = {
     "noSelectedNode": "请选择一个 STUN 服务器",
     "useServerCreate": "使用此服务器创建房间",
     "stunDownloadFailed": "服务器列表下载失败",
-    "stunDownloadDone": "已更新 STUN 服务器列表（{{count}} 个，含 NAT 检测列表）",
+    "stunDownloadDone": "已更新 STUN 服务器列表",
     "inviteTitle": "邀请信息",
     "copyAll": "复制全部",
     "copyValue": "复制{{field}}",
@@ -589,6 +616,33 @@ const zhCN = {
     "settings": {
       "title": "设置暂不可用"
     }
+  },
+  "host": {
+    "trayShowWindow": "显示窗口",
+    "trayHideWindow": "关闭窗口",
+    "trayShowMinimap": "显示小地图",
+    "trayHideMinimap": "关闭小地图",
+    "traySettings": "设置",
+    "trayQuit": "退出程序",
+    "closeTitle": "关闭 EFTToolbox",
+    "closeStartupMessage": "启动尚未完成，确定退出 EFTToolbox 吗？",
+    "closeRemember": "记住我的选择",
+    "closeTray": "最小化到托盘",
+    "closeExit": "退出程序",
+    "errorTitle": "EFTToolbox 启动失败",
+    "startupResource": "缺少运行资源",
+    "startupDataDirectory": "用户数据目录不可用",
+    "startupLog": "日志目录不可写",
+    "startupPort": "后端端口绑定失败",
+    "startupBackend": "后端健康检查失败",
+    "startupOverlayStart": "悬浮窗启动失败",
+    "startupOverlayReady": "悬浮窗就绪检查失败"
+  },
+  "titleBar": {
+    "minimize": "最小化",
+    "maximize": "最大化",
+    "restore": "还原",
+    "close": "关闭窗口"
   },
   "data": {
     "category": {
@@ -678,10 +732,10 @@ const zhCN = {
     "json_multiple": "数据格式无效",
     "annotations_invalid": "标记数据无效",
     "annotations_save_failed": "标记保存失败，修改仍保留",
-    "revision_conflict": "数据已在其他位置更新，本地修改仍保留；重试将基于最新版本提交",
-    "conflict_load_remote": "加载远端并丢弃本地",
-    "conflict_keep_local": "保留本地继续编辑",
-    "conflict_retry": "基于最新版本再次提交",
+    "revision_conflict": "数据已在其他位置更新",
+    "conflict_load_remote": "用远端覆盖",
+    "conflict_keep_local": "保留本地",
+    "conflict_retry": "重试提交",
     "preferences_invalid": "视图设置无效",
     "preferences_save_failed": "视图设置保存失败",
     "map_unknown": "未知地图",
@@ -704,12 +758,13 @@ const zhCN = {
     "marker_preferences_invalid": "标记设置有误，请检查",
     "json_encode_failed": "数据编码失败",
     "user_settings_reset_failed": "用户设置重置失败",
+    "update_check_failed": "检查更新失败",
     "user_settings_invalid": "用户设置文件损坏或与当前版本不兼容",
     "multiplayer_stun_probe_invalid": "STUN 探测请求无效",
     "multiplayer_mode_invalid": "联机模式无效",
     "multiplayer_key_invalid": "密码无效",
     "multiplayer_room_name_invalid": "房间名过长",
-    "multiplayer_address_invalid": "IP 地址无效，请输入 IPv4 地址",
+    "multiplayer_address_invalid": "IP 地址无效，请输入有效的 IPv4/IPv6 地址",
     "multiplayer_port_invalid": "端口无效",
     "multiplayer_port_in_use": "端口 {{port}} 已被占用，请更换",
     "multiplayer_port_unavailable": "没有可用端口，请稍后重试",
@@ -841,7 +896,8 @@ const enUS = {
       "map": "Map",
       "hotkeys": "Hotkeys",
       "recognition": "Image recognition",
-      "system": "System"
+      "system": "System",
+      "about": "About"
     },
     "sections": {
       "general": "General",
@@ -853,11 +909,38 @@ const enUS = {
       "en": "English",
       "applying": "Applying language…"
     },
+    "closeBehavior": {
+      "label": "When closing the window",
+      "ask": "Ask every time",
+      "tray": "Minimize to tray",
+      "exit": "Exit immediately"
+    },
+    "updateCheck": {
+      "label": "Check for updates automatically"
+    },
     "hotkeys": {
       "recording": "Press a key…",
       "empty": "Not set",
       "taken": "That shortcut is already in use",
       "clearFor": "Clear the {{label}} shortcut"
+    },
+    "about": {
+      "byline": "By.",
+      "sponsor": "Support the author",
+      "openRepository": "Open the project repository",
+      "openAuthor": "Open the author's profile",
+      "rewardTitle": "Support the author",
+      "updateTitle": "Software update",
+      "updateIdle": "Not checked yet",
+      "updateLatest": "You're on the latest version",
+      "updateAvailable": "Version {{version}} is available",
+      "updateFailed": "Couldn't check for updates. Try again later.",
+      "check": "Check for updates",
+      "recheck": "Check again",
+      "checking": "Checking…",
+      "licensesTitle": "Acknowledgements",
+      "licenseEntry": "{{name}} ({{license}})",
+      "newBadge": "NEW"
     }
   },
   "minimap": {
@@ -1243,9 +1326,6 @@ const enUS = {
     "joinRoom": "Join room",
     "useStun": "Play with STUN",
     "joinWithStun": "Join with STUN",
-    "pasteInvite": "Paste an invite",
-    "pasteInvitePlaceholder": "Paste the full invite copied on the host",
-    "pasteParse": "Parse and fill",
     "connecting": "Connecting to the room…",
     "copied": "Invite copied",
     "copyFailed": "Failed to copy the invite",
@@ -1275,6 +1355,8 @@ const enUS = {
     "currentNode": "Locate current node",
     "probeAll": "Probe all",
     "sort": "Sort",
+    "stunSourceHost": "Server list: hostnames",
+    "stunSourceIp": "Server list: IP addresses",
     "sortLatency": "Latency",
     "search": "Search",
     "searchPlaceholder": "Filter by address",
@@ -1286,7 +1368,7 @@ const enUS = {
     "noSelectedNode": "Pick a STUN server",
     "useServerCreate": "Create room with this server",
     "stunDownloadFailed": "List download failed",
-    "stunDownloadDone": "Updated the STUN server list ({{count}} servers, NAT-check list included)",
+    "stunDownloadDone": "Updated the STUN server list",
     "inviteTitle": "Invite",
     "copyAll": "Copy all",
     "copyValue": "Copy {{field}}",
@@ -1329,6 +1411,33 @@ const enUS = {
     "settings": {
       "title": "Settings unavailable"
     }
+  },
+  "host": {
+    "trayShowWindow": "Show window",
+    "trayHideWindow": "Hide window",
+    "trayShowMinimap": "Show minimap",
+    "trayHideMinimap": "Hide minimap",
+    "traySettings": "Settings",
+    "trayQuit": "Quit",
+    "closeTitle": "Close EFTToolbox",
+    "closeStartupMessage": "EFTToolbox is still starting. Exit anyway?",
+    "closeRemember": "Remember my choice",
+    "closeTray": "Minimize to tray",
+    "closeExit": "Quit",
+    "errorTitle": "EFTToolbox could not start",
+    "startupResource": "Missing runtime resource",
+    "startupDataDirectory": "The user data directory is unavailable",
+    "startupLog": "The log directory is not writable",
+    "startupPort": "Could not bind the backend port",
+    "startupBackend": "Backend health check failed",
+    "startupOverlayStart": "The overlay failed to start",
+    "startupOverlayReady": "The overlay readiness check failed"
+  },
+  "titleBar": {
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "close": "Close window"
   },
   "data": {
     "category": {
@@ -1418,10 +1527,10 @@ const enUS = {
     "json_multiple": "Invalid data format",
     "annotations_invalid": "Invalid marker data",
     "annotations_save_failed": "Failed to save markers; changes are kept",
-    "revision_conflict": "Data changed elsewhere. Local edits are kept; retry submits them against the latest version.",
-    "conflict_load_remote": "Load remote and discard local",
-    "conflict_keep_local": "Keep local and continue editing",
-    "conflict_retry": "Submit again against latest version",
+    "revision_conflict": "Data changed elsewhere",
+    "conflict_load_remote": "Use remote",
+    "conflict_keep_local": "Keep local",
+    "conflict_retry": "Retry",
     "preferences_invalid": "View settings are invalid",
     "preferences_save_failed": "Could not save view settings",
     "map_unknown": "Unknown map",
@@ -1444,12 +1553,13 @@ const enUS = {
     "marker_preferences_invalid": "Marker settings are invalid",
     "json_encode_failed": "Could not encode the data",
     "user_settings_reset_failed": "Could not reset user settings",
+    "update_check_failed": "The update check failed",
     "user_settings_invalid": "The user settings file is damaged or incompatible with this version",
     "multiplayer_stun_probe_invalid": "The STUN probe request is invalid",
     "multiplayer_mode_invalid": "Invalid multiplayer mode",
     "multiplayer_key_invalid": "Invalid password",
     "multiplayer_room_name_invalid": "Room name too long",
-    "multiplayer_address_invalid": "Invalid IP address; use an IPv4 address",
+    "multiplayer_address_invalid": "Invalid IP address; use a valid IPv4/IPv6 address",
     "multiplayer_port_invalid": "Invalid port",
     "multiplayer_port_in_use": "Port {{port}} is already in use; pick another",
     "multiplayer_port_unavailable": "No free port available, please retry",

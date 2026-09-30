@@ -25,6 +25,15 @@
         }
       }
     },
+    "HostCloseBehavior": {
+      "description": "What the desktop host should do when the window is asked to close. ask makes the dashboard show the close dialog.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action"],
+      "properties": {
+        "action": { "type": "string", "enum": ["ask", "exit", "tray"] }
+      }
+    },
     "ErrorBody": {
       "type": "object",
       "additionalProperties": false,
@@ -1675,13 +1684,31 @@
     "UserSettings": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "overlay", "gameMonitor", "recognition", "language"],
+      "required": [
+        "schemaVersion",
+        "overlay",
+        "gameMonitor",
+        "recognition",
+        "language",
+        "closeAction",
+        "updateCheck"
+      ],
       "properties": {
         "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "overlay": { "$ref": "#/$defs/OverlaySettings" },
         "gameMonitor": { "$ref": "#/$defs/GameMonitorSettings" },
         "recognition": { "$ref": "#/$defs/RecognitionSettings" },
-        "language": { "type": "string", "enum": ["zh-CN", "en-US"] }
+        "language": { "type": "string", "enum": ["zh-CN", "en-US"] },
+        "closeAction": {
+          "description": "What the desktop host's window close button does. ask shows the close dialog, exit quits the app, tray keeps it running in the system tray.",
+          "type": "string",
+          "enum": ["ask", "exit", "tray"]
+        },
+        "updateCheck": {
+          "description": "Whether the dashboard checks for a new release on its own when it starts. auto checks silently once per throttle window, manual only checks when the user asks from the About tab.",
+          "type": "string",
+          "enum": ["auto", "manual"]
+        }
       }
     },
     "OverlayBootstrap": {
@@ -1807,7 +1834,7 @@
           "type": "integer"
         },
         "hotkeyFailed": {
-          "description": "Names of the OverlayHotkeys fields whose RegisterHotKey call was rejected, in OverlayHotkeys declaration order.",
+          "description": "Names of OverlayHotkeys fields that could not be enabled because Raw Input device registration failed or the binding duplicates an earlier field, in OverlayHotkeys declaration order.",
           "type": "array",
           "items": {
             "type": "string"
@@ -2017,7 +2044,8 @@
         "lastAddress": { "type": "string" },
         "lastPort": { "type": "string" },
         "lastKey": { "type": "string" },
-        "lastStun": { "type": "string" }
+        "lastStun": { "type": "string" },
+        "stunListSource": { "type": "string", "enum": ["host", "ip"] }
       }
     },
     "MultiplayerHostRequest": {
@@ -2055,9 +2083,10 @@
     "StunServerList": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["servers"],
+      "required": ["hostServers", "ipServers"],
       "properties": {
-        "servers": { "type": "array", "items": { "type": "string" } }
+        "hostServers": { "type": "array", "items": { "type": "string" } },
+        "ipServers": { "type": "array", "items": { "type": "string" } }
       }
     },
     "StunProbeRequest": {
@@ -2092,6 +2121,16 @@
       "properties": {
         "kind": { "type": "string", "enum": ["cone", "symmetric", "unknown"] },
         "message": { "type": "string" }
+      }
+    },
+    "UpdateStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current", "latest", "updateAvailable"],
+      "properties": {
+        "current": { "type": "string" },
+        "latest": { "type": "string" },
+        "updateAvailable": { "type": "boolean" }
       }
     }
   }

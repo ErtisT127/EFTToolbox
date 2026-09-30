@@ -1296,18 +1296,25 @@ output {
 /* Window-level notice: errors hang from the top edge instead of being embedded in a page. */
 .notice-host {
   position: fixed;
-  top: var(--space-2);
+  /* Below the header, not over it: the banner is persistent and would otherwise sit on the top
+     navigation and swallow its clicks. */
+  top: calc(var(--topbar-height) + var(--space-2));
   left: 50%;
   transform: translateX(-50%);
-  z-index: 30;
+  /* Above the dialog backdrops (30): a notice must stay readable and closable even while a modal
+     is open, which is exactly when a save or connection failure tends to arrive. */
+  z-index: 200;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-2);
-  max-width: min(560px, calc(100vw - var(--space-6)));
+  /* Wide enough for a conflict banner (message plus three choices on one line); the individual
+     notices keep their own narrower cap below. */
+  max-width: min(720px, calc(100vw - var(--space-6)));
   pointer-events: none;
 }
 .notice {
+  max-width: min(560px, 100%);
   display: flex;
   align-items: center;
   gap: var(--space-4);
@@ -1348,6 +1355,39 @@ output {
   border-color: transparent;
   background: transparent;
   color: var(--text);
+}
+/* The revision-conflict prompt: same top-edge column as the notices, so it never stacks a dialog
+   on the dialog that raised it. Sticky until one of its choices is taken. */
+.conflict-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  /* Sized to its content so the sentence wraps to a second line instead of stretching into one
+     very wide bar; the cap only keeps it off the window edges on narrow layouts. */
+  max-width: min(560px, calc(100vw - var(--space-6)));
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--warning);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--dialog-shadow);
+  color: var(--text);
+  font-size: var(--text-md);
+  pointer-events: auto;
+}
+.conflict-banner-message {
+  flex: 1 1 260px;
+}
+.conflict-banner-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-1);
+}
+.conflict-banner-actions button {
+  border-color: var(--border);
+  white-space: nowrap;
 }
 @keyframes notice-in {
   from {

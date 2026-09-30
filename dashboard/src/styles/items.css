@@ -498,7 +498,9 @@
   scrollbar-color: var(--scrollbar) transparent;
 }
 .items-table {
-  min-width: 880px;
+  /* Matches the row grid below (96 + 240 + 190 + 172 + 268 + 4x16 gap): any narrower and the price
+     columns are squeezed instead of scrolling, which is what the wrap is for. */
+  min-width: 1030px;
 }
 .items-row {
   display: grid;

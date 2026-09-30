@@ -8,6 +8,10 @@ export interface Status {
   startedAt: string;
 }
 
+export interface HostCloseBehavior {
+  action: "ask" | "exit" | "tray";
+}
+
 export interface ErrorBody {
   code: string;
   detail?: string;
@@ -538,6 +542,8 @@ export interface UserSettings {
   gameMonitor: GameMonitorSettings;
   recognition: RecognitionSettings;
   language: "zh-CN" | "en-US";
+  closeAction: "ask" | "exit" | "tray";
+  updateCheck: "auto" | "manual";
 }
 
 export interface OverlayBootstrap {
@@ -662,6 +668,7 @@ export interface MultiplayerSettings {
   lastPort?: string;
   lastKey?: string;
   lastStun?: string;
+  stunListSource?: "host" | "ip";
 }
 
 export interface MultiplayerHostRequest {
@@ -685,7 +692,8 @@ export interface MultiplayerJoinRequest {
 }
 
 export interface StunServerList {
-  servers: Array<string>;
+  hostServers: Array<string>;
+  ipServers: Array<string>;
 }
 
 export interface StunProbeRequest {
@@ -704,6 +712,12 @@ export interface StunProbeResults {
 export interface NatCheckResult {
   kind: "cone" | "symmetric" | "unknown";
   message?: string;
+}
+
+export interface UpdateStatus {
+  current: string;
+  latest: string;
+  updateAvailable: boolean;
 }
 
 export interface NumericLimit {

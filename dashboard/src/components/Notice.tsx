@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { notices, useNotices, type Notice as NoticeMessage } from '../stores/noticeStore';
 import { useLocale, type LocaleKey } from '../hooks/useLocale';
+import { ConflictBanner } from './ConflictBanner';
 
 // Long enough to read and act on, short enough that it clears itself out of the way.
 const LifetimeMs = 5000;
@@ -43,9 +44,9 @@ function NoticeItem({ notice }: { notice: NoticeMessage }) {
 /** Error surfacing lives at the top edge of the window, not inside the page that happened to fail. */
 export function NoticeHost() {
   const store = useNotices();
-  if (!store.notices.length) return null;
   return (
     <div className="notice-host">
+      <ConflictBanner />
       {store.notices.map((notice) => (
         <NoticeItem key={notice.id} notice={notice} />
       ))}

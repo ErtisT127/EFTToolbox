@@ -42,6 +42,12 @@
           "System.Drawing.Common": "6.0.0"
         }
       },
+      "RawInput.Sharp": {
+        "type": "Direct",
+        "requested": "[0.2.0, )",
+        "resolved": "0.2.0",
+        "contentHash": "w3CWKEvnVTwJnwZofLOHpsGh0G244Eyljv4p4edvenLaHy6LDF9FhYECf6mcI9Dbz7kNy2PlSggq0YkALnGi1w=="
+      },
       "Svg.Skia": {
         "type": "Direct",
         "requested": "[3.5.0, )",

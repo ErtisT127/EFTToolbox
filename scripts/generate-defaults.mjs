@@ -21,8 +21,16 @@ const stunHosts = async (file) => {
   }
   return servers;
 };
-const stunServers = await stunHosts('stun-valid-hosts.txt');
-const stunNatServers = await stunHosts('stun-nat-hosts.txt');
+// The panel offers two server sources: DNS hostnames and IP literals (IPv4 + IPv6). Only the
+// literal list carries IPv6; the NAT-check list stays IPv4-only because NAT is an IPv4 concept.
+const stunHostServers = await stunHosts('stun-valid-hosts.txt');
+const stunIP4Servers = await stunHosts('stun-valid-ipv4s.txt');
+const stunIP6Servers = await stunHosts('stun-valid-ipv6s.txt');
+const stunIPServers = [
+  ...stunIP4Servers,
+  ...stunIP6Servers.filter((s) => !stunIP4Servers.includes(s)),
+];
+const stunNatServers = await stunHosts('stun-nat-ipv4s.txt');
 const calibrationDocuments = JSON.parse(
   await readDataFile('data/user/calibration/maps.calibration.json'),
 );
@@ -50,7 +58,8 @@ ${[
       `func ${name}() contracts.${type} { return decode[contracts.${type}](${json(json(value))}) }`,
   )
   .join('\n')}
-func StunServers() []string { return decode[[]string](${json(json(stunServers))}) }
+func StunHostServers() []string { return decode[[]string](${json(json(stunHostServers))}) }
+func StunIPServers() []string { return decode[[]string](${json(json(stunIPServers))}) }
 func StunNatServers() []string { return decode[[]string](${json(json(stunNatServers))}) }
 `;
 const goFormatted = execFileSync('gofmt', { input: go, encoding: 'utf8' });

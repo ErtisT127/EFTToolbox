@@ -41,6 +41,7 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 	}
 	store.register(mux)
 	hub.register(mux)
+	newUpdateManager(dataRoot, version).register(mux)
 	mobile.register(mux)
 	multiplayer.register(mux)
 	items.register(mux)

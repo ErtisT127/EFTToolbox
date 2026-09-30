@@ -23,6 +23,5 @@ export async function verifyDisplayResources(assets) {
     }
   }
   await fonts(assets);
-  await readFile(path.join(assets, 'THIRD-PARTY-NOTICES.txt'));
   return manifest;
 }

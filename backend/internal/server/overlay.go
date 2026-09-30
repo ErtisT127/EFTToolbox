@@ -157,8 +157,10 @@ func stringPtr(value string) *string { return &value }
 
 // Key names are physical positions, not characters: the same shortcut has to mean the same key on
 // any keyboard layout, so a symbol key is spelled after its position (Minus, BracketLeft) rather
-// than after what it happens to type.
-var hotkeyPattern = regexp.MustCompile(`^(?:(?:Ctrl|Alt|Shift|Win)\+)*(?:[A-Z0-9]|F(?:[1-9]|1[0-9]|2[0-4])|Space|Insert|Delete|Home|End|PageUp|PageDown|Up|Down|Left|Right|Backquote|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash)$`)
+// than after what it happens to type. Mouse buttons follow the same rule, so they are spelled after
+// the raw input button they are (Mouse3 middle, Mouse4/Mouse5 the side buttons), not after the
+// back/forward action a driver may map them to.
+var hotkeyPattern = regexp.MustCompile(`^(?:(?:Ctrl|Alt|Shift|Win)\+)*(?:[A-Z0-9]|F(?:[1-9]|1[0-9]|2[0-4])|Space|Insert|Delete|Home|End|PageUp|PageDown|Up|Down|Left|Right|Backquote|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash|WheelUp|WheelDown|Mouse3|Mouse4|Mouse5)$`)
 
 func validHotkey(value string) bool {
 	if value == "" {
@@ -184,7 +186,7 @@ type hotkeyField struct {
 }
 
 // hotkeyFields is the single source of truth for which shortcuts exist and in what order. The
-// overlay reports registration failures by name, so this order is part of the contract.
+// overlay reports bindings that could not be enabled by name, so this order is part of the contract.
 var hotkeyFields = []hotkeyField{
 	{"toggleEdit", func(h *contracts.OverlayHotkeys) *string { return &h.ToggleEdit }},
 	{"toggleVisible", func(h *contracts.OverlayHotkeys) *string { return &h.ToggleVisible }},
@@ -215,8 +217,8 @@ func validHotkeyFailures(values []string) bool {
 }
 
 // normalizeHotkeys validates and canonicalizes every shortcut in one pass; empty means "not
-// registered". Two shortcuts may share a combination: the second one simply fails to register with
-// Windows, which the overlay reports and the dashboard shows as a conflict on both fields. Refusing
+// registered". Two shortcuts may share a combination: the overlay enables the first and reports the
+// later binding, which the dashboard shows as a conflict on both fields. Refusing
 // the save here would leave the two ends disagreeing about what was stored.
 func normalizeHotkeys(h *contracts.OverlayHotkeys) bool {
 	for _, field := range hotkeyFields {

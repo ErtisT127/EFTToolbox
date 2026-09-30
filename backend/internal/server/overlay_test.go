@@ -140,6 +140,46 @@ func TestOverlaySettingsAndPlayerSnapshot(t *testing.T) {
 	}
 }
 
+func TestOverlayHotkeyMouseNormalization(t *testing.T) {
+	settings := defaultOverlaySettings()
+	settings.Hotkeys.ZoomIn = "Alt+Ctrl+WheelUp"
+	settings.Hotkeys.ZoomOut = "Ctrl+WheelUp"
+	settings.Hotkeys.PanUp = "Alt+Ctrl+Mouse5"
+	settings.Hotkeys.PanDown = "Mouse4"
+	settings.Hotkeys.PanLeft = "Ctrl+Mouse3"
+	if !normalizeHotkeys(&settings.Hotkeys) {
+		t.Fatal("valid mouse bindings were rejected")
+	}
+	if settings.Hotkeys.ZoomIn != "Ctrl+Alt+WheelUp" || settings.Hotkeys.ZoomOut != "Ctrl+WheelUp" {
+		t.Fatalf("wheel bindings were not canonicalized: %+v", settings.Hotkeys)
+	}
+	if settings.Hotkeys.PanUp != "Ctrl+Alt+Mouse5" || settings.Hotkeys.PanDown != "Mouse4" ||
+		settings.Hotkeys.PanLeft != "Ctrl+Mouse3" {
+		t.Fatalf("mouse button bindings were not canonicalized: %+v", settings.Hotkeys)
+	}
+	settings.Hotkeys.PanRight = "Ctrl+WheelRight"
+	if normalizeHotkeys(&settings.Hotkeys) {
+		t.Fatal("invalid wheel token was accepted")
+	}
+	settings.Hotkeys.PanRight = ""
+	settings.Hotkeys.FloorUp = "Mouse6"
+	if normalizeHotkeys(&settings.Hotkeys) {
+		t.Fatal("unknown mouse button was accepted")
+	}
+	settings.Hotkeys.FloorUp = ""
+	settings.Hotkeys.FloorDown = "Back"
+	if normalizeHotkeys(&settings.Hotkeys) {
+		t.Fatal("mouse button named after its action was accepted")
+	}
+	if !validHotkey("") || !validHotkey("A") || !validHotkey("Ctrl+WheelDown") ||
+		!validHotkey("Mouse3") || !validHotkey("Ctrl+Mouse4") {
+		t.Fatal("supported hotkey form was rejected")
+	}
+	if validHotkey("Mouse0") || validHotkey("Mouse6") || validHotkey("Back") {
+		t.Fatal("unsupported mouse button was accepted")
+	}
+}
+
 func TestRecognitionResultFromSupersededRunIsIgnored(t *testing.T) {
 	_, handler := mapFixture(t)
 	started := callLocalJSON(t, handler, http.MethodPost, "/api/recognition/started", contracts.RecognitionStart{RequestId: "newer"})

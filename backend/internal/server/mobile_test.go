@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -215,5 +216,36 @@ func TestCastSurfaceRejectsWrites(t *testing.T) {
 	// Reads still pass the method gate (the empty mux answers 404, never 405).
 	if recorder := lan(http.MethodGet, "/api/maps/fixture/annotations", ""); recorder.Code == http.StatusMethodNotAllowed {
 		t.Fatalf("a read was refused as a write: %s", recorder.Body.String())
+	}
+}
+
+// TestUsableInterfaceAddress locks which addresses the pickers may offer. Loopback, link-local and
+// the IPv6 transition ranges (Teredo, 6to4) look like global unicast to net.IP but cannot reach a
+// peer on the LAN, so offering them sends the user at an address that never connects.
+func TestUsableInterfaceAddress(t *testing.T) {
+	for _, tc := range []struct {
+		addr string
+		want bool
+	}{
+		{"192.168.1.33", true},
+		{"10.8.0.2", true},
+		{"100.64.1.2", true}, // carrier-grade NAT / VPN ranges stay reachable on the LAN or tunnel
+		{"169.254.10.10", false},
+		{"127.0.0.1", false},
+		{"0.0.0.0", false},
+		{"2409:8a4c:a048:5800::1", true},
+		{"fd12:3456:789a::1", true}, // unique-local
+		{"fe80::1", false},
+		{"::1", false},
+		{"2001:0:14c9:d502:3493:ba40:20b2:bf4b", false}, // Teredo
+		{"2002:c0a8:0101::1", false},                    // 6to4
+	} {
+		ip := net.ParseIP(tc.addr)
+		if ip == nil {
+			t.Fatalf("test address does not parse: %s", tc.addr)
+		}
+		if got := usableInterfaceAddress(ip); got != tc.want {
+			t.Fatalf("usableInterfaceAddress(%s) = %v, want %v", tc.addr, got, tc.want)
+		}
 	}
 }

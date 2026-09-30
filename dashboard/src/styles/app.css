@@ -12,6 +12,9 @@
   --warning: #d9a93e;
   --danger: #c4554b;
   --info: #4f9fb3;
+  /* The reward entry is the one decorative use of the positive green, so it is named rather than
+     borrowing the status token it shares a value with. */
+  --support: #7bc576;
   --player-self: #5fd3c4;
   --text-xs: 12px;
   --text-sm: 13px;
@@ -19,6 +22,7 @@
   --text-md: 16px;
   --text-lg: 18px;
   --text-xl: 24px;
+  --text-2xl: 32px;
   --weight-regular: 400;
   --weight-medium: 500;
   --weight-bold: 600;
@@ -33,6 +37,10 @@
   --control-height-lg: 32px;
   --toolbar-width: 44px;
   --topbar-height: 44px;
+  /* The desktop host's own title-bar buttons. They are sized like a native caption button and carry
+     their own glyph colour, because the muted/text pair is unreadable on the danger fill. */
+  --caption-button-width: 46px;
+  --on-danger: #fff;
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
@@ -125,6 +133,7 @@ button:disabled :is(svg, img) {
 }
 
 button:focus-visible,
+a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
@@ -598,6 +607,12 @@ input[type='range'].range-slider:active::-moz-range-thumb {
   padding: 0 var(--space-4);
 }
 
+/* The window buttons reach the window's corner the way a title bar's do, so with them present the
+   bar drops its own right inset instead of the group cancelling it with a negative margin. */
+.topbar:has(.window-controls) {
+  padding-right: 0;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -616,6 +631,47 @@ input[type='range'].range-slider:active::-moz-range-thumb {
 .brand-secondary {
   color: var(--text);
   font-weight: 400;
+}
+
+/* The brand mark is a bitmap, so the flex row must not squeeze it: its box is the size the icon
+   font used to occupy, and the wordmark next to it keeps the row's width. */
+.brand img {
+  display: block;
+  flex: 0 0 auto;
+}
+
+/* The free space between the tabs and the mode toggle: the window's drag handle. */
+.topbar-drag {
+  flex: 1;
+  align-self: stretch;
+  min-width: var(--space-4);
+}
+
+.window-controls {
+  display: flex;
+  align-items: stretch;
+  /* The mode toggle ends here, and its neighbour is the minimize button: keep a real gap so aiming
+     at the toggle cannot land on a window button. */
+  margin-left: var(--space-5);
+}
+
+.window-controls button {
+  width: var(--caption-button-width);
+  /* Title bar buttons light up with a background only: the shared button rule draws a 1px frame on
+     hover, which reads as a stray box against the window edge. */
+  border: 0;
+  border-radius: 0;
+  color: var(--muted);
+}
+
+.window-controls button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--control-hover);
+}
+
+.window-controls .window-close:hover:not(:disabled) {
+  color: var(--on-danger);
+  background: var(--danger);
 }
 
 .topbar nav {

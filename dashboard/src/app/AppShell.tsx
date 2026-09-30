@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { MapPage } from '../pages/map/MapPage';
 import { CalibratorPage } from '../pages/calibrator/CalibratorPage';
 import { SettingsPage } from '../pages/settings/SettingsPage';
+// The settings page owns which tabs exist; the shell only remembers which one to open.
+import type { SettingsTab } from '../pages/settings/types';
 import { AppHeader, type AppPage } from '../components/AppHeader';
 import { NoticeHost } from '../components/Notice';
 import { workspace, loadUserSettings, setLocale } from '../stores/workspaceStore';
@@ -12,13 +14,18 @@ import { gameMonitor } from '../stores/gameMonitorStore';
 import { useGlobalErrorRecovery } from '../hooks/useGlobalErrorRecovery';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { CloseDialog } from '../components/CloseDialog';
 import { DataLoadError } from '../lib/errors';
 import { notices } from '../stores/noticeStore';
 import { ItemsPage } from '../pages/items/ItemsPage';
 import { api } from '../stores/api';
 import { store } from '../stores/store';
+import { publishNonClientRegions, subscribeHostEvents } from '../lib/hostWindow';
+import { update } from '../stores/updateStore';
 
-type SettingsTab = 'system' | 'map' | 'recognition' | 'hotkeys';
+// The desktop host keeps its splash window up until this arrives, so it is sent once the first load
+// finished. A browser or the development server has no such route, so the result is ignored.
+const reportHostReady = () => fetch('/api/host/ready', { method: 'POST' }).catch(() => {});
 
 export function AppShell() {
   const [page, setPage] = useState<AppPage>('map');
@@ -36,16 +43,28 @@ export function AppShell() {
       initialized.current = true;
       // The interface language lives in user settings: apply it before the workspace loads so the
       // map catalog and map data are fetched in the language the UI renders in.
+      let autoCheckUpdates = true;
       void loadUserSettings()
         .then((settings) => {
+          autoCheckUpdates = settings.updateCheck !== 'manual';
           void i18n.changeLanguage(settings.language);
           setLocale(settings.language);
         })
         .catch(() => {})
-        .finally(() => void workspace.initialize());
-      void gameMonitor.initialize();
+        .then(() =>
+          Promise.all([
+            workspace.initialize().catch(() => {}),
+            gameMonitor.initialize().catch(() => {}),
+          ]),
+        )
+        .then(() => {
+          void reportHostReady();
+          // The version and, when the user allows it, the silent check both start here rather than
+          // when the settings page is opened: the badges need the answer before anyone looks.
+          void update.initialize(autoCheckUpdates);
+        });
     }
-    const disconnect = overlay.connect();
+    let disconnect = overlay.connect();
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (workspace.unsaved) event.preventDefault();
     };
@@ -55,17 +74,38 @@ export function AppShell() {
         void workspace.saveCalibratorPreferences();
       }
     };
+    const unsubscribeHostState = subscribeHostEvents('host-state', ({ background }) => {
+      if (background) {
+        disconnect();
+        return;
+      }
+      disconnect();
+      disconnect = overlay.connect();
+      // The host keeps its own close dialog, and it can write the close behavior while the window is
+      // hidden, so the settings the page renders are re-read whenever the window comes back.
+      store.dispatch(api.util.invalidateTags(['Settings']));
+    });
+    // The tray's settings entry lands on the page's own settings screen.
+    const unsubscribeOpenSettings = subscribeHostEvents('open-settings', () => {
+      setSettingsTab('system');
+      setPage('settings');
+    });
     window.addEventListener('beforeunload', beforeUnload);
     document.addEventListener('visibilitychange', hidden);
     return () => {
       disconnect();
       window.removeEventListener('beforeunload', beforeUnload);
       document.removeEventListener('visibilitychange', hidden);
+      unsubscribeHostState();
+      unsubscribeOpenSettings();
     };
   }, [overlay]);
   useEffect(() => {
     if (monitor.resourceRevision > 0) void workspace.reloadForResources();
   }, [monitor.resourceRevision]);
+  // The desktop host needs the title bar's regions to hit-test the window buttons and the drag
+  // handle; in a browser this is a no-op.
+  useEffect(() => publishNonClientRegions(), []);
   useEffect(() => {
     const id = monitor.status?.mapId;
     if (
@@ -115,6 +155,7 @@ export function AppShell() {
         <AppHeader
           active={page}
           onNavigate={navigate}
+          onOpenAbout={() => openSettings('about')}
           mode={monitor.settings?.mode || monitor.status?.mode || 'pvp'}
           onModeChange={(mode) => void monitor.update({ mode })}
         />
@@ -199,6 +240,7 @@ export function AppShell() {
         }}
         onCancel={() => setPendingReset(null)}
       />
+      <CloseDialog />
     </main>
   );
 }

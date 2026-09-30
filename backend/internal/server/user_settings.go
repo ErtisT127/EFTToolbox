@@ -25,6 +25,27 @@ func normalizeLanguage(value *contracts.UserSettings) {
 	}
 }
 
+// The close button behavior is a closed set for the same reason as the language: a hand-edited
+// file or a newer frontend must not leave the desktop host without a usable action.
+var closeActions = []string{"ask", "exit", "tray"}
+
+func normalizeCloseAction(value *contracts.UserSettings) {
+	if !slices.Contains(closeActions, value.CloseAction) {
+		value.CloseAction = "ask"
+	}
+}
+
+// The automatic update check is a closed set for the same reason as the language: the field is a
+// two-valued choice stored as text, so a settings file written before the field existed (or by a
+// newer frontend) reads back as the default instead of as the zero value of a boolean.
+var updateChecks = []string{"auto", "manual"}
+
+func normalizeUpdateCheck(value *contracts.UserSettings) {
+	if !slices.Contains(updateChecks, value.UpdateCheck) {
+		value.UpdateCheck = "auto"
+	}
+}
+
 func defaultUserSettings() contracts.UserSettings {
 	value := defaults.UserSettings()
 	value.GameMonitor = defaultGameMonitorSettings()
@@ -82,6 +103,8 @@ func readUserSettings(root string) (contracts.UserSettings, error) {
 		return defaults, errUserSettingsInvalid
 	}
 	normalizeLanguage(value)
+	normalizeCloseAction(value)
+	normalizeUpdateCheck(value)
 	if decoder.Decode(new(any)) != io.EOF {
 		return *value, errUserSettingsInvalid
 	}
@@ -89,6 +112,40 @@ func readUserSettings(root string) (contracts.UserSettings, error) {
 		return *value, errUserSettingsInvalid
 	}
 	return *value, nil
+}
+
+// HostLanguage is the interface language the desktop host renders its own chrome (tray menu, close
+// dialog, startup failures) in. The host reads the aggregate user settings directly because it needs
+// a language before the backend answers - including while it is showing a startup failure.
+func HostLanguage(root string) string {
+	value, err := readUserSettings(root)
+	if err != nil {
+		return defaultUserSettings().Language
+	}
+	return value.Language
+}
+
+// HostCloseAction is the persisted close button behavior: ask, exit or tray.
+func HostCloseAction(root string) string {
+	value, err := readUserSettings(root)
+	if err != nil {
+		return defaultUserSettings().CloseAction
+	}
+	return value.CloseAction
+}
+
+// SetHostCloseAction persists the choice the user made in the host's own close dialog. The settings
+// API keeps using its revision protocol; this is the one writer outside it, so it re-reads the
+// aggregate first and saves atomically, and a corrupt file is reported instead of being replaced by
+// defaults so the dashboard's repair flow still owns that decision.
+func SetHostCloseAction(root, action string) error {
+	value, err := readUserSettings(root)
+	if err != nil {
+		return err
+	}
+	value.CloseAction = action
+	normalizeCloseAction(&value)
+	return (&VersionedFileStore{root: root}).Save(filepath.Join("user", "user-settings.json"), value)
 }
 
 func (h *overlayHub) userSettings() (contracts.UserSettings, error) {
@@ -107,6 +164,8 @@ func (h *overlayHub) userSettings() (contracts.UserSettings, error) {
 
 func (h *overlayHub) prepareUserSettings(value *contracts.UserSettings, checkMode bool) (*modeRepository, string) {
 	normalizeLanguage(value)
+	normalizeCloseAction(value)
+	normalizeUpdateCheck(value)
 	if value.SchemaVersion != contracts.ContractSchemaVersion || !validGameMonitorSettings(value.GameMonitor) || !normalizeRecognition(&value.Recognition) {
 		return nil, "game_monitor_settings_invalid"
 	}

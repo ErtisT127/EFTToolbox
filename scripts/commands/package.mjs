@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { verifyDisplayResources } from '../lib/display-resources.mjs';
 import { tileUrls } from '../lib/tile-urls.mjs';
+import { noticesText } from '../lib/third-party.mjs';
 import { ContractSchemaVersion } from '../../contracts/version.gen.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -16,6 +17,8 @@ await verifyDisplayResources(path.join(upstream, 'assets'));
 const output = path.join(root, 'build/package', new Date().toISOString().replace(/[:.]/g, '-'));
 const run = (command, args) =>
   execFileSync(command, args, { cwd: root, stdio: 'inherit', windowsHide: true });
+let stepCount = 0;
+const step = (label) => console.log(`[${++stepCount}/11] ${label}`);
 const copyDirectory = (source, destination) => {
   const result = spawnSync(
     'robocopy',
@@ -34,9 +37,37 @@ const copyIfPresent = async (source, destination) => {
     if (error.code !== 'ENOENT') throw error;
   }
 };
+// The package is what users double-click, so it is checked against what the desktop host needs to
+// start (validateStartup in backend/cmd/EFTToolbox) plus the data it reads later. Missing pieces
+// then fail the package instead of surfacing as a startup error page.
+const verifyPackage = async (output) => {
+  for (const name of [
+    'EFTToolbox.exe',
+    'dashboard/index.html',
+    'dashboard/cast.html',
+    'overlay/overlay.exe',
+    'data/upstream/modes',
+    'data/upstream/assets',
+    'data/upstream/items',
+    'data/upstream/stickers.json',
+    'data/upstream/tiles/manifest.json',
+    'THIRD-PARTY-NOTICES.txt',
+  ]) {
+    try {
+      await access(path.join(output, name));
+    } catch {
+      throw new Error(`Package is missing ${name}`);
+    }
+  }
+  // 2 is IMAGE_SUBSYSTEM_WINDOWS_GUI; a console binary would open a console next to the window.
+  const exe = await readFile(path.join(output, 'EFTToolbox.exe'));
+  const optionalHeader = exe.readUInt32LE(0x3c) + 0x18;
+  const subsystem = exe.readUInt16LE(optionalHeader + 0x44);
+  if (subsystem !== 2)
+    throw new Error(`EFTToolbox.exe is not a GUI binary (PE subsystem ${subsystem})`);
+};
 // Map files carry their language in the name ("<id>_zh.json"), so the id has to drop both suffixes;
 // the backend reads them the same way (mapIDFromFile in internal/server/maps.go).
-const liteTileMaps = new Set(['lab', 'the-labyrinth', 'icebreaker']);
 const mapIdFromFile = (name) => {
   if (!name.endsWith('.json')) return '';
   const base = name.slice(0, -'.json'.length);
@@ -45,7 +76,28 @@ const mapIdFromFile = (name) => {
   const language = base.slice(index + 1);
   return language === 'zh' || language === 'en' ? base.slice(0, index) : '';
 };
-const simplifyMaps = async (modes) => {
+// A map without tiles only renders when a floor carries SVG, so the lite package keeps the tiles of
+// exactly those maps. The set is read from the data instead of being listed here: a new tile-only
+// map keeps its tiles automatically, and a map that would be left with neither tiles nor SVG fails
+// the package instead of shipping a blank canvas.
+const tileOnlyMaps = async (modes) => {
+  const ids = new Set();
+  for (const mode of await readdir(modes, { withFileTypes: true })) {
+    if (!mode.isDirectory()) continue;
+    const maps = path.join(modes, mode.name, 'maps');
+    for (const file of await readdir(maps, { withFileTypes: true })) {
+      const id = file.isFile() ? mapIdFromFile(file.name) : '';
+      if (!id) continue;
+      const map = JSON.parse(await readFile(path.join(maps, file.name), 'utf8'));
+      const tiles = (map.tiles ?? []).length;
+      const hasSvg = (map.floors ?? []).some((floor) => (floor.svgGroups ?? []).length > 0);
+      if (!tiles && !hasSvg) throw new Error(`Map ${id} has neither tiles nor SVG`);
+      if (tiles && !hasSvg) ids.add(id);
+    }
+  }
+  return ids;
+};
+const simplifyMaps = async (modes, keep) => {
   for (const mode of await readdir(modes, { withFileTypes: true })) {
     if (!mode.isDirectory()) continue;
     const maps = path.join(modes, mode.name, 'maps');
@@ -54,19 +106,19 @@ const simplifyMaps = async (modes) => {
       if (!id) continue;
       const name = path.join(maps, file.name);
       const map = JSON.parse(await readFile(name, 'utf8'));
-      if (!liteTileMaps.has(id)) map.tiles = [];
+      if (!keep.has(id)) map.tiles = [];
       await writeFile(name, JSON.stringify(map));
     }
   }
 };
-const copyLiteTiles = async (modes, sourceRoot, destinationRoot) => {
+const copyLiteTiles = async (modes, sourceRoot, destinationRoot, keep) => {
   const urls = new Set();
   for (const mode of await readdir(modes, { withFileTypes: true })) {
     if (!mode.isDirectory()) continue;
     const maps = path.join(modes, mode.name, 'maps');
     for (const file of await readdir(maps, { withFileTypes: true })) {
       const id = file.isFile() ? mapIdFromFile(file.name) : '';
-      if (!id || !liteTileMaps.has(id)) continue;
+      if (!id || !keep.has(id)) continue;
       const map = JSON.parse(await readFile(path.join(maps, file.name), 'utf8'));
       for (const url of tileUrls(map)) urls.add(url);
     }
@@ -111,14 +163,28 @@ const copyLiteTiles = async (modes, sourceRoot, destinationRoot) => {
     JSON.stringify({ schemaVersion: ContractSchemaVersion, tiles: selectedManifest }) + '\n',
   );
 };
+step('Checking contracts');
 run(process.execPath, ['contracts/generate.mjs', '--check']);
+step('Checking defaults');
 run(process.execPath, ['scripts/generate-defaults.mjs', '--check']);
+step('Checking third-party list');
+run(process.execPath, ['scripts/generate-third-party.mjs', '--check']);
+step('Testing splash logo');
+run('go', [
+  'test',
+  './backend/cmd/EFTToolbox',
+  '-run',
+  'TestSplashLogoIsTransparentPNG',
+  '-count=1',
+]);
+step('Type-checking dashboard');
 run(process.execPath, [
   'node_modules/typescript/bin/tsc',
   '--noEmit',
   '-p',
   'dashboard/tsconfig.json',
 ]);
+step('Building dashboard');
 run(process.execPath, [
   'dashboard/node_modules/vite/bin/vite.js',
   'build',
@@ -128,7 +194,18 @@ run(process.execPath, [
   '--emptyOutDir',
 ]);
 await mkdir(output, { recursive: true });
-run('go', ['build', '-o', path.join(output, 'EFTToolbox.exe'), './backend/cmd/EFTToolbox']);
+// The desktop host opens a WebView2 window, so the package entry point must be a GUI binary:
+// without the windowsgui subsystem a console window opens next to it on every launch.
+step('Building backend');
+run('go', [
+  'build',
+  '-ldflags',
+  '-H=windowsgui',
+  '-o',
+  path.join(output, 'EFTToolbox.exe'),
+  './backend/cmd/EFTToolbox',
+]);
+step('Building overlay');
 run('dotnet', [
   'publish',
   'overlay/Overlay.csproj',
@@ -139,32 +216,47 @@ run('dotnet', [
   '--self-contained',
   'true',
 ]);
+step('Copying package files');
 copyDirectory(path.join(root, 'build/dashboard'), path.join(output, 'dashboard'));
 const data = path.join(output, 'data/upstream');
 copyDirectory(path.join(upstream, 'modes'), path.join(data, 'modes'));
 copyDirectory(path.join(upstream, 'assets'), path.join(data, 'assets'));
 copyDirectory(path.join(upstream, 'items'), path.join(data, 'items'));
 await copyFile(path.join(upstream, 'stickers.json'), path.join(data, 'stickers.json'));
+await copyIfPresent(path.join(upstream, 'catalog_zh.json'), path.join(data, 'catalog_zh.json'));
+await copyIfPresent(path.join(upstream, 'catalog_en.json'), path.join(data, 'catalog_en.json'));
 await copyIfPresent(
   path.join(upstream, 'stun-valid-hosts.txt'),
   path.join(data, 'stun-valid-hosts.txt'),
 );
 await copyIfPresent(
-  path.join(upstream, 'stun-nat-hosts.txt'),
-  path.join(data, 'stun-nat-hosts.txt'),
+  path.join(upstream, 'stun-valid-ipv4s.txt'),
+  path.join(data, 'stun-valid-ipv4s.txt'),
+);
+await copyIfPresent(
+  path.join(upstream, 'stun-valid-ipv6s.txt'),
+  path.join(data, 'stun-valid-ipv6s.txt'),
+);
+await copyIfPresent(
+  path.join(upstream, 'stun-nat-ipv4s.txt'),
+  path.join(data, 'stun-nat-ipv4s.txt'),
 );
 if (lite) {
-  await simplifyMaps(path.join(data, 'modes'));
+  const keep = await tileOnlyMaps(path.join(data, 'modes'));
+  await simplifyMaps(path.join(data, 'modes'), keep);
   await mkdir(path.join(data, 'tiles'), { recursive: true });
   await copyLiteTiles(
     path.join(data, 'modes'),
     path.join(upstream, 'tiles'),
     path.join(data, 'tiles'),
+    keep,
   );
 } else copyDirectory(path.join(upstream, 'tiles'), path.join(data, 'tiles'));
-await writeFile(
-  path.join(output, 'THIRD-PARTY-NOTICES.txt'),
-  await readFile(path.join(data, 'assets/THIRD-PARTY-NOTICES.txt')),
-);
+// The notices are generated here rather than copied: the single shipped file then always names every
+// third-party component of this build.
+step('Writing third-party notices');
+await writeFile(path.join(output, 'THIRD-PARTY-NOTICES.txt'), noticesText());
+step('Verifying package');
 await verifyDisplayResources(path.join(data, 'assets'));
+await verifyPackage(output);
 console.log(`Portable package: ${output}`);

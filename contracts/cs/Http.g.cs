@@ -3,6 +3,9 @@ namespace EFTToolbox.Contracts;
 public static class HttpOperations {
   public const string GetStatusPath = "/api/status";
   public const string AppendLogPath = "/api/logs";
+  public const string ReportHostReadyPath = "/api/host/ready";
+  public const string GetHostCloseBehaviorPath = "/api/host/close-behavior";
+  public const string OpenHostEventsPath = "/api/host/events";
   public const string OpenEventsWebSocketPath = "/ws";
   public const string ListStickersPath = "/api/stickers";
   public const string ListMapsPath = "/api/maps";
@@ -67,4 +70,5 @@ public static class HttpOperations {
   public const string ResetDataPath = "/api/data/reset/{kind}";
   public const string GetMapTilePath = "/api/map-tiles/{map}/{layer}/{z}/{x}/{y}";
   public const string GetAssetPath = "/api/assets/{path}";
+  public const string GetUpdateStatusPath = "/api/update";
 }

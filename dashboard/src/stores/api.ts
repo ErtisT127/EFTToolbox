@@ -30,6 +30,8 @@ import type {
   RecognitionSettings,
   RecognitionRequest,
   Sticker,
+  Status,
+  UpdateStatus,
   UserSettings,
 } from '../../../contracts/ts/ipc.gen';
 
@@ -405,6 +407,11 @@ export const api = createApi({
         method: 'GET',
         responseHandler: async () => undefined,
       }),
+    }),
+    getStatus: build.query<Status, void>({ query: () => 'status' }),
+    // The backend answers from its own throttle window unless the user asked for a fresh look.
+    getUpdateStatus: build.query<UpdateStatus, { force: boolean }>({
+      query: ({ force }) => (force ? 'update?force=1' : 'update'),
     }),
     clearRecognitionResult: build.mutation<void, string | undefined>({
       query: (requestId) => ({

@@ -29,6 +29,33 @@ paths:
         }
       responses:
         { '204': { description: Log accepted }, '400': { $ref: '#/components/responses/Error' } }
+  /api/host/ready:
+    post:
+      operationId: reportHostReady
+      description: The dashboard reports that its first load finished, so the desktop host can drop the splash window and show it.
+      responses: { '204': { description: Dashboard ready } }
+  /api/host/close-behavior:
+    get:
+      operationId: getHostCloseBehavior
+      description: The close behavior the desktop host would apply. ask means the dashboard shows the close dialog.
+      responses:
+        {
+          '200':
+            {
+              description: Close behavior,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/HostCloseBehavior' } },
+                },
+            },
+        }
+  /api/host/events:
+    get:
+      operationId: openHostEvents
+      description: The dashboard's subscription to the desktop host's own state. Named events (host-state, window-state, close-request, open-settings) carry a JSON payload; a comment line keeps the stream alive.
+      x-transport: sse
+      responses: { '200': { description: Event stream } }
   /ws:
     get:
       operationId: openEventsWebSocket
@@ -915,6 +942,25 @@ paths:
               content: { '*/*': { schema: { type: string, format: binary } } },
             },
         }
+  /api/update:
+    get:
+      operationId: getUpdateStatus
+      description: Whether a newer release exists. The backend asks GitHub at most once per throttle window unless force is set.
+      parameters:
+        [{ name: force, in: query, required: false, schema: { type: string, enum: ['1'] } }]
+      responses:
+        {
+          '200':
+            {
+              description: Update status,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: './proto/data.schema.json#/$defs/UpdateStatus' } },
+                },
+            },
+          '502': { $ref: '#/components/responses/Error' },
+        }
 components:
   parameters:
     MapId: { name: id, in: path, required: true, schema: { type: string } }
@@ -1017,6 +1063,7 @@ components:
         - revision_conflict
         - revision_required
         - screenshot_name_invalid
+        - update_check_failed
         - user_settings_invalid
         - user_settings_reset_failed
   responses:

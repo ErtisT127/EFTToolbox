@@ -36,7 +36,7 @@ func bindRoomSockets(ip net.IP, port string) (net.Listener, int, *apiFailure) {
 		if err != nil || value < 1 || value > 65535 {
 			return nil, 0, fail(http.StatusBadRequest, "multiplayer_port_invalid")
 		}
-		listener, err := net.Listen("tcp4", net.JoinHostPort(ip.String(), strconv.Itoa(value)))
+		listener, err := net.Listen("tcp", net.JoinHostPort(ip.String(), strconv.Itoa(value)))
 		if err != nil {
 			return nil, 0, failDetail(http.StatusConflict, "multiplayer_port_in_use", strconv.Itoa(value))
 		}
@@ -44,7 +44,7 @@ func bindRoomSockets(ip net.IP, port string) (net.Listener, int, *apiFailure) {
 	}
 	for attempt := 0; attempt < 20; attempt++ {
 		value := 20000 + mathrand.IntN(40000)
-		listener, err := net.Listen("tcp4", net.JoinHostPort(ip.String(), strconv.Itoa(value)))
+		listener, err := net.Listen("tcp", net.JoinHostPort(ip.String(), strconv.Itoa(value)))
 		if err == nil {
 			return listener, value, nil
 		}
@@ -118,7 +118,7 @@ func writeSignalJSON(w http.ResponseWriter, status int, value signalResponse) {
 // address from the selected STUN server. Under a cone NAT that mapping is reachable from anyone,
 // which is exactly what the structured invite advertises; a symmetric NAT invalidates it and joining fails.
 func bindStunSignaling(stunServer string) (*net.UDPConn, *net.UDPAddr, *apiFailure) {
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 0})
+	conn, err := net.ListenUDP(stunNetwork(stunServer), &net.UDPAddr{Port: 0})
 	if err != nil {
 		return nil, nil, fail(http.StatusInternalServerError, "multiplayer_connection_failed")
 	}
@@ -237,11 +237,12 @@ func signalFailure(payload signalResponse) *apiFailure {
 }
 
 func signalStun(hostAddr, key, offer string) (string, *apiFailure) {
-	raddr, err := net.ResolveUDPAddr("udp", hostAddr)
+	network := stunNetwork(hostAddr)
+	raddr, err := net.ResolveUDPAddr(network, hostAddr)
 	if err != nil {
 		return "", fail(http.StatusBadRequest, "multiplayer_share_invalid")
 	}
-	conn, err := net.DialUDP("udp", nil, raddr)
+	conn, err := net.DialUDP(network, nil, raddr)
 	if err != nil {
 		return "", fail(http.StatusGatewayTimeout, "multiplayer_signaling_timeout")
 	}

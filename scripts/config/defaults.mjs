@@ -77,6 +77,8 @@ export const defaults = {
       visible: false,
     },
     language: 'zh-CN',
+    closeAction: 'ask',
+    updateCheck: 'auto',
   },
   itemsSettings: {
     schemaVersion: ContractSchemaVersion,
@@ -113,6 +115,7 @@ export const defaults = {
     playerId: '',
     playerName: '',
     playerColor: '#d4a24e',
+    stunListSource: 'host',
   },
   defaultGroups: ['extracts', 'landmarks'],
 };

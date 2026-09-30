@@ -191,14 +191,17 @@ if (undeclaredEndpoints.length)
   fail(`dashboard api.ts calls not declared in OpenAPI: ${undeclaredEndpoints.join(', ')}`);
 
 const backendDir = resolve(root, 'backend/internal/server');
+const hostDir = resolve(root, 'backend/cmd/EFTToolbox');
 const backendRoutes = new Set();
-for (const file of await readdir(backendDir)) {
-  if (!file.endsWith('.go')) continue;
-  const source = await readFile(resolve(backendDir, file), 'utf8');
-  for (const match of source.matchAll(/(?:HandleFunc|Handle)\(\s*"([A-Z]+)\s+([^"]+)"/g)) {
-    const path = match[2].replace(/\{\s*([^}]+?)\.\.\.\s*\}/g, '{$1}');
-    if (path === '/') continue;
-    backendRoutes.add(`${match[1]} ${path}`);
+for (const directory of [backendDir, hostDir]) {
+  for (const file of await readdir(directory)) {
+    if (!file.endsWith('.go')) continue;
+    const source = await readFile(resolve(directory, file), 'utf8');
+    for (const match of source.matchAll(/(?:HandleFunc|Handle)\(\s*"([A-Z]+)\s+([^"]+)"/g)) {
+      const path = match[2].replace(/\{\s*([^}]+?)\.\.\.\s*\}/g, '{$1}');
+      if (path === '/') continue;
+      backendRoutes.add(`${match[1]} ${path}`);
+    }
   }
 }
 const missingRoutes = [...backendRoutes].filter((route) => !contractRoutes.has(route));

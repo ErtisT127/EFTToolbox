@@ -8,7 +8,14 @@ import {
   type Placement,
 } from '@floating-ui/dom';
 import { createPortal } from 'react-dom';
-import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 
 export function AppPopover({
   open,
@@ -18,6 +25,7 @@ export function AppPopover({
   className = '',
   boundaryRef,
   matchReferenceWidth = false,
+  onDismiss,
 }: {
   open: boolean;
   reference: RefObject<HTMLElement | null>;
@@ -26,6 +34,11 @@ export function AppPopover({
   className?: string;
   boundaryRef?: RefObject<HTMLElement | null>;
   matchReferenceWidth?: boolean;
+  /**
+   * Called when a pointer lands outside both the anchor and the popover. Optional: hover tooltips
+   * (which close on pointer leave) pass nothing and keep their own behavior.
+   */
+  onDismiss?: () => void;
 }) {
   const floating = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
@@ -72,6 +85,21 @@ export function AppPopover({
       cleanup();
     };
   }, [boundaryRef, matchReferenceWidth, open, placement, reference]);
+
+  // Dismissal lives here so every click-driven popover shares one rule instead of repeating a
+  // capture-phase window listener. The anchor counts as inside, so its own toggle keeps working.
+  useEffect(() => {
+    if (!open || !onDismiss) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (reference.current?.contains(target)) return;
+      if (floating.current?.contains(target)) return;
+      onDismiss();
+    };
+    window.addEventListener('pointerdown', onPointerDown, true);
+    return () => window.removeEventListener('pointerdown', onPointerDown, true);
+  }, [onDismiss, open, reference]);
 
   if (!open || typeof document === 'undefined') return null;
   return createPortal(

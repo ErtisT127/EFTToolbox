@@ -16,21 +16,72 @@ import (
 )
 
 const (
-	// The repository regenerates both lists on a schedule; the NAT file lists servers suited to
-	// NAT-type checks and is the right peer set for the cone/symmetric comparison.
-	stunListURL      = "https://raw.githubusercontent.com/pradt2/always-online-stun/master/valid_hosts.txt"
-	stunNatListURL   = "https://raw.githubusercontent.com/pradt2/always-online-stun/master/valid_nat_testing_hosts.txt"
+	// The repository regenerates these lists on a schedule: hostnames for the domain source, IP
+	// literals (IPv4 + IPv6) for the IP source, and a NAT-testing set that stays IPv4-only because
+	// NAT behaviour is an IPv4 concept.
+	stunHostListURL  = "https://raw.githubusercontent.com/pradt2/always-online-stun/master/valid_hosts.txt"
+	stunIP4ListURL   = "https://raw.githubusercontent.com/pradt2/always-online-stun/master/valid_ipv4s.txt"
+	stunIP6ListURL   = "https://raw.githubusercontent.com/pradt2/always-online-stun/master/valid_ipv6s.txt"
+	stunNatListURL   = "https://raw.githubusercontent.com/pradt2/always-online-stun/master/valid_nat_testing_ipv4s.txt"
 	stunListMax      = 400
 	stunProbeTimeout = time.Second
 	stunProbeWorkers = 12
 )
 
-func fetchStunServers() ([]string, error) {
-	return fetchStunList(stunListURL)
+func fetchStunHostServers() ([]string, error) {
+	return fetchStunList(stunHostListURL)
+}
+
+// fetchStunIPServers merges the IPv4 and IPv6 literal lists; the panel shows them together and the
+// resolver picks each entry's family (udp4 for IPv4, udp6 for bracketed IPv6).
+func fetchStunIPServers() ([]string, error) {
+	ipv4, err := fetchStunList(stunIP4ListURL)
+	if err != nil {
+		return nil, err
+	}
+	ipv6, err := fetchStunList(stunIP6ListURL)
+	if err != nil {
+		return nil, err
+	}
+	return mergeServers(ipv4, ipv6), nil
 }
 
 func fetchStunNatServers() ([]string, error) {
 	return fetchStunList(stunNatListURL)
+}
+
+// mergeServers concatenates lists in order, dropping duplicates and honouring the same cap as a
+// single list so a merged response cannot outgrow the probe endpoint's limit.
+func mergeServers(lists ...[]string) []string {
+	merged := []string{}
+	seen := map[string]bool{}
+	for _, list := range lists {
+		for _, server := range list {
+			if seen[server] {
+				continue
+			}
+			seen[server] = true
+			merged = append(merged, server)
+			if len(merged) >= stunListMax {
+				return merged
+			}
+		}
+	}
+	return merged
+}
+
+// stunNetwork picks the UDP network for a STUN endpoint: a bracketed IPv6 literal uses udp6, and
+// hostnames and IPv4 literals use udp4. Hostnames stay IPv4 so a name that also carries AAAA
+// records cannot silently move a session, and the NAT verdict, onto a different address family.
+func stunNetwork(endpoint string) string {
+	host, _, err := splitStunAddress(endpoint)
+	if err != nil {
+		return "udp4"
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		return "udp6"
+	}
+	return "udp4"
 }
 
 func parseStunList(data string) []string {
@@ -88,11 +139,12 @@ func probeStunServer(server string, timeout time.Duration) (time.Duration, error
 	if err != nil {
 		return 0, err
 	}
-	raddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(host, port))
+	network := stunNetwork(server)
+	raddr, err := net.ResolveUDPAddr(network, net.JoinHostPort(host, port))
 	if err != nil {
 		return 0, err
 	}
-	conn, err := net.DialUDP("udp", nil, raddr)
+	conn, err := net.DialUDP(network, nil, raddr)
 	if err != nil {
 		return 0, err
 	}
@@ -169,7 +221,7 @@ func stunMappedAddr(conn *net.UDPConn, server string, timeout time.Duration) (*n
 	if err != nil {
 		return nil, err
 	}
-	raddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(host, port))
+	raddr, err := net.ResolveUDPAddr(stunNetwork(server), net.JoinHostPort(host, port))
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +273,11 @@ func compareNAT(servers []string) contracts.NatCheckResult {
 	if len(servers) < 2 {
 		return contracts.NatCheckResult{Kind: "unknown", Message: strPtr("multiplayer_nat_unreachable")}
 	}
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 0})
+	// The check is pinned to IPv4 on purpose: custom-mode signaling and the advertised STUN
+	// invite are IPv4, so a dual-stack socket could measure IPv6 (which is NAT-free and would
+	// read as "cone") while the actual session traverses a strict IPv4 NAT. Measuring the same
+	// family as the session is the only way the cone/symmetric verdict stays truthful.
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{Port: 0})
 	if err != nil {
 		return contracts.NatCheckResult{Kind: "unknown", Message: strPtr("multiplayer_nat_unreachable")}
 	}
@@ -239,7 +295,7 @@ func compareNAT(servers []string) contracts.NatCheckResult {
 		if err != nil {
 			continue
 		}
-		raddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(host, port))
+		raddr, err := net.ResolveUDPAddr("udp4", net.JoinHostPort(host, port))
 		if err != nil {
 			continue
 		}

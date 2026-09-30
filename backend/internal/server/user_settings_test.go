@@ -92,3 +92,77 @@ func TestResetUserSettingsRestoresDefaultsOnly(t *testing.T) {
 		t.Fatalf("reset touched unrelated user data: %q %v", data, err)
 	}
 }
+
+func TestHostCloseActionDefaultsAndPersistence(t *testing.T) {
+	root := t.TempDir()
+	if action := HostCloseAction(root); action != "ask" {
+		t.Fatalf("missing settings should ask before closing, got %q", action)
+	}
+	if language := HostLanguage(root); language != "zh-CN" {
+		t.Fatalf("missing settings should default the host language, got %q", language)
+	}
+
+	// A file written before closeAction existed keeps its other values and reads back as "ask".
+	raw, err := json.Marshal(defaultUserSettings())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacy map[string]any
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	legacy["language"] = "en-US"
+	delete(legacy, "closeAction")
+	settingsPath := filepath.Join(root, "user", "user-settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if action := HostCloseAction(root); action != "ask" {
+		t.Fatalf("legacy settings should ask before closing, got %q", action)
+	}
+	if language := HostLanguage(root); language != "en-US" {
+		t.Fatalf("legacy settings lost their language, got %q", language)
+	}
+
+	if err := SetHostCloseAction(root, "tray"); err != nil {
+		t.Fatalf("persist close action: %v", err)
+	}
+	value, err := readUserSettings(root)
+	if err != nil {
+		t.Fatalf("host write produced unreadable settings: %v", err)
+	}
+	if value.CloseAction != "tray" || value.Language != "en-US" ||
+		value.Overlay.Width != defaultUserSettings().Overlay.Width ||
+		value.GameMonitor.Mode != defaultUserSettings().GameMonitor.Mode {
+		t.Fatalf("host write changed more than the close action: %+v", value)
+	}
+
+	// An unknown action is normalized instead of being written verbatim, and a corrupt file is
+	// reported instead of being replaced by defaults: the dashboard owns repair, and the host falls
+	// back to asking.
+	if err := SetHostCloseAction(root, "restart"); err != nil {
+		t.Fatal(err)
+	}
+	if action := HostCloseAction(root); action != "ask" {
+		t.Fatalf("unknown close action was not normalized, got %q", action)
+	}
+	if err := os.WriteFile(settingsPath, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if action := HostCloseAction(root); action != "ask" {
+		t.Fatalf("corrupt settings should ask before closing, got %q", action)
+	}
+	if err := SetHostCloseAction(root, "exit"); err == nil {
+		t.Fatal("corrupt settings were overwritten instead of reported")
+	}
+	if data, err := os.ReadFile(settingsPath); err != nil || string(data) != "{" {
+		t.Fatalf("corrupt settings were modified: %q %v", data, err)
+	}
+}

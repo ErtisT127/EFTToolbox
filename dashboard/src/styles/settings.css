@@ -141,7 +141,9 @@
   opacity: 0.55;
   cursor: default;
 }
-.settings-content .settings-check {
+.settings-check {
+  display: flex;
+  align-items: center;
   min-height: 34px;
   justify-content: flex-start;
   cursor: pointer;
@@ -149,11 +151,14 @@
   /* A label is a hit target for the control it names, so it hugs its own text: the empty half of
      the row stays inert instead of toggling the box from a distance. */
   width: fit-content;
+  /* The settings page widens this gap with its own label rule; the dialog that reuses the row has no
+     such wrapper, so the row carries the base spacing itself. */
+  gap: var(--space-2);
 }
-.settings-content .settings-check:hover {
+.settings-check:hover {
   color: var(--accent);
 }
-.settings-content .settings-check input {
+.settings-check input {
   margin: 0;
 }
 .settings-check-wrap {
@@ -540,4 +545,156 @@
   background: color-mix(in srgb, var(--bg) 85%, transparent);
   color: var(--muted);
   font-size: var(--text-base);
+}
+
+/* The About tab. It is the one page that talks about the app itself, so the brand block is centred
+   on its own and everything below it keeps the fieldset rows the other tabs use. */
+.about-hero {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  max-width: 640px;
+  margin: 0 0 24px;
+  text-align: center;
+}
+.about-mark {
+  display: block;
+}
+.about-name {
+  margin: var(--space-2) 0 0;
+  /* The same wordmark the title bar draws, one step up: EFT in the accent, TOOLBOX in the text
+     colour at the same weight and tracking. */
+  color: var(--accent);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  letter-spacing: 1px;
+}
+.about-name span {
+  color: var(--text);
+  font-weight: var(--weight-regular);
+}
+.about-version {
+  /* A link, not a button: the version number is the address of the project. */
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  text-decoration: none;
+}
+.about-version:hover {
+  text-decoration: underline;
+}
+.about-author {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-md);
+}
+.about-byline {
+  /* The reward entry is positioned off this line rather than sitting in it, so the byline stays
+     centred on the page. The line box is as tall as that control: that is what puts the two on one
+     visual line, rather than shrinking the control until it fits inside the text. */
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  line-height: var(--control-height-lg);
+}
+.about-link {
+  color: var(--muted);
+  text-decoration: none;
+}
+.about-link:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+.icon-button.about-reward {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + var(--space-2));
+  /* Same token as the line box above: the control keeps its size and the row is measured around it. */
+  width: var(--control-height-lg);
+  min-height: var(--control-height-lg);
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  /* The one decorative use of the positive green: the reward entry stands out on purpose. */
+  color: var(--support);
+  transform: translateY(-50%);
+}
+.icon-button.about-reward:hover:not(:disabled),
+.icon-button.about-reward:focus-visible {
+  color: var(--support);
+  background: var(--hover);
+}
+.about-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: var(--control-height-lg);
+}
+.about-status {
+  font-size: var(--text-md);
+}
+/* The answer is the one thing worth a colour: a new release is announced in the accent, a failed
+   check is a warning to retry, and the two calm answers stay quiet. */
+.about-status-available {
+  color: var(--accent);
+}
+.about-status-latest {
+  color: var(--text);
+}
+.about-status-failed {
+  color: var(--warning);
+}
+.about-status-idle {
+  color: var(--muted);
+}
+/* Acknowledgements: plain text links that wrap like a paragraph, inside a scrolling box so the list
+   never turns the page into a wall. */
+.about-licenses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  max-height: 208px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+  font-size: var(--text-base);
+}
+/* The reward code gets the room its detail needs: this dialog is about one readable image. */
+.confirm-dialog.reward-dialog {
+  width: min(520px, calc(100vw - 32px));
+}
+.reward-qrcode {
+  display: block;
+  width: 100%;
+  margin: 0 auto;
+  border-radius: var(--radius-sm);
+}
+
+/* One update state drives both markers: the badge on the settings page tab in the title bar and the
+   dot on the About tab that it opens. */
+.update-badge {
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+  background: var(--danger);
+  color: var(--on-danger);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.04em;
+}
+.settings-tabs button {
+  position: relative;
+}
+.update-dot {
+  position: absolute;
+  top: 50%;
+  right: var(--space-3);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+  transform: translateY(-50%);
 }

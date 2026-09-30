@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { TriangleAlert, X } from 'lucide-react';
 import { useLocale } from '../hooks/useLocale';
 import { isImeComposing } from '../lib/ime';
@@ -46,8 +46,13 @@ function keyName(code: string): string {
 }
 
 // Modifier order is fixed by the contract (docs/contracts.md), so a recorded shortcut reads the
-// same before and after the save round trip.
-function heldModifiers(event: KeyboardEvent<HTMLElement>) {
+// same before and after the save round trip. Keys and the wheel report modifiers the same way.
+function modifierNames(event: {
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+  metaKey: boolean;
+}) {
   return [
     event.ctrlKey && 'Ctrl',
     event.altKey && 'Alt',
@@ -55,6 +60,10 @@ function heldModifiers(event: KeyboardEvent<HTMLElement>) {
     event.metaKey && 'Win',
   ].filter(Boolean) as string[];
 }
+
+// The DOM numbers the buttons left 0, middle 1, right 2, X1 3, X2 4, while the contract names them
+// after the raw input button they are. Left keeps arming the recorder, right stays unusable.
+const mouseButtonNames: Record<number, string> = { 1: 'Mouse3', 3: 'Mouse4', 4: 'Mouse5' };
 
 export function HotkeyRecorder({
   label,
@@ -74,7 +83,7 @@ export function HotkeyRecorder({
   conflict?: boolean;
   onChange: (value: string) => void;
   /** Follows the recorder opening and closing, so the caller can stand the overlay's own hot keys
-   *  down: a registered hot key is swallowed by Windows before the browser ever sees the stroke. */
+   *  down: the stroke has to reach the browser as a shortcut instead of triggering the overlay. */
   onRecording?: (recording: boolean) => void;
 }) {
   const { t } = useLocale();
@@ -107,15 +116,46 @@ export function HotkeyRecorder({
       return arm(false);
     // A modifier on its own is the prefix of every shortcut rather than a key of its own, so it
     // reads as a live preview of what is being held instead of an error.
-    if (isModifier(event.code)) return setPreview(heldModifiers(event).join('+'));
+    if (isModifier(event.code)) return setPreview(modifierNames(event).join('+'));
     const name = keyName(event.code);
     // Anything the contract does not accept simply does not take: the field stays empty and the
     // recorder stays open, which says more than a message would.
     if (!name) return;
-    const combo = [...heldModifiers(event), name].join('+');
+    const combo = [...modifierNames(event), name].join('+');
     onChange(combo);
     arm(false);
   };
+  // A mouse button is recorded like a key. preventDefault keeps the middle button from starting
+  // autoscroll and the side buttons from navigating the window.
+  const recordMouse = (event: MouseEvent<HTMLButtonElement>) => {
+    if (!recording) return;
+    const name = mouseButtonNames[event.button];
+    if (!name) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onChange([...modifierNames(event), name].join('+'));
+    arm(false);
+  };
+  // A wheel listener attached through React is passive, so preventDefault there is ignored and
+  // recording Ctrl+Wheel would also zoom the whole page. The wheel is therefore watched natively.
+  const keysRef = useRef<HTMLButtonElement | null>(null);
+  const wheelRef = useRef<(event: WheelEvent) => void>(() => {});
+  wheelRef.current = (event) => {
+    if (!recording) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.deltaY === 0) return;
+    const key = event.deltaY < 0 ? 'WheelUp' : 'WheelDown';
+    onChange([...modifierNames(event), key].join('+'));
+    arm(false);
+  };
+  useEffect(() => {
+    const element = keysRef.current;
+    if (!element) return;
+    const wheel = (event: WheelEvent) => wheelRef.current(event);
+    element.addEventListener('wheel', wheel, { passive: false });
+    return () => element.removeEventListener('wheel', wheel);
+  }, []);
   // A field never carries a message of its own: the red mark beside it says a combination was
   // refused, and its accessible name says which kind of refusal it was.
   const refused = conflict || !!error;
@@ -145,6 +185,8 @@ export function HotkeyRecorder({
           onBlur={() => arm(false)}
           onClick={() => arm(true)}
           onKeyDown={record}
+          onMouseDown={recordMouse}
+          ref={keysRef}
         >
           <span className="hotkey-value" id={`${id}-value`} aria-live="polite">
             {recording && !keys.length ? (

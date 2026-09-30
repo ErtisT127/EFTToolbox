@@ -14,6 +14,10 @@ public sealed record Status {
   [JsonPropertyName("startedAt")] public string StartedAt { get; init; } = "";
 }
 
+public sealed record HostCloseBehavior {
+  [JsonPropertyName("action")] public string Action { get; init; } = "";
+}
+
 public sealed record ErrorBody {
   [JsonPropertyName("code")] public string Code { get; init; } = "";
   [JsonPropertyName("detail")] public string? Detail { get; init; } = null;
@@ -544,6 +548,8 @@ public sealed record UserSettings {
   [JsonPropertyName("gameMonitor")] public GameMonitorSettings GameMonitor { get; init; } = new();
   [JsonPropertyName("recognition")] public RecognitionSettings Recognition { get; init; } = new();
   [JsonPropertyName("language")] public string Language { get; init; } = "";
+  [JsonPropertyName("closeAction")] public string CloseAction { get; init; } = "";
+  [JsonPropertyName("updateCheck")] public string UpdateCheck { get; init; } = "";
 }
 
 public sealed record OverlayBootstrap {
@@ -668,6 +674,7 @@ public sealed record MultiplayerSettings {
   [JsonPropertyName("lastPort")] public string? LastPort { get; init; } = null;
   [JsonPropertyName("lastKey")] public string? LastKey { get; init; } = null;
   [JsonPropertyName("lastStun")] public string? LastStun { get; init; } = null;
+  [JsonPropertyName("stunListSource")] public string? StunListSource { get; init; } = null;
 }
 
 public sealed record MultiplayerHostRequest {
@@ -691,7 +698,8 @@ public sealed record MultiplayerJoinRequest {
 }
 
 public sealed record StunServerList {
-  [JsonPropertyName("servers")] public string[] Servers { get; init; } = [];
+  [JsonPropertyName("hostServers")] public string[] HostServers { get; init; } = [];
+  [JsonPropertyName("ipServers")] public string[] IpServers { get; init; } = [];
 }
 
 public sealed record StunProbeRequest {
@@ -710,6 +718,12 @@ public sealed record StunProbeResults {
 public sealed record NatCheckResult {
   [JsonPropertyName("kind")] public string Kind { get; init; } = "";
   [JsonPropertyName("message")] public string? Message { get; init; } = null;
+}
+
+public sealed record UpdateStatus {
+  [JsonPropertyName("current")] public string Current { get; init; } = "";
+  [JsonPropertyName("latest")] public string Latest { get; init; } = "";
+  [JsonPropertyName("updateAvailable")] public bool UpdateAvailable { get; init; } = default;
 }
 
 public readonly record struct NumericLimit(double Min, double Max, double Step, int Precision);

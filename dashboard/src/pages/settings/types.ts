@@ -14,5 +14,15 @@ export const hotkeyKeys = [
 ] as const;
 
 export type HotkeyKey = (typeof hotkeyKeys)[number];
-export type SettingsTab = 'system' | 'map' | 'recognition' | 'hotkeys' | 'data';
-export const settingsTabs = ['system', 'map', 'recognition', 'hotkeys', 'data'] as const;
+
+// The capture key belongs to the recognition popup rather than the minimap, so the hotkeys tab lists
+// it in its own group. Both groups come from the one list, which is also what the conflict check reads.
+export const minimapHotkeyKeys: readonly HotkeyKey[] = hotkeyKeys.filter(
+  (key) => key !== 'recognition',
+);
+export const recognitionHotkeyKeys: readonly HotkeyKey[] = hotkeyKeys.filter(
+  (key) => key === 'recognition',
+);
+
+export type SettingsTab = 'system' | 'map' | 'recognition' | 'hotkeys' | 'data' | 'about';
+export const settingsTabs = ['system', 'map', 'recognition', 'hotkeys', 'data', 'about'] as const;

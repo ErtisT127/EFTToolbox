@@ -39,6 +39,7 @@ import { NumberStepper } from '../../components/NumberStepper';
 import { CalibrationRegionLimits } from '../../../../contracts/ts/ipc.gen';
 import { notices } from '../../stores/noticeStore';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { useRegisterConflictActions } from '../../stores/conflictActions';
 import { ToolToolbar } from '../../components/ToolToolbar';
 import { HintTooltip } from '../../components/HintTooltip';
 import { MapUnavailableState } from '../../components/MapUnavailableState';
@@ -237,9 +238,47 @@ export function CalibratorPage() {
     (state: RootState) => state.client.calibrationEditors[activeCalibrationKey],
   );
   const calibrationConflictKey = `calibration:${activeCalibrationKey}`;
-  const calibrationConflict = useSelector((state: RootState) =>
-    state.client.conflicts.find((item) => item.key === calibrationConflictKey),
-  );
+  // The conflict banner is window-level; this page supplies the two page-scoped choices.
+  useRegisterConflictActions(calibrationConflictKey, {
+    loadRemote: () => {
+      void store
+        .dispatch(
+          api.endpoints.getCalibration.initiate(
+            { id: calibratorMapId, basemap },
+            { forceRefetch: true },
+          ),
+        )
+        .unwrap()
+        .then((remote) => {
+          const next = normalizeCalibrationDocument(remote.value);
+          docRef.current = next;
+          confirmedDocRef.current = structuredClone(next);
+          store.dispatch(clearCalibrationEditor(activeCalibrationKey));
+          store.dispatch(clearConflict(calibrationConflictKey));
+        });
+    },
+    retry: () => {
+      void store
+        .dispatch(
+          api.endpoints.getCalibration.initiate(
+            { id: calibratorMapId, basemap },
+            { forceRefetch: true },
+          ),
+        )
+        .unwrap()
+        .then((remote) => {
+          const local = store.getState().client.calibrationEditors[activeCalibrationKey]?.draft;
+          if (local) {
+            const updated = { ...local, revision: remote.value.revision };
+            docRef.current = updated;
+            store.dispatch(
+              setCalibrationEditorDraft({ key: activeCalibrationKey, draft: updated }),
+            );
+            saveNow(updated, true);
+          }
+        });
+    },
+  });
   const doc = editor?.draft || calibrationData.get(activeCalibrationKey) || null;
   const past = editor?.past || [];
   const future = editor?.future || [];
@@ -1001,66 +1040,6 @@ export function CalibratorPage() {
     );
   return (
     <section ref={pageRef} className={`calibrator-page ${collapsed ? 'tree-collapsed' : ''}`}>
-      {calibrationConflict && (
-        <div className="calibrator-conflict" role="alert">
-          <span>{t('errors.revision_conflict')}</span>
-          <button
-            type="button"
-            onClick={() => store.dispatch(setConflict({ ...calibrationConflict, paused: true }))}
-          >
-            {t('errors.conflict_keep_local')}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void store
-                .dispatch(
-                  api.endpoints.getCalibration.initiate(
-                    { id: calibratorMapId, basemap },
-                    { forceRefetch: true },
-                  ),
-                )
-                .unwrap()
-                .then((remote) => {
-                  const next = normalizeCalibrationDocument(remote.value);
-                  docRef.current = next;
-                  confirmedDocRef.current = structuredClone(next);
-                  store.dispatch(clearCalibrationEditor(activeCalibrationKey));
-                  store.dispatch(clearConflict(calibrationConflictKey));
-                });
-            }}
-          >
-            {t('errors.conflict_load_remote')}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void store
-                .dispatch(
-                  api.endpoints.getCalibration.initiate(
-                    { id: calibratorMapId, basemap },
-                    { forceRefetch: true },
-                  ),
-                )
-                .unwrap()
-                .then((remote) => {
-                  const local =
-                    store.getState().client.calibrationEditors[activeCalibrationKey]?.draft;
-                  if (local) {
-                    const updated = { ...local, revision: remote.value.revision };
-                    docRef.current = updated;
-                    store.dispatch(
-                      setCalibrationEditorDraft({ key: activeCalibrationKey, draft: updated }),
-                    );
-                    saveNow(updated, true);
-                  }
-                });
-            }}
-          >
-            {t('errors.conflict_retry')}
-          </button>
-        </div>
-      )}
       <aside id="calibrator-tree" className={`calibrator-tree ${collapsed ? 'collapsed' : ''}`}>
         {!collapsed && (
           <div ref={treeContentRef} className="tree-content" onScroll={rememberTreeScroll}>

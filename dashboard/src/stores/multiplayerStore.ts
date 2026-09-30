@@ -73,6 +73,10 @@ class MultiplayerStore {
   get showMembersPanel() {
     return this.settings?.showMembersPanel ?? true;
   }
+
+  get stunListSource(): 'host' | 'ip' {
+    return this.settings?.stunListSource ?? 'host';
+  }
   get initialized() {
     return store.getState().client.multiplayer.initialized;
   }
@@ -231,7 +235,12 @@ class MultiplayerStore {
   }
 
   async saveIdentity(
-    changes: Partial<Pick<MultiplayerSettings, 'playerName' | 'playerColor' | 'showMembersPanel'>>,
+    changes: Partial<
+      Pick<
+        MultiplayerSettings,
+        'playerName' | 'playerColor' | 'showMembersPanel' | 'stunListSource'
+      >
+    >,
     explicit = false,
   ) {
     if (!this.settings) return;
@@ -300,6 +309,7 @@ class MultiplayerStore {
         playerName: draft.playerName,
         playerColor: draft.playerColor,
         showMembersPanel: draft.showMembersPanel,
+        stunListSource: draft.stunListSource,
       },
       true,
     );

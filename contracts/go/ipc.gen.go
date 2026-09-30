@@ -14,6 +14,10 @@ type Status struct {
 	StartedAt       string `json:"startedAt"`
 }
 
+type HostCloseBehavior struct {
+	Action string `json:"action"`
+}
+
 type ErrorBody struct {
 	Code   string  `json:"code"`
 	Detail *string `json:"detail,omitempty"`
@@ -544,6 +548,8 @@ type UserSettings struct {
 	GameMonitor   GameMonitorSettings `json:"gameMonitor"`
 	Recognition   RecognitionSettings `json:"recognition"`
 	Language      string              `json:"language"`
+	CloseAction   string              `json:"closeAction"`
+	UpdateCheck   string              `json:"updateCheck"`
 }
 
 type OverlayBootstrap struct {
@@ -668,6 +674,7 @@ type MultiplayerSettings struct {
 	LastPort         *string `json:"lastPort,omitempty"`
 	LastKey          *string `json:"lastKey,omitempty"`
 	LastStun         *string `json:"lastStun,omitempty"`
+	StunListSource   *string `json:"stunListSource,omitempty"`
 }
 
 type MultiplayerHostRequest struct {
@@ -691,7 +698,8 @@ type MultiplayerJoinRequest struct {
 }
 
 type StunServerList struct {
-	Servers []string `json:"servers"`
+	HostServers []string `json:"hostServers"`
+	IpServers   []string `json:"ipServers"`
 }
 
 type StunProbeRequest struct {
@@ -710,6 +718,12 @@ type StunProbeResults struct {
 type NatCheckResult struct {
 	Kind    string  `json:"kind"`
 	Message *string `json:"message,omitempty"`
+}
+
+type UpdateStatus struct {
+	Current         string `json:"current"`
+	Latest          string `json:"latest"`
+	UpdateAvailable bool   `json:"updateAvailable"`
 }
 
 type NumericLimit struct {

@@ -18,6 +18,15 @@ type overlayProcess struct {
 }
 
 func startOverlay(executable, address string) *overlayProcess {
+	process, err := startOverlayChecked(executable, address)
+	if err != nil {
+		log.Printf("overlay startup: %v", err)
+		return nil
+	}
+	return process
+}
+
+func startOverlayChecked(executable, address string) (*overlayProcess, error) {
 	cmd := exec.Command(executable, "--backend", address, "--dev-stdin")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	cmd.Stdout = io.Discard
@@ -27,22 +36,20 @@ func startOverlay(executable, address string) *overlayProcess {
 	stderrReader, stderrWriter, stderrErr := os.Pipe()
 	if stderrErr != nil {
 		log.Printf("overlay stderr pipe: %v", stderrErr)
-		return nil
+		return nil, stderrErr
 	}
 	cmd.Stderr = stderrWriter
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		_ = stderrReader.Close()
 		_ = stderrWriter.Close()
-		log.Printf("overlay startup: %v", err)
-		return nil
+		return nil, err
 	}
 	if err = cmd.Start(); err != nil {
 		_ = input.Close()
 		_ = stderrReader.Close()
 		_ = stderrWriter.Close()
-		log.Printf("overlay startup: %v", err)
-		return nil
+		return nil, err
 	}
 	// The child owns the write end now; the reader stays here until the overlay exits.
 	_ = stderrWriter.Close()
@@ -63,7 +70,7 @@ func startOverlay(executable, address string) *overlayProcess {
 			log.Printf("overlay stopped: %v", err)
 		}
 	}()
-	return process
+	return process, nil
 }
 
 func (p *overlayProcess) Stop(timeout time.Duration) {

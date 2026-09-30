@@ -30,6 +30,7 @@ jsTool('typescript/bin/tsc', ['--noEmit', '-p', 'dashboard/tsconfig.json']);
 jsTool('prettier/bin/prettier.cjs', ['--check', '.']);
 run(process.execPath, ['contracts/generate.mjs', '--check']);
 run(process.execPath, ['scripts/generate-defaults.mjs', '--check']);
+run(process.execPath, ['scripts/generate-third-party.mjs', '--check']);
 
 console.log('Dashboard i18n');
 const cjk = /[一-鿿]/;

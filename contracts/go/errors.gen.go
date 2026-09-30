@@ -76,6 +76,7 @@ const (
 	ErrorCodeRevisionConflict              = "revision_conflict"
 	ErrorCodeRevisionRequired              = "revision_required"
 	ErrorCodeScreenshotNameInvalid         = "screenshot_name_invalid"
+	ErrorCodeUpdateCheckFailed             = "update_check_failed"
 	ErrorCodeUserSettingsInvalid           = "user_settings_invalid"
 	ErrorCodeUserSettingsResetFailed       = "user_settings_reset_failed"
 )

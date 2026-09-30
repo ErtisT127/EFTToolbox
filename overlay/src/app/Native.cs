@@ -100,14 +100,9 @@ internal static class Native
     [DllImport("user32", SetLastError = true)] internal static extern nint SetWindowLongPtr(nint hwnd, int index, nint value);
     [DllImport("user32")] internal static extern bool GetWindowRect(nint hwnd, out Rect rect);
     [DllImport("user32")] internal static extern nint MonitorFromRect(ref Rect rect, uint flags);
-    [DllImport("user32", SetLastError = true)] internal static extern bool RegisterHotKey(nint hwnd, int id, uint modifiers, uint key);
-    [DllImport("user32")] internal static extern bool UnregisterHotKey(nint hwnd, int id);
     [DllImport("user32")] internal static extern nint SetCapture(nint hwnd);
     [DllImport("user32")] internal static extern bool ReleaseCapture();
     [DllImport("user32")] internal static extern bool GetCursorPos(out CursorPoint point);
-    // High bit set = the key is currently down. Used to track a held hotkey between frames.
-    [DllImport("user32")] internal static extern short GetAsyncKeyState(int key);
-    internal const int VkShift = 0x10, VkControl = 0x11, VkMenu = 0x12, VkLWin = 0x5B, VkRWin = 0x5C;
     [DllImport("user32", CharSet = CharSet.Unicode)] internal static extern nint LoadCursor(nint instance, nint name);
     [DllImport("user32")] internal static extern nint SetCursor(nint cursor);
     internal static readonly nint SizeNWSE = 32642, SizeNESW = 32643, SizeWE = 32644, SizeNS = 32645, SizeAll = 32646, Arrow = 32512;

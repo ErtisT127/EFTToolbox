@@ -88,10 +88,40 @@ func (m *mobileManager) interfaces() []string {
 	return localInterfaces()
 }
 
-// localInterfaces lists the machine's non-loopback IPv4 addresses, shared by the cast and
-// multiplayer panels for their address pickers.
+// The IPv6 transition ranges carry a global-unicast flag but cannot reach another machine on the
+// LAN: Teredo tunnels through a relay, and 6to4 is an anycast relay range.
+var transitionV6Ranges = []*net.IPNet{
+	{IP: net.ParseIP("2001::"), Mask: net.CIDRMask(32, 128)},
+	{IP: net.ParseIP("2002::"), Mask: net.CIDRMask(16, 128)},
+}
+
+// usableInterfaceAddress reports whether one interface address belongs in the address pickers: a
+// routable unicast address a peer could actually reach. Loopback, link-local (169.254/16 and
+// fe80::/10, the latter also unusable without a %zone scope id), and the IPv6 transition ranges are
+// all filtered out.
+func usableInterfaceAddress(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() {
+		return false
+	}
+	if ip.To4() != nil {
+		return true
+	}
+	if !ip.IsGlobalUnicast() {
+		return false
+	}
+	for _, transition := range transitionV6Ranges {
+		if transition.Contains(ip) {
+			return false
+		}
+	}
+	return true
+}
+
+// localInterfaces lists the machine's reachable unicast addresses for the cast and multiplayer
+// address pickers: IPv4 first, then IPv6 global-unicast and ULA.
 func localInterfaces() []string {
-	values := []string{}
+	v4 := []string{}
+	v6 := []string{}
 	if interfaces, err := net.Interfaces(); err == nil {
 		for _, item := range interfaces {
 			if item.Flags&net.FlagUp == 0 || item.Flags&net.FlagLoopback != 0 {
@@ -100,13 +130,29 @@ func localInterfaces() []string {
 			addresses, _ := item.Addrs()
 			for _, address := range addresses {
 				ip, _, err := net.ParseCIDR(address.String())
-				if err == nil && ip.To4() != nil {
-					values = append(values, ip.String())
+				if err != nil || !usableInterfaceAddress(ip) {
+					continue
+				}
+				if ip.To4() != nil {
+					v4 = append(v4, ip.String())
+				} else {
+					v6 = append(v6, ip.String())
 				}
 			}
 		}
 	}
-	return values
+	return append(v4, v6...)
+}
+
+// isUnicastIP parses a user-supplied address and reports whether it is a usable unicast IPv4 or
+// IPv6 address. A link-local IPv6 literal cannot be expressed without a scope id, so net.ParseIP
+// rejects it here before it ever reaches a listener.
+func isUnicastIP(address string) (net.IP, bool) {
+	ip := net.ParseIP(strings.TrimSpace(address))
+	if ip == nil || ip.IsUnspecified() || ip.IsMulticast() {
+		return nil, false
+	}
+	return ip, true
 }
 
 func randomToken() (string, error) {
@@ -125,8 +171,8 @@ func hostPort(host string) string {
 }
 
 func (m *mobileManager) start(address, port string) (contracts.MobileStatus, error) {
-	ip := net.ParseIP(strings.TrimSpace(address))
-	if ip == nil || ip.To4() == nil {
+	ip, ok := isUnicastIP(address)
+	if !ok {
 		return contracts.MobileStatus{}, errMobileAddressInvalid
 	}
 	if _, err := strconv.Atoi(port); err != nil {
@@ -137,7 +183,7 @@ func (m *mobileManager) start(address, port string) (contracts.MobileStatus, err
 		log.Printf("mobile cast token: %v", err)
 		return contracts.MobileStatus{}, errMobileStartFailed
 	}
-	listener, err := net.Listen("tcp4", net.JoinHostPort(ip.String(), port))
+	listener, err := net.Listen("tcp", net.JoinHostPort(ip.String(), port))
 	if err != nil {
 		if isPortUnavailable(err) {
 			return contracts.MobileStatus{}, errMobilePortInUse

@@ -176,13 +176,12 @@ internal sealed class RecognitionWindow : IDisposable
 
     private (int Left, int Top) Position(int width, int height)
     {
-        // A saved 0,0 means "never placed": the first show picks the bottom-right of the monitor the
-        // cursor is on, and everything after that is wherever the reader dragged it.
+        // A saved 0,0 means "never placed": the first show picks the bottom-right of the primary
+        // monitor, and everything after that is wherever the reader dragged it.
         if (!placed && settings.WindowLeft == 0 && settings.WindowTop == 0)
         {
             placed = true;
-            Native.GetCursorPos(out var cursor);
-            var area = Monitor(cursor.X, cursor.Y);
+            var area = Monitor(0, 0);
             return (area.Right - width - 16, area.Bottom - height - 16);
         }
         placed = true;

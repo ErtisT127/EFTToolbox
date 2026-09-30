@@ -642,6 +642,7 @@ export function CastApp() {
             reference={layersButtonRef}
             placement={portrait ? 'bottom-start' : 'right-start'}
             boundaryRef={castRootRef}
+            onDismiss={() => setLayersOpen(false)}
           >
             <div
               id="cast-layer-panel"

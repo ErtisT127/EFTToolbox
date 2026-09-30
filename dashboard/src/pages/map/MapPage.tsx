@@ -34,7 +34,7 @@ import { ToolOptionsPanel } from './ToolOptionsPanel';
 import { workspace, useWorkspace } from '../../stores/workspaceStore';
 import { api } from '../../stores/api';
 import { store } from '../../stores/store';
-import { clearAnnotationDraft, clearConflict, pauseConflict } from '../../stores/clientState';
+import { clearAnnotationDraft, clearConflict } from '../../stores/clientState';
 import type { RootState } from '../../stores/store';
 import { multiplayer, useMultiplayer } from '../../stores/multiplayerStore';
 import { mapTimes, timePhase } from './lib/time';
@@ -50,6 +50,7 @@ import { MapUnavailableState } from '../../components/MapUnavailableState';
 import { AppPopover } from '../../components/AppPopover';
 import { CastControl } from '../../components/CastControl';
 import { MultiplayerControl } from '../../components/MultiplayerControl';
+import { useRegisterConflictActions } from '../../stores/conflictActions';
 import { MembersPanel } from './MembersPanel';
 
 function RaidTimes({ clock }: { clock: MapClock }) {
@@ -294,6 +295,18 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const annotationConflict = useSelector((state: RootState) =>
     state.client.conflicts.find((item) => item.key === `annotations:${id}`),
   );
+  // The conflict banner is window-level; this page supplies the two page-scoped choices.
+  useRegisterConflictActions(`annotations:${id}`, {
+    loadRemote: () => {
+      if (!annotationConflict || !id) return;
+      store.dispatch(clearAnnotationDraft(id));
+      store.dispatch(clearConflict(annotationConflict.key));
+      void store.dispatch(api.endpoints.getAnnotations.initiate(id, { forceRefetch: true }));
+    },
+    retry: () => {
+      if (id) void workspace.retryAnnotations(id);
+    },
+  });
   // The minimap's "on position update" rules apply to this map too: it is the surface that persists
   // the map preference, so following the floor here is also what the minimap and the cast view read
   // back. Auto map switch is deliberately not part of it — that belongs to the detected-map path,
@@ -467,32 +480,6 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
         onPointerEnter={cancelCoordinateHide}
         onPointerLeave={scheduleCoordinateHide}
       >
-        {annotationConflict && id && (
-          <div className="calibrator-conflict" role="alert">
-            <span>{t('errors.revision_conflict')}</span>
-            <button
-              type="button"
-              onClick={() => store.dispatch(pauseConflict(annotationConflict.key))}
-            >
-              {t('errors.conflict_keep_local')}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                store.dispatch(clearAnnotationDraft(id));
-                store.dispatch(clearConflict(annotationConflict.key));
-                void store.dispatch(
-                  api.endpoints.getAnnotations.initiate(id, { forceRefetch: true }),
-                );
-              }}
-            >
-              {t('errors.conflict_load_remote')}
-            </button>
-            <button type="button" onClick={() => void workspace.retryAnnotations(id)}>
-              {t('errors.conflict_retry')}
-            </button>
-          </div>
-        )}
         {w.loading ? (
           <div className="empty-state" role="status">
             <span className="spinner" />

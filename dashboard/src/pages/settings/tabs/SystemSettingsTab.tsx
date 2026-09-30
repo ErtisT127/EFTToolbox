@@ -6,6 +6,7 @@ import { notices } from '../../../stores/noticeStore';
 import { reportClientLog, updateUserSettings } from '../../../stores/workspaceStore';
 import { useLocale, type LocaleKey } from '../../../hooks/useLocale';
 import { errorKeyOf } from '../../../lib/errors';
+import { useGetUserSettingsQuery } from '../../../stores/api';
 
 const gameModes: GameMode[] = ['pvp', 'pve', 'pvp-season'];
 const modeLabels: Record<GameMode, LocaleKey> = {
@@ -21,9 +22,20 @@ const languageLabels: Record<Language, LocaleKey> = {
   'en-US': 'settings.language.en',
 };
 
+type CloseAction = 'ask' | 'tray' | 'exit';
+const closeActions: CloseAction[] = ['ask', 'tray', 'exit'];
+const closeActionLabels: Record<CloseAction, LocaleKey> = {
+  ask: 'settings.closeBehavior.ask',
+  tray: 'settings.closeBehavior.tray',
+  exit: 'settings.closeBehavior.exit',
+};
+
 export function SystemSettingsTab() {
   const { t, locale } = useLocale();
   const monitor = useGameMonitor();
+  // The close behavior belongs to the desktop host, but it lives in the aggregate user settings,
+  // so the control reads and writes it through the same versioned settings API.
+  const { data: userSettings } = useGetUserSettingsQuery();
   const [applying, setApplying] = useState(false);
   const mode = monitor.settings?.mode || monitor.status?.mode || 'pvp';
   // The language reaches every surface: interface strings, map data and item data are all fetched
@@ -42,6 +54,35 @@ export function SystemSettingsTab() {
         notices.push(t(message));
         reportClientLog('language_save_failed', 'Language could not be saved', String(reason));
       });
+  };
+  // No reload is needed: the host reads the value when the window closes, not while it renders.
+  const changeCloseAction = (next: CloseAction) => {
+    void updateUserSettings((current) => ({ ...current, closeAction: next })).catch(
+      (reason: unknown) => {
+        const message = errorKeyOf(reason, 'errors.request_failed') as LocaleKey;
+        notices.push(t(message));
+        reportClientLog(
+          'close_action_save_failed',
+          'Close behavior could not be saved',
+          String(reason),
+        );
+      },
+    );
+  };
+  // Turning the automatic check off only affects the next start: this launch already had its answer.
+  const changeUpdateCheck = (next: boolean) => {
+    void updateUserSettings((current) => ({
+      ...current,
+      updateCheck: next ? 'auto' : 'manual',
+    })).catch((reason: unknown) => {
+      const message = errorKeyOf(reason, 'errors.request_failed') as LocaleKey;
+      notices.push(t(message));
+      reportClientLog(
+        'update_check_setting_failed',
+        'The automatic update check setting could not be saved',
+        String(reason),
+      );
+    });
   };
   return (
     <>
@@ -81,6 +122,28 @@ export function SystemSettingsTab() {
             ))}
           </select>
         </div>
+        <div className="settings-field">
+          <label htmlFor="system-close-action">{t('settings.closeBehavior.label')}</label>
+          <select
+            id="system-close-action"
+            value={userSettings?.value.closeAction ?? 'ask'}
+            onChange={(event) => changeCloseAction(event.target.value as CloseAction)}
+          >
+            {closeActions.map((value) => (
+              <option key={value} value={value}>
+                {t(closeActionLabels[value])}
+              </option>
+            ))}
+          </select>
+        </div>
+        <label className="settings-check">
+          <input
+            type="checkbox"
+            checked={userSettings?.value.updateCheck !== 'manual'}
+            onChange={(event) => changeUpdateCheck(event.target.checked)}
+          />
+          {t('settings.updateCheck.label')}
+        </label>
       </fieldset>
       <fieldset>
         <legend>{t('settings.sections.gameMonitor')}</legend>

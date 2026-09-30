@@ -9,8 +9,10 @@
     "contracts:check": "node contracts/generate.mjs --check && node contracts/check.mjs",
     "defaults": "node scripts/generate-defaults.mjs",
     "defaults:check": "node scripts/generate-defaults.mjs --check",
+    "third-party": "node scripts/generate-third-party.mjs",
+    "third-party:check": "node scripts/generate-third-party.mjs --check",
     "i18n:check": "node scripts/i18n-check.mjs",
-    "build": "pnpm contracts && pnpm defaults && pnpm --filter @efttoolbox/dashboard build",
+    "build": "pnpm contracts && pnpm defaults && pnpm third-party && pnpm --filter @efttoolbox/dashboard build",
     "format": "prettier --write ."
   },
   "devDependencies": {

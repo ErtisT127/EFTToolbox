@@ -96,7 +96,8 @@
       "map": "Map",
       "hotkeys": "Hotkeys",
       "recognition": "Image recognition",
-      "system": "System"
+      "system": "System",
+      "about": "About"
     },
     "sections": {
       "general": "General",
@@ -108,11 +109,38 @@
       "en": "English",
       "applying": "Applying language…"
     },
+    "closeBehavior": {
+      "label": "When closing the window",
+      "ask": "Ask every time",
+      "tray": "Minimize to tray",
+      "exit": "Exit immediately"
+    },
+    "updateCheck": {
+      "label": "Check for updates automatically"
+    },
     "hotkeys": {
       "recording": "Press a key…",
       "empty": "Not set",
       "taken": "That shortcut is already in use",
       "clearFor": "Clear the {{label}} shortcut"
+    },
+    "about": {
+      "byline": "By.",
+      "sponsor": "Support the author",
+      "openRepository": "Open the project repository",
+      "openAuthor": "Open the author's profile",
+      "rewardTitle": "Support the author",
+      "updateTitle": "Software update",
+      "updateIdle": "Not checked yet",
+      "updateLatest": "You're on the latest version",
+      "updateAvailable": "Version {{version}} is available",
+      "updateFailed": "Couldn't check for updates. Try again later.",
+      "check": "Check for updates",
+      "recheck": "Check again",
+      "checking": "Checking…",
+      "licensesTitle": "Acknowledgements",
+      "licenseEntry": "{{name}} ({{license}})",
+      "newBadge": "NEW"
     }
   },
   "minimap": {
@@ -498,9 +526,6 @@
     "joinRoom": "Join room",
     "useStun": "Play with STUN",
     "joinWithStun": "Join with STUN",
-    "pasteInvite": "Paste an invite",
-    "pasteInvitePlaceholder": "Paste the full invite copied on the host",
-    "pasteParse": "Parse and fill",
     "connecting": "Connecting to the room…",
     "copied": "Invite copied",
     "copyFailed": "Failed to copy the invite",
@@ -530,6 +555,8 @@
     "currentNode": "Locate current node",
     "probeAll": "Probe all",
     "sort": "Sort",
+    "stunSourceHost": "Server list: hostnames",
+    "stunSourceIp": "Server list: IP addresses",
     "sortLatency": "Latency",
     "search": "Search",
     "searchPlaceholder": "Filter by address",
@@ -541,7 +568,7 @@
     "noSelectedNode": "Pick a STUN server",
     "useServerCreate": "Create room with this server",
     "stunDownloadFailed": "List download failed",
-    "stunDownloadDone": "Updated the STUN server list ({{count}} servers, NAT-check list included)",
+    "stunDownloadDone": "Updated the STUN server list",
     "inviteTitle": "Invite",
     "copyAll": "Copy all",
     "copyValue": "Copy {{field}}",
@@ -584,6 +611,33 @@
     "settings": {
       "title": "Settings unavailable"
     }
+  },
+  "host": {
+    "trayShowWindow": "Show window",
+    "trayHideWindow": "Hide window",
+    "trayShowMinimap": "Show minimap",
+    "trayHideMinimap": "Hide minimap",
+    "traySettings": "Settings",
+    "trayQuit": "Quit",
+    "closeTitle": "Close EFTToolbox",
+    "closeStartupMessage": "EFTToolbox is still starting. Exit anyway?",
+    "closeRemember": "Remember my choice",
+    "closeTray": "Minimize to tray",
+    "closeExit": "Quit",
+    "errorTitle": "EFTToolbox could not start",
+    "startupResource": "Missing runtime resource",
+    "startupDataDirectory": "The user data directory is unavailable",
+    "startupLog": "The log directory is not writable",
+    "startupPort": "Could not bind the backend port",
+    "startupBackend": "Backend health check failed",
+    "startupOverlayStart": "The overlay failed to start",
+    "startupOverlayReady": "The overlay readiness check failed"
+  },
+  "titleBar": {
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "close": "Close window"
   },
   "data": {
     "category": {
@@ -673,10 +727,10 @@
     "json_multiple": "Invalid data format",
     "annotations_invalid": "Invalid marker data",
     "annotations_save_failed": "Failed to save markers; changes are kept",
-    "revision_conflict": "Data changed elsewhere. Local edits are kept; retry submits them against the latest version.",
-    "conflict_load_remote": "Load remote and discard local",
-    "conflict_keep_local": "Keep local and continue editing",
-    "conflict_retry": "Submit again against latest version",
+    "revision_conflict": "Data changed elsewhere",
+    "conflict_load_remote": "Use remote",
+    "conflict_keep_local": "Keep local",
+    "conflict_retry": "Retry",
     "preferences_invalid": "View settings are invalid",
     "preferences_save_failed": "Could not save view settings",
     "map_unknown": "Unknown map",
@@ -699,12 +753,13 @@
     "marker_preferences_invalid": "Marker settings are invalid",
     "json_encode_failed": "Could not encode the data",
     "user_settings_reset_failed": "Could not reset user settings",
+    "update_check_failed": "The update check failed",
     "user_settings_invalid": "The user settings file is damaged or incompatible with this version",
     "multiplayer_stun_probe_invalid": "The STUN probe request is invalid",
     "multiplayer_mode_invalid": "Invalid multiplayer mode",
     "multiplayer_key_invalid": "Invalid password",
     "multiplayer_room_name_invalid": "Room name too long",
-    "multiplayer_address_invalid": "Invalid IP address; use an IPv4 address",
+    "multiplayer_address_invalid": "Invalid IP address; use a valid IPv4/IPv6 address",
     "multiplayer_port_invalid": "Invalid port",
     "multiplayer_port_in_use": "Port {{port}} is already in use; pick another",
     "multiplayer_port_unavailable": "No free port available, please retry",

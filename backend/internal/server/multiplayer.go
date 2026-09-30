@@ -147,10 +147,11 @@ type multiplayerManager struct {
 	roster     []contracts.MultiplayerMember
 	lastStatus string
 
-	stunServers    []string
-	stunNatServers []string
-	stunListMutex  sync.Mutex
-	stunRefreshMu  sync.Mutex
+	stunHostServers []string
+	stunIPServers   []string
+	stunNatServers  []string
+	stunListMutex   sync.Mutex
+	stunRefreshMu   sync.Mutex
 
 	annoMu     sync.Mutex
 	remoteDocs map[string]map[string][]contracts.Annotation
@@ -220,6 +221,9 @@ func validMultiplayerSettings(value contracts.MultiplayerSettings) bool {
 		return false
 	}
 	if value.LastMode != nil && *value.LastMode != multiplayerModeCustom && *value.LastMode != multiplayerModeStun {
+		return false
+	}
+	if value.StunListSource != nil && *value.StunListSource != "host" && *value.StunListSource != "ip" {
 		return false
 	}
 	if value.LastPort != nil && *value.LastPort != "auto" {
@@ -319,7 +323,7 @@ func (m *multiplayerManager) resetData() error {
 	settings.PlayerId = identity.PeerID
 	settings.PlayerName = "玩家-" + identity.PeerID[:4]
 	peers := map[string]peerRecord{}
-	servers, natServers := defaults.StunServers(), defaults.StunNatServers()
+	hostServers, ipServers, natServers := defaults.StunHostServers(), defaults.StunIPServers(), defaults.StunNatServers()
 	if err := m.store.saveGlobal("multiplayer-id.json", identity); err != nil {
 		return err
 	}
@@ -329,7 +333,7 @@ func (m *multiplayerManager) resetData() error {
 	if err := m.store.saveGlobal("multiplayer-peers.json", peers); err != nil {
 		return err
 	}
-	if err := m.store.saveGlobal("multiplayer-stun.json", stunCache{SchemaVersion: contracts.ContractSchemaVersion, Servers: servers, NatServers: natServers}); err != nil {
+	if err := m.store.saveGlobal("multiplayer-stun.json", stunCache{SchemaVersion: contracts.ContractSchemaVersion, HostServers: hostServers, IPServers: ipServers, NatServers: natServers}); err != nil {
 		return err
 	}
 	m.mu.Lock()
@@ -337,7 +341,8 @@ func (m *multiplayerManager) resetData() error {
 	m.knownPeers = peers
 	m.mu.Unlock()
 	m.stunListMutex.Lock()
-	m.stunServers = servers
+	m.stunHostServers = hostServers
+	m.stunIPServers = ipServers
 	m.stunNatServers = natServers
 	m.stunListMutex.Unlock()
 	m.publishStatus()
@@ -447,10 +452,11 @@ func (m *multiplayerManager) host(req contracts.MultiplayerHostRequest) (contrac
 	)
 	switch mode {
 	case multiplayerModeCustom:
-		bindIP = net.ParseIP(address)
-		if bindIP == nil || bindIP.To4() == nil {
+		parsed, ok := isUnicastIP(address)
+		if !ok {
 			return contracts.MultiplayerStatus{}, fail(http.StatusBadRequest, "multiplayer_address_invalid")
 		}
+		bindIP = parsed
 		listener, bindPort, lf = bindRoomSockets(bindIP, port)
 		if lf != nil {
 			return contracts.MultiplayerStatus{}, lf
@@ -556,9 +562,9 @@ func (m *multiplayerManager) join(req contracts.MultiplayerJoinRequest) (contrac
 	}
 	switch mode {
 	case multiplayerModeCustom:
-		ip := net.ParseIP(address)
+		_, ok := isUnicastIP(address)
 		value, err := strconv.Atoi(port)
-		if ip == nil || ip.To4() == nil || err != nil || value < 1 || value > 65535 {
+		if !ok || err != nil || value < 1 || value > 65535 {
 			return contracts.MultiplayerStatus{}, fail(http.StatusBadRequest, "multiplayer_share_invalid")
 		}
 	case multiplayerModeStun:
@@ -1742,7 +1748,8 @@ func writeFailure(w http.ResponseWriter, failure *apiFailure) {
 // embedded snapshot stays the offline floor.
 type stunCache struct {
 	SchemaVersion int      `json:"schemaVersion"`
-	Servers       []string `json:"servers"`
+	HostServers   []string `json:"hostServers"`
+	IPServers     []string `json:"ipServers"`
 	NatServers    []string `json:"natServers"`
 }
 
@@ -1755,24 +1762,32 @@ func (m *multiplayerManager) stunCachePath() string {
 func (m *multiplayerManager) loadStunList() {
 	var cache stunCache
 	if readJSON(m.stunCachePath(), &cache) == nil && cache.SchemaVersion == contracts.ContractSchemaVersion &&
-		len(cache.Servers) > 0 && len(cache.NatServers) > 0 {
-		m.stunServers = cache.Servers
+		len(cache.HostServers) > 0 && len(cache.IPServers) > 0 && len(cache.NatServers) > 0 {
+		m.stunHostServers = cache.HostServers
+		m.stunIPServers = cache.IPServers
 		m.stunNatServers = cache.NatServers
 	}
-	if len(m.stunServers) == 0 {
-		m.stunServers = defaults.StunServers()
+	// A cache written before the source split has none of the new fields, so every list falls back
+	// to the embedded defaults; those already carry the IPv6 literals, so an offline first launch
+	// still offers IPv6 without a manual refresh.
+	if len(m.stunHostServers) == 0 {
+		m.stunHostServers = defaults.StunHostServers()
+	}
+	if len(m.stunIPServers) == 0 {
+		m.stunIPServers = defaults.StunIPServers()
 	}
 	if len(m.stunNatServers) == 0 {
 		m.stunNatServers = defaults.StunNatServers()
 	}
 }
 
-func (m *multiplayerManager) saveStunList(servers, natServers []string) {
+func (m *multiplayerManager) saveStunList(hostServers, ipServers, natServers []string) {
 	m.stunListMutex.Lock()
-	m.stunServers = servers
+	m.stunHostServers = hostServers
+	m.stunIPServers = ipServers
 	m.stunNatServers = natServers
 	m.stunListMutex.Unlock()
-	if err := m.store.saveGlobal("multiplayer-stun.json", stunCache{SchemaVersion: contracts.ContractSchemaVersion, Servers: servers, NatServers: natServers}); err != nil {
+	if err := m.store.saveGlobal("multiplayer-stun.json", stunCache{SchemaVersion: contracts.ContractSchemaVersion, HostServers: hostServers, IPServers: ipServers, NatServers: natServers}); err != nil {
 		log.Printf("multiplayer stun cache persist: %v", err)
 	}
 }
@@ -1893,7 +1908,7 @@ func (m *multiplayerManager) register(mux *http.ServeMux) {
 		if !localRequest(w, r) {
 			return
 		}
-		jsonResponse(w, contracts.StunServerList{Servers: m.currentStunServers()})
+		jsonResponse(w, contracts.StunServerList{HostServers: m.currentStunHostServers(), IpServers: m.currentStunIPServers()})
 	})
 	mux.HandleFunc("POST /api/multiplayer/stun/refresh", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
@@ -1901,19 +1916,25 @@ func (m *multiplayerManager) register(mux *http.ServeMux) {
 		}
 		m.stunRefreshMu.Lock()
 		defer m.stunRefreshMu.Unlock()
-		servers, err := fetchStunServers()
+		hostServers, err := fetchStunHostServers()
 		if err != nil {
 			log.Printf("multiplayer stun refresh: %v", err)
 			apiError(w, http.StatusBadGateway, "multiplayer_stun_refresh_failed")
 			return
 		}
-		// The NAT-testing list is refreshed alongside so both checks stay on current data.
+		ipServers, err := fetchStunIPServers()
+		if err != nil {
+			log.Printf("multiplayer stun refresh: %v", err)
+			apiError(w, http.StatusBadGateway, "multiplayer_stun_refresh_failed")
+			return
+		}
+		// The NAT-testing list is refreshed alongside so the check stays on current data.
 		natServers := m.currentStunNatServers()
 		if fetched, err := fetchStunNatServers(); err == nil {
 			natServers = fetched
 		}
-		m.saveStunList(servers, natServers)
-		jsonResponse(w, contracts.StunServerList{Servers: slices.Clone(servers)})
+		m.saveStunList(hostServers, ipServers, natServers)
+		jsonResponse(w, contracts.StunServerList{HostServers: slices.Clone(hostServers), IpServers: slices.Clone(ipServers)})
 	})
 	mux.HandleFunc("POST /api/multiplayer/stun/probe", func(w http.ResponseWriter, r *http.Request) {
 		if !localRequest(w, r) {
@@ -1937,10 +1958,16 @@ func (m *multiplayerManager) register(mux *http.ServeMux) {
 	})
 }
 
-func (m *multiplayerManager) currentStunServers() []string {
+func (m *multiplayerManager) currentStunHostServers() []string {
 	m.stunListMutex.Lock()
 	defer m.stunListMutex.Unlock()
-	return slices.Clone(m.stunServers)
+	return slices.Clone(m.stunHostServers)
+}
+
+func (m *multiplayerManager) currentStunIPServers() []string {
+	m.stunListMutex.Lock()
+	defer m.stunListMutex.Unlock()
+	return slices.Clone(m.stunIPServers)
 }
 
 func (m *multiplayerManager) currentStunNatServers() []string {

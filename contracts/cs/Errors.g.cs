@@ -75,6 +75,7 @@ public static class ErrorCodes {
   public const string ErrorCodeRevisionConflict = "revision_conflict";
   public const string ErrorCodeRevisionRequired = "revision_required";
   public const string ErrorCodeScreenshotNameInvalid = "screenshot_name_invalid";
+  public const string ErrorCodeUpdateCheckFailed = "update_check_failed";
   public const string ErrorCodeUserSettingsInvalid = "user_settings_invalid";
   public const string ErrorCodeUserSettingsResetFailed = "user_settings_reset_failed";
 }

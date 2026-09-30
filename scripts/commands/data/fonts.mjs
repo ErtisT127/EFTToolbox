@@ -145,7 +145,3 @@ await writeFile(
     2,
   ) + '\n',
 );
-await writeFile(
-  path.join(assets, 'THIRD-PARTY-NOTICES.txt'),
-  'Map fonts: Noto Sans / Noto Sans SC (Google), Barlow Condensed (Jeremy Tribby), JetBrains Mono (JetBrains), SIL Open Font License 1.1. Original copyright notices are in licenses/*.txt.\nEmoji: Twemoji 14.0.2, Copyright Twitter, Inc. and other contributors, CC-BY 4.0, https://github.com/twitter/twemoji. Images are unmodified. License: licenses/twemoji-LICENSE-GRAPHICS.\nSource URLs, pinned versions, source hashes and shipped-file hashes: display-resources.json.\n',
-);

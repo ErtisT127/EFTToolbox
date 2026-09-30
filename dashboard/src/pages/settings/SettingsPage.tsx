@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { useSelector } from 'react-redux';
 import { isImeComposing } from '../../lib/ime';
 import { useOverlay } from '../../stores/overlayStore';
 import { useGameMonitor } from '../../stores/gameMonitorStore';
@@ -13,16 +12,15 @@ import { api, useGetMapCatalogQuery, useGetMapQuery } from '../../stores/api';
 import { store as reduxStore } from '../../stores/store';
 import {
   clearConflict,
-  pauseConflict,
   setCalibrationPreferencesDraft,
   setMapPreferencesDraft,
   submitCalibrationPreferences,
   submitMapPreferences,
 } from '../../stores/clientState';
-import type { RootState } from '../../stores/store';
 import { useLocale, type LocaleKey } from '../../hooks/useLocale';
 import { errorKeyOf } from '../../lib/errors';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { useRegisterConflictActions } from '../../stores/conflictActions';
 import { ErrorState } from '../../components/ErrorState';
 import { FileWarning } from 'lucide-react';
 import '../../styles/settings.css';
@@ -31,10 +29,13 @@ import { HotkeysSettingsTab } from './tabs/HotkeysSettingsTab';
 import { MapSettingsTab } from './tabs/MapSettingsTab';
 import { SystemSettingsTab } from './tabs/SystemSettingsTab';
 import { DataManagementTab } from './tabs/DataManagementTab';
+import { AboutTab } from './tabs/AboutTab';
 import { settingsTabs, type SettingsTab } from './types';
+import { useUpdate } from '../../stores/updateStore';
 
 export function SettingsPage({ initialTab }: { initialTab?: SettingsTab }) {
   const { t, locale } = useLocale();
+  const updates = useUpdate();
   const store = useOverlay();
   const monitor = useGameMonitor();
   const value = store.settings;
@@ -54,15 +55,45 @@ export function SettingsPage({ initialTab }: { initialTab?: SettingsTab }) {
   const catalog = isUsableMapCatalog(catalogQuery.data) ? catalogQuery.data : [];
   const mapQuery = useGetMapQuery({ id: view?.mapId || '', locale }, { skip: !view?.mapId });
   const map = isUsableMapData(mapQuery.data) ? mapQuery.data : undefined;
-  const mapPreferencesConflict = useSelector((state: RootState) =>
-    state.client.conflicts.find((item) => item.key === 'map-preferences'),
-  );
-  const calibrationPreferencesConflict = useSelector((state: RootState) =>
-    state.client.conflicts.find((item) => item.key === 'calibration-preferences'),
-  );
-  const gameMonitorConflict = useSelector((state: RootState) =>
-    state.client.conflicts.find((item) => item.key === 'game-monitor-settings'),
-  );
+  // The conflict banner is window-level; this page supplies the two page-scoped choices.
+  useRegisterConflictActions('map-preferences', {
+    loadRemote: () =>
+      void reduxStore
+        .dispatch(api.endpoints.getMapPreferences.initiate(undefined, { forceRefetch: true }))
+        .unwrap()
+        .then(() => {
+          reduxStore.dispatch(setMapPreferencesDraft(undefined));
+          reduxStore.dispatch(clearConflict('map-preferences'));
+        }),
+    retry: () =>
+      void reduxStore
+        .dispatch(api.endpoints.getMapPreferences.initiate(undefined, { forceRefetch: true }))
+        .unwrap()
+        .then(() => reduxStore.dispatch(submitMapPreferences())),
+  });
+  useRegisterConflictActions('calibration-preferences', {
+    loadRemote: () =>
+      void reduxStore
+        .dispatch(
+          api.endpoints.getCalibrationPreferences.initiate(undefined, { forceRefetch: true }),
+        )
+        .unwrap()
+        .then(() => {
+          reduxStore.dispatch(setCalibrationPreferencesDraft(undefined));
+          reduxStore.dispatch(clearConflict('calibration-preferences'));
+        }),
+    retry: () =>
+      void reduxStore
+        .dispatch(
+          api.endpoints.getCalibrationPreferences.initiate(undefined, { forceRefetch: true }),
+        )
+        .unwrap()
+        .then(() => reduxStore.dispatch(submitCalibrationPreferences())),
+  });
+  useRegisterConflictActions('game-monitor-settings', {
+    loadRemote: () => monitor.discardConflict(),
+    retry: () => void monitor.retry(),
+  });
   const [mapId, setMapId] = useState('');
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -172,6 +203,9 @@ export function SettingsPage({ initialTab }: { initialTab?: SettingsTab }) {
                 }}
               >
                 {t(`settings.tabs.${key}`)}
+                {key === 'about' && updates.hasUpdate && (
+                  <span className="update-dot" aria-hidden="true" />
+                )}
               </button>
             ))}
             <div className="settings-tab-actions">
@@ -186,109 +220,10 @@ export function SettingsPage({ initialTab }: { initialTab?: SettingsTab }) {
             role="tabpanel"
             aria-labelledby={`settings-tab-${tab}`}
           >
-            {mapPreferencesConflict && (
-              <div className="settings-conflict" role="alert">
-                <span>{t('errors.revision_conflict')}</span>
-                <button
-                  type="button"
-                  onClick={() => reduxStore.dispatch(pauseConflict('map-preferences'))}
-                >
-                  {t('errors.conflict_keep_local')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void reduxStore
-                      .dispatch(
-                        api.endpoints.getMapPreferences.initiate(undefined, { forceRefetch: true }),
-                      )
-                      .unwrap()
-                      .then(() => {
-                        reduxStore.dispatch(setMapPreferencesDraft(undefined));
-                        reduxStore.dispatch(clearConflict('map-preferences'));
-                      })
-                  }
-                >
-                  {t('errors.conflict_load_remote')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void reduxStore
-                      .dispatch(
-                        api.endpoints.getMapPreferences.initiate(undefined, { forceRefetch: true }),
-                      )
-                      .unwrap()
-                      .then(() => reduxStore.dispatch(submitMapPreferences()))
-                  }
-                >
-                  {t('errors.conflict_retry')}
-                </button>
-              </div>
-            )}
-            {calibrationPreferencesConflict && (
-              <div className="settings-conflict" role="alert">
-                <span>{t('errors.revision_conflict')}</span>
-                <button
-                  type="button"
-                  onClick={() => reduxStore.dispatch(pauseConflict('calibration-preferences'))}
-                >
-                  {t('errors.conflict_keep_local')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void reduxStore
-                      .dispatch(
-                        api.endpoints.getCalibrationPreferences.initiate(undefined, {
-                          forceRefetch: true,
-                        }),
-                      )
-                      .unwrap()
-                      .then(() => {
-                        reduxStore.dispatch(setCalibrationPreferencesDraft(undefined));
-                        reduxStore.dispatch(clearConflict('calibration-preferences'));
-                      })
-                  }
-                >
-                  {t('errors.conflict_load_remote')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void reduxStore
-                      .dispatch(
-                        api.endpoints.getCalibrationPreferences.initiate(undefined, {
-                          forceRefetch: true,
-                        }),
-                      )
-                      .unwrap()
-                      .then(() => reduxStore.dispatch(submitCalibrationPreferences()))
-                  }
-                >
-                  {t('errors.conflict_retry')}
-                </button>
-              </div>
-            )}
-            {gameMonitorConflict && (
-              <div className="settings-conflict" role="alert">
-                <span>{t('errors.revision_conflict')}</span>
-                <button
-                  type="button"
-                  onClick={() => reduxStore.dispatch(pauseConflict('game-monitor-settings'))}
-                >
-                  {t('errors.conflict_keep_local')}
-                </button>
-                <button type="button" onClick={() => monitor.discardConflict()}>
-                  {t('errors.conflict_load_remote')}
-                </button>
-                <button type="button" onClick={() => void monitor.retry()}>
-                  {t('errors.conflict_retry')}
-                </button>
-              </div>
-            )}
             <h1>{t(`settings.tabs.${tab}`)}</h1>
-            {tab === 'data' ? (
+            {tab === 'about' ? (
+              <AboutTab />
+            ) : tab === 'data' ? (
               <DataManagementTab />
             ) : tab === 'recognition' ? (
               <RecognitionSettingsTab />

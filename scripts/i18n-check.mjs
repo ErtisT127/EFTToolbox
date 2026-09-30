@@ -43,7 +43,9 @@ const FINITE_KEYS = [
   'minimap.followCenter',
   'minimap.followFloor',
   'minimap.followZoom',
-  ...['system', 'map', 'recognition', 'hotkeys', 'data'].map((k) => `settings.tabs.${k}`),
+  ...['system', 'map', 'recognition', 'hotkeys', 'data', 'about'].map((k) => `settings.tabs.${k}`),
+  // AboutTab: the check button names the phase it is in.
+  ...['check', 'recheck', 'checking'].map((k) => `settings.about.${k}`),
   'items.name',
   'items.trader',
   'items.flea',
@@ -83,7 +85,7 @@ const FINITE_KEYS = [
 ];
 
 const NS_SOURCE =
-  '(?:common|nav|mode|settings|minimap|gameMonitor|recognition|items|map|calibrator|cast|multiplayer|errorBoundary|data|errors)';
+  '(?:common|nav|mode|settings|minimap|gameMonitor|recognition|items|map|calibrator|cast|multiplayer|errorBoundary|host|titleBar|data|errors)';
 const KEY_RE = new RegExp(`^${NS_SOURCE}(\\.[A-Za-z][A-Za-z0-9_-]*)+$`);
 
 // ---- 读取 locale --------------------------------------------------------
@@ -152,6 +154,18 @@ for (const file of walk(SRC)) {
 // overlay 进程用生成的 Messages.Get/Has 消费同一棵键树，其 C# 字符串字面量也算"可达"。
 const OVERLAY = join(ROOT, 'overlay', 'src');
 for (const file of walk(OVERLAY, /\.cs$/)) {
+  const source = readFileSync(file, 'utf8');
+  for (const match of source.matchAll(
+    new RegExp(`"(${NS_SOURCE}(?:\\.[A-Za-z][A-Za-z0-9_-]*)+)"`, 'g'),
+  )) {
+    broad.add(match[1]);
+  }
+}
+
+// 桌面宿主是 Go 侧的文案消费者（托盘菜单、关闭弹窗、启动错误页），它同样用 key 字面量调用
+// 生成的 contracts.MessageText，所以宿主的 Go 源码也参与可达性判定。
+const HOST = join(ROOT, 'backend', 'cmd', 'EFTToolbox');
+for (const file of walk(HOST, /\.go$/)) {
   const source = readFileSync(file, 'utf8');
   for (const match of source.matchAll(
     new RegExp(`"(${NS_SOURCE}(?:\\.[A-Za-z][A-Za-z0-9_-]*)+)"`, 'g'),

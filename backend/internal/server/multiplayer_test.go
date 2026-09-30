@@ -377,9 +377,10 @@ func TestRemoteAnnotationCacheRejectsInvalidAndExcessDocuments(t *testing.T) {
 }
 
 func TestStunListParsing(t *testing.T) {
-	// A fake always-online-stun endpoint: hostname entries, a stun: prefix, junk and duplicates.
+	// A fake always-online-stun endpoint: hostname entries, a stun: prefix, junk, duplicates, and
+	// bracketed IPv6 literals (the IP list format).
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("stun.example.com:3478\nexample.org:3478\nstun:paired.example.net:3478\nnot a host\nstun.example.com:3478\n# comment\n\ndead.example:port\n"))
+		_, _ = w.Write([]byte("stun.example.com:3478\nexample.org:3478\nstun:paired.example.net:3478\nnot a host\nstun.example.com:3478\n# comment\n\ndead.example:port\n[2001:db8::1]:3478\n[2001:db8::1]:3478\n[2001:db8::2]:443\n"))
 	}))
 	defer func() { server.Close() }()
 
@@ -387,13 +388,29 @@ func TestStunListParsing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"stun.example.com:3478", "example.org:3478", "paired.example.net:3478"}
+	want := []string{"stun.example.com:3478", "example.org:3478", "paired.example.net:3478", "[2001:db8::1]:3478", "[2001:db8::2]:443"}
 	if len(servers) != len(want) {
 		t.Fatalf("parsed %v", servers)
 	}
 	for index, entry := range want {
 		if servers[index] != entry {
 			t.Fatalf("parsed %v, want %v", servers, want)
+		}
+	}
+}
+
+// TestStunNetworkPicksFamily locks the family rule every STUN socket shares: bracketed IPv6 uses
+// udp6, while hostnames and IPv4 literals stay on udp4 so a name that also has AAAA records cannot
+// silently move a session onto IPv6.
+func TestStunNetworkPicksFamily(t *testing.T) {
+	for endpoint, want := range map[string]string{
+		"[2001:db8::1]:3478":  "udp6",
+		"[::1]:3478":          "udp6",
+		"203.0.113.7:3478":    "udp4",
+		"stun.example.com:34": "udp4",
+	} {
+		if got := stunNetwork(endpoint); got != want {
+			t.Fatalf("stunNetwork(%q) = %q, want %q", endpoint, got, want)
 		}
 	}
 }
@@ -456,9 +473,71 @@ func TestHeartbeatWindow(t *testing.T) {
 	}
 }
 
+// TestStunSignalingIPv6 locks the IPv6 STUN path: bindStunSignaling picks udp6 from the bracketed
+// address, the mapping comes back as ::1, and signalStun reaches the listener on the same family.
+func TestStunSignalingIPv6(t *testing.T) {
+	stunServer := fakeStunServerOn(t, "udp6", net.ParseIP("::1"), func(from *net.UDPAddr) *net.UDPAddr { return from })
+	conn, mapped, failure := bindStunSignaling(stunServer)
+	if failure != nil {
+		t.Skipf("IPv6 loopback STUN unavailable: %+v", failure)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	if mapped.IP.To4() != nil {
+		t.Fatalf("STUN mapping is not IPv6: %v", mapped)
+	}
+	listener := newStunListener(conn, "roomkey123", func() bool { return true }, func(offer string) (string, *apiFailure) {
+		return "answer:" + offer, nil
+	})
+	t.Cleanup(listener.close)
+
+	answer, failure := signalStun(mapped.String(), "roomkey123", "offer-sdp")
+	if failure != nil {
+		t.Fatalf("signal stun over IPv6: %+v", failure)
+	}
+	if answer != "answer:offer-sdp" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+}
+
+// TestHostJoinLoopbackIPv6 covers the custom-mode IPv6 path on ::1: the invite carries a bracketed
+// IPv6 address and the guest reaches the host, so the unicast validation, tcp listener, and
+// host:port formatting are all exercised without a real IPv6 LAN.
+func TestHostJoinLoopbackIPv6(t *testing.T) {
+	_, _, _, hostManager := multiplayerFixtureWithID(t, "cccccccccccccccc")
+	_, _, _, guestManager := multiplayerFixtureWithID(t, "dddddddddddddddd")
+
+	status, failure := hostManager.host(contracts.MultiplayerHostRequest{Mode: multiplayerModeCustom, Address: stringPtr("::1"), Port: "0", Key: stringPtr("testkey0000000002")})
+	if failure != nil {
+		t.Skipf("IPv6 loopback unavailable: %+v", failure)
+	}
+	if status.Invite == nil {
+		t.Fatal("IPv6 host has no invite")
+	}
+	if host, _, err := net.SplitHostPort(status.Invite.Host); err != nil || host != "::1" {
+		t.Fatalf("invite host must be bracketed IPv6: %q", status.Invite.Host)
+	}
+	guestStatus, failure := guestManager.join(contracts.MultiplayerJoinRequest{Mode: multiplayerModeCustom, Address: stringPtr("::1"), Port: stringPtr(strconv.Itoa(*status.Port)), Key: "testkey0000000002"})
+	if failure != nil {
+		t.Skipf("IPv6 loopback ICE unavailable: %+v", failure)
+	}
+	if !guestStatus.Enabled {
+		t.Fatal("guest status not enabled after IPv6 join")
+	}
+	guestID := guestStatus.Self.PeerId
+	waitFor(t, 5*time.Second, func() bool {
+		members := hostManager.status().Members
+		return members != nil && len(*members) == 1 && (*members)[0].PeerId == guestID
+	})
+}
+
 func fakeStunServer(t *testing.T, mapped func(from *net.UDPAddr) *net.UDPAddr) string {
 	t.Helper()
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	return fakeStunServerOn(t, "udp", net.IPv4(127, 0, 0, 1), mapped)
+}
+
+func fakeStunServerOn(t *testing.T, network string, ip net.IP, mapped func(from *net.UDPAddr) *net.UDPAddr) string {
+	t.Helper()
+	conn, err := net.ListenUDP(network, &net.UDPAddr{IP: ip})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -640,7 +719,7 @@ func TestMultiplayerDataResetRestoresDefaultsAndRotatesIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.recordPeer("aaaaaaaaaaaaaaaa", "Known", "#123456", multiplayerRoleGuest)
-	manager.saveStunList([]string{"custom:3478"}, []string{"custom-nat:3478"})
+	manager.saveStunList([]string{"custom.example:3478"}, []string{"203.0.113.7:3478"}, []string{"203.0.113.8:3478"})
 
 	response := localCall(handler, "POST", "/api/data/reset/multiplayer", nil)
 	if response.Code != http.StatusOK {
@@ -653,8 +732,11 @@ func TestMultiplayerDataResetRestoresDefaultsAndRotatesIdentity(t *testing.T) {
 	if len(manager.knownPeers) != 0 {
 		t.Fatalf("known peers were not reset: %+v", manager.knownPeers)
 	}
-	if got := manager.currentStunServers(); len(got) != len(defaults.StunServers()) || got[0] != defaults.StunServers()[0] {
-		t.Fatalf("STUN servers were not reset: %v", got)
+	if got := manager.currentStunHostServers(); len(got) != len(defaults.StunHostServers()) || got[0] != defaults.StunHostServers()[0] {
+		t.Fatalf("STUN host servers were not reset: %v", got)
+	}
+	if got := manager.currentStunIPServers(); len(got) != len(defaults.StunIPServers()) || got[0] != defaults.StunIPServers()[0] {
+		t.Fatalf("STUN IP servers were not reset: %v", got)
 	}
 	if got := manager.currentStunNatServers(); len(got) != len(defaults.StunNatServers()) || got[0] != defaults.StunNatServers()[0] {
 		t.Fatalf("NAT servers were not reset: %v", got)

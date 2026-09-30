@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSelector } from 'react-redux';
 import { isImeComposing, useImeComposition } from '../lib/ime';
 import {
   ArrowLeft,
   ArrowUpDown,
+  Binary,
   Check,
   ChevronDown,
   Copy,
@@ -11,6 +11,7 @@ import {
   Download,
   Dices,
   Gauge,
+  Globe,
   Plus,
   Search,
   Users,
@@ -18,7 +19,7 @@ import {
 } from 'lucide-react';
 import type { MultiplayerHostRequest, MultiplayerStatus } from '../../../contracts/ts/ipc.gen';
 import { multiplayer, MultiplayerError, useMultiplayer } from '../stores/multiplayerStore';
-import { formatInviteText, parseInviteText, type ParsedInvite } from '../lib/invite';
+import { formatInviteText } from '../lib/invite';
 import { notices } from '../stores/noticeStore';
 import { reportThrottledFailure } from '../stores/workspaceStore';
 import { AppPopover } from './AppPopover';
@@ -33,8 +34,8 @@ import {
   useProbeStunServersMutation,
   useRefreshStunServersMutation,
 } from '../stores/api';
-import { store as reduxStore, type RootState } from '../stores/store';
-import { pauseConflict } from '../stores/clientState';
+import { store as reduxStore } from '../stores/store';
+import { useRegisterConflictActions } from '../stores/conflictActions';
 
 // Backend multiplayer error codes → errors.* copy; the {{port}} placeholder is
 // inferred over this key set.
@@ -68,12 +69,6 @@ const randomKey = () => {
 export function MultiplayerControl() {
   const { t } = useLocale();
   const mp = useMultiplayer();
-  const identityConflict = useSelector((state: RootState) =>
-    state.client.conflicts.find((item) => item.key === 'multiplayer-settings'),
-  );
-  const markerConflict = useSelector((state: RootState) =>
-    state.client.conflicts.find((item) => item.key === 'marker-preferences'),
-  );
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>('root');
   const [pending, setPending] = useState(false);
@@ -88,7 +83,6 @@ export function MultiplayerControl() {
   const [stunJoinAddress, setStunJoinAddress] = useState('');
   const [stunJoinServer, setStunJoinServer] = useState('');
   const [stunJoinPassword, setStunJoinPassword] = useState('');
-  const [pasteInvite, setPasteInvite] = useState('');
   const [kickTarget, setKickTarget] = useState<MemberRow | null>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const triggerButton = useRef<HTMLButtonElement>(null);
@@ -121,6 +115,30 @@ export function MultiplayerControl() {
   useEffect(() => {
     if (interfaces.length) setAddress((current) => current || interfaces[0]);
   }, [interfaces]);
+
+  // The conflict banner is window-level, so the two multiplayer conflicts hand it their page-scoped
+  // choices for as long as this panel is mounted.
+  useRegisterConflictActions('multiplayer-settings', {
+    loadRemote: () => {
+      mp.discardIdentityConflict();
+      void reduxStore.dispatch(
+        api.endpoints.getMultiplayerSettings.initiate(undefined, { forceRefetch: true }),
+      );
+    },
+    retry: () =>
+      void mp.retryIdentityConflict().catch((failure) => {
+        if (failure instanceof MultiplayerError && failure.code === 'revision_conflict') return;
+        notices.push(t('multiplayer.identitySaveFailed'), undefined, 'warning');
+      }),
+  });
+  useRegisterConflictActions('marker-preferences', {
+    loadRemote: () => mp.discardMarkerConflict(),
+    retry: () =>
+      void mp.retryMarkerConflict().catch((failure) => {
+        if (failure instanceof MultiplayerError && failure.code === 'revision_conflict') return;
+        notices.push(t('errors.preferences_save_failed'));
+      }),
+  });
 
   const close = () => {
     setOpen(false);
@@ -195,8 +213,13 @@ export function MultiplayerControl() {
     playerName?: string;
     playerColor?: string;
     showMembersPanel?: boolean;
+    stunListSource?: 'host' | 'ip';
   }) => {
-    void multiplayer.saveIdentity(changes).catch(() => {
+    void multiplayer.saveIdentity(changes).catch((failure) => {
+      // A revision conflict is already surfaced by the conflict dialog; repeating it as a generic
+      // "save failed" notice only adds noise, and because the next save retries immediately the
+      // notice reads as unclosable.
+      if (failure instanceof MultiplayerError && failure.code === 'revision_conflict') return;
       notices.push(t('multiplayer.identitySaveFailed'), undefined, 'warning');
     });
   };
@@ -260,23 +283,6 @@ export function MultiplayerControl() {
     }
   };
 
-  // Pasting a host's invite fills the matching join form; STUN invites also switch the view.
-  const parsedInvite = useMemo(() => parseInviteText(pasteInvite.trim()), [pasteInvite]);
-  const applyParsedInvite = (parsed: ParsedInvite) => {
-    setError(null);
-    if (parsed.mode === 'stun') {
-      setStunJoinAddress(parsed.address);
-      if (parsed.stunServer) setStunJoinServer(parsed.stunServer);
-      setStunJoinPassword(parsed.key);
-      setView('joinStun');
-    } else {
-      setJoinAddress(parsed.address);
-      setJoinPort(parsed.port);
-      setJoinPassword(parsed.key);
-    }
-    setPasteInvite('');
-  };
-
   const kick = async () => {
     if (!kickTarget || pending) return;
     setPending(true);
@@ -294,40 +300,6 @@ export function MultiplayerControl() {
 
   const identity = (
     <>
-      {identityConflict && (
-        <div className="mp-error" role="alert">
-          <span>{t('errors.revision_conflict')}</span>
-          <button
-            type="button"
-            onClick={() => reduxStore.dispatch(pauseConflict('multiplayer-settings'))}
-          >
-            {t('errors.conflict_keep_local')}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              mp.discardIdentityConflict();
-              void reduxStore.dispatch(
-                api.endpoints.getMultiplayerSettings.initiate(undefined, { forceRefetch: true }),
-              );
-            }}
-          >
-            {t('errors.conflict_load_remote')}
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              void mp
-                .retryIdentityConflict()
-                .catch(() =>
-                  notices.push(t('multiplayer.identitySaveFailed'), undefined, 'warning'),
-                )
-            }
-          >
-            {t('errors.conflict_retry')}
-          </button>
-        </div>
-      )}
       <IdentitySection
         name={name}
         selfName={mp.selfName}
@@ -428,30 +400,6 @@ export function MultiplayerControl() {
               )}
               <h2>{title}</h2>
             </div>
-            {markerConflict && (
-              <div className="mp-error" role="alert">
-                <span>{t('errors.revision_conflict')}</span>
-                <button
-                  type="button"
-                  onClick={() => reduxStore.dispatch(pauseConflict('marker-preferences'))}
-                >
-                  {t('errors.conflict_keep_local')}
-                </button>
-                <button type="button" onClick={() => mp.discardMarkerConflict()}>
-                  {t('errors.conflict_load_remote')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void mp
-                      .retryMarkerConflict()
-                      .catch(() => notices.push(t('errors.preferences_save_failed')))
-                  }
-                >
-                  {t('errors.conflict_retry')}
-                </button>
-              </div>
-            )}
             {pending ? (
               <div className="mp-connecting">
                 <span className="spinner" />
@@ -489,7 +437,11 @@ export function MultiplayerControl() {
                 onLeave={() => setView('confirm')}
               />
             ) : view === 'stun' ? (
-              <StunPanel onHost={(overrides) => void host(overrides)} />
+              <StunPanel
+                source={mp.stunListSource}
+                onSource={(value) => saveIdentity({ stunListSource: value })}
+                onHost={(overrides) => void host(overrides)}
+              />
             ) : view === 'root' && !status.enabled ? (
               <>
                 <EntryButton
@@ -608,23 +560,6 @@ export function MultiplayerControl() {
                   }}
                 >
                   {t('multiplayer.joinWithStun')}
-                </button>
-                <label htmlFor="mp-paste-invite">{t('multiplayer.pasteInvite')}</label>
-                <textarea
-                  id="mp-paste-invite"
-                  className="mp-paste-invite"
-                  rows={4}
-                  value={pasteInvite}
-                  onChange={(event) => setPasteInvite(event.target.value)}
-                  placeholder={t('multiplayer.pasteInvitePlaceholder')}
-                />
-                <button
-                  className="mp-secondary"
-                  type="button"
-                  disabled={!parsedInvite}
-                  onClick={() => parsedInvite && applyParsedInvite(parsedInvite)}
-                >
-                  {t('multiplayer.pasteParse')}
                 </button>
               </>
             ) : view === 'joinStun' ? (
@@ -836,6 +771,7 @@ function AddressField({
           placement="bottom-start"
           className="cast-address-popover"
           matchReferenceWidth
+          onDismiss={() => setOpen(false)}
         >
           <div
             className="cast-address-list"
@@ -1107,13 +1043,24 @@ function KickConfirmPanel({
 
 type StunEntry = { server: string; probe?: Probe };
 
-function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequest>) => void }) {
+function StunPanel({
+  source,
+  onSource,
+  onHost,
+}: {
+  /** Which server list the panel shows: DNS hostnames or IP literals (IPv4 + IPv6). */
+  source: 'host' | 'ip';
+  onSource: (value: 'host' | 'ip') => void;
+  onHost: (overrides: Partial<MultiplayerHostRequest>) => void;
+}) {
   const { t } = useLocale();
   const { data: stunList, error: stunError } = useGetStunServersQuery();
   const [probeStun] = useProbeStunServersMutation();
   const [refreshStun] = useRefreshStunServersMutation();
   const [checkNatMutation] = useCheckNatMutation();
-  const [servers, setServers] = useState<StunEntry[]>([]);
+  // Probe results are keyed by server string and survive a source switch, so toggling the list
+  // never throws away latency the user already measured.
+  const [probes, setProbes] = useState<Map<string, Probe>>(() => new Map());
   const [selected, setSelected] = useState('');
   const [nat, setNat] = useState<'cone' | 'symmetric' | 'unknown' | null>(null);
   const [natPending, setNatPending] = useState(false);
@@ -1125,6 +1072,10 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
   const [downloading, setDownloading] = useState(false);
   const selectedRow = useRef<HTMLLIElement>(null);
   const alive = useRef(true);
+  const activeServers = useMemo(
+    () => (source === 'ip' ? stunList?.ipServers : stunList?.hostServers) ?? [],
+    [source, stunList],
+  );
 
   useEffect(() => {
     alive.current = true;
@@ -1135,12 +1086,16 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
 
   useEffect(() => {
     if (stunError) reportThrottledFailure('multiplayer_stun_servers_failed', String(stunError));
-    if (!stunList) return;
-    setServers((current) => {
-      const probes = new Map(current.map((entry) => [entry.server, entry.probe]));
-      return stunList.servers.map((server) => ({ server, probe: probes.get(server) }));
-    });
-  }, [stunList, stunError]);
+  }, [stunError]);
+
+  // Switching to a list that does not contain the selected server clears the selection so the
+  // "locate" control and the create-room button disable instead of pointing at a missing row.
+  const switchSource = () => {
+    const next = source === 'ip' ? 'host' : 'ip';
+    const nextServers = (next === 'ip' ? stunList?.ipServers : stunList?.hostServers) ?? [];
+    setSelected((current) => (nextServers.includes(current) ? current : ''));
+    onSource(next);
+  };
 
   useEffect(() => {
     if (!searchOpen) return;
@@ -1149,34 +1104,31 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
   }, [query, searchOpen]);
 
   const probe = async (targets: string[]) => {
-    setServers((current) =>
-      current.map((entry) =>
-        targets.includes(entry.server) ? { ...entry, probe: { state: 'probing' } } : entry,
-      ),
-    );
+    setProbes((current) => {
+      const next = new Map(current);
+      for (const server of targets) next.set(server, { state: 'probing' });
+      return next;
+    });
     // Progressive chunks keep the UI filling in without one huge burst on the network.
     for (let index = 0; index < targets.length; index += ProbeChunk) {
       if (!alive.current) return;
       const chunk = targets.slice(index, index + ProbeChunk);
       try {
         const { results } = await probeStun({ servers: chunk }).unwrap();
-        setServers((current) =>
-          current.map((entry) => {
-            const result = results.find((r) => r.server === entry.server);
-            return result
-              ? { server: entry.server, probe: { state: 'done', latencyMs: result.latencyMs } }
-              : entry;
-          }),
-        );
+        setProbes((current) => {
+          const next = new Map(current);
+          for (const result of results) {
+            next.set(result.server, { state: 'done', latencyMs: result.latencyMs });
+          }
+          return next;
+        });
       } catch (error) {
         reportThrottledFailure('multiplayer_stun_probe_failed', String(error));
-        setServers((current) =>
-          current.map((entry) =>
-            chunk.includes(entry.server)
-              ? { server: entry.server, probe: { state: 'done' } }
-              : entry,
-          ),
-        );
+        setProbes((current) => {
+          const next = new Map(current);
+          for (const server of chunk) next.set(server, { state: 'done' });
+          return next;
+        });
       }
     }
   };
@@ -1185,14 +1137,14 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
     if (probingAll) return;
     setProbingAll(true);
     try {
-      await probe(servers.map((entry) => entry.server));
+      await probe(activeServers);
     } finally {
       setProbingAll(false);
     }
   };
 
   const probeOne = (server: string) => {
-    if (servers.find((entry) => entry.server === server)?.probe?.state === 'probing') return;
+    if (probes.get(server)?.state === 'probing') return;
     void probe([server]);
   };
 
@@ -1201,21 +1153,9 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
     setDownloading(true);
     try {
       const value = await refreshStun().unwrap();
-      const fresh = value.servers || [];
-      setServers((current) => {
-        const probed = new Map(
-          current
-            .filter((entry) => entry.probe?.state === 'done')
-            .map((entry) => [entry.server, entry.probe]),
-        );
-        return fresh.map((server) => ({ server, probe: probed.get(server) }));
-      });
-      setSelected((current) => (fresh.includes(current) ? current : ''));
-      notices.push(
-        t('multiplayer.stunDownloadDone', { count: fresh.length }),
-        undefined,
-        'success',
-      );
+      const activeFresh = (source === 'ip' ? value.ipServers : value.hostServers) || [];
+      setSelected((current) => (activeFresh.includes(current) ? current : ''));
+      notices.push(t('multiplayer.stunDownloadDone'), undefined, 'success');
     } catch {
       notices.push(t('multiplayer.stunDownloadFailed'));
     } finally {
@@ -1238,9 +1178,13 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
   };
 
   const visible = useMemo(() => {
+    const entries: StunEntry[] = activeServers.map((server) => ({
+      server,
+      probe: probes.get(server),
+    }));
     const filtered = debounced
-      ? servers.filter((entry) => entry.server.toLowerCase().includes(debounced))
-      : servers;
+      ? entries.filter((entry) => entry.server.toLowerCase().includes(debounced))
+      : entries;
     const latency = (entry: StunEntry) =>
       entry.probe?.state === 'done' && entry.probe.latencyMs !== undefined
         ? entry.probe.latencyMs
@@ -1256,7 +1200,7 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
       });
     }
     return [...filtered].sort((a, b) => a.server.localeCompare(b.server));
-  }, [servers, sort, debounced]);
+  }, [activeServers, probes, sort, debounced]);
 
   const latencyLabel = (entry: StunEntry) => {
     if (entry.probe?.state === 'probing') return '…';
@@ -1305,9 +1249,19 @@ function StunPanel({ onHost }: { onHost: (overrides: Partial<MultiplayerHostRequ
         </button>
         <button
           type="button"
+          title={t(source === 'ip' ? 'multiplayer.stunSourceIp' : 'multiplayer.stunSourceHost')}
+          aria-label={t(
+            source === 'ip' ? 'multiplayer.stunSourceIp' : 'multiplayer.stunSourceHost',
+          )}
+          onClick={switchSource}
+        >
+          {source === 'ip' ? <Binary size={16} /> : <Globe size={16} />}
+        </button>
+        <button
+          type="button"
           title={t('multiplayer.probeAll')}
           aria-label={t('multiplayer.probeAll')}
-          disabled={probingAll || !servers.length}
+          disabled={probingAll || !activeServers.length}
           onClick={() => void probeAll()}
         >
           <Gauge size={16} />

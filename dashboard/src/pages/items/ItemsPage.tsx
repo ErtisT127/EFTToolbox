@@ -31,6 +31,7 @@ import type {
   RecognitionSettings,
 } from '../../../../contracts/ts/ipc.gen';
 import { AppPopover } from '../../components/AppPopover';
+import { useRegisterConflictActions } from '../../stores/conflictActions';
 import { AppTooltip } from '../../components/HintTooltip';
 import { RecognitionTuningFields } from '../../components/RecognitionTuningFields';
 import { useLocale, type LocaleKey, type Translate } from '../../hooks/useLocale';
@@ -47,7 +48,6 @@ import { store } from '../../stores/store';
 import type { RootState } from '../../stores/store';
 import {
   clearConflict,
-  pauseConflict,
   setItemsSettingsDraft,
   submitItemsSettings,
 } from '../../stores/clientState';
@@ -110,9 +110,24 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const catalog = catalogQuery.data;
   const status = statusQuery.data || emptyStatus;
   const settingsDraft = useSelector((state: RootState) => state.client.itemsSettingsDraft);
-  const settingsConflict = useSelector((state: RootState) =>
-    state.client.conflicts.find((item) => item.key === 'items-settings'),
-  );
+  // The conflict banner is window-level; this page supplies the two page-scoped choices.
+  useRegisterConflictActions('items-settings', {
+    loadRemote: () => {
+      void store
+        .dispatch(api.endpoints.getItemsSettings.initiate(undefined, { forceRefetch: true }))
+        .unwrap()
+        .then(() => {
+          store.dispatch(setItemsSettingsDraft(undefined));
+          store.dispatch(clearConflict('items-settings'));
+        });
+    },
+    retry: () => {
+      void store
+        .dispatch(api.endpoints.getItemsSettings.initiate(undefined, { forceRefetch: true }))
+        .unwrap()
+        .then(() => store.dispatch(submitItemsSettings()));
+    },
+  });
   const settings = settingsDraft || settingsQuery.data?.value;
   const [loadError, setLoadError] = useState<DataLoadError | null>(null);
   const [search, setSearch] = useState('');
@@ -395,43 +410,6 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
           </span>
         </button>
       </div>
-      {settingsConflict && (
-        <div className="items-conflict" role="alert">
-          <span>{t('errors.revision_conflict')}</span>
-          <button type="button" onClick={() => store.dispatch(pauseConflict('items-settings'))}>
-            {t('errors.conflict_keep_local')}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void store
-                .dispatch(
-                  api.endpoints.getItemsSettings.initiate(undefined, { forceRefetch: true }),
-                )
-                .unwrap()
-                .then(() => {
-                  store.dispatch(setItemsSettingsDraft(undefined));
-                  store.dispatch(clearConflict('items-settings'));
-                });
-            }}
-          >
-            {t('errors.conflict_load_remote')}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void store
-                .dispatch(
-                  api.endpoints.getItemsSettings.initiate(undefined, { forceRefetch: true }),
-                )
-                .unwrap()
-                .then(() => store.dispatch(submitItemsSettings()));
-            }}
-          >
-            {t('errors.conflict_retry')}
-          </button>
-        </div>
-      )}
       <div
         className="items-categories"
         aria-label={t('items.categories')}

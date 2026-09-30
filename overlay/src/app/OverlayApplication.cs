@@ -15,6 +15,7 @@ internal sealed class OverlayApplication : IDisposable
     private readonly OverlayStateClient client;
     private readonly RecognitionEngine recognition = new();
     private readonly RecognitionWindow recognitionWindow;
+    private readonly RawInputHotkeyManager hotkeyManager;
     private readonly TileLayerRenderer tiles;
     private readonly MarkerLayer markers;
     private readonly MapScene scene = new();
@@ -60,13 +61,8 @@ internal sealed class OverlayApplication : IDisposable
     private OverlaySettings dragSettings = OverlaySettingsStore.Defaults;
     private Vector2 dragCenter;
     private int dragSaveQueued;
-    // Registration ids are 1-based positions in this table; the same names are what the dashboard
-    // shows next to a field when RegisterHotKey is refused.
-    private static readonly string[] HotkeyNames = ["toggleEdit", "toggleVisible", "zoomIn", "zoomOut", "floorUp", "floorDown", "toggleBasemap", "panUp", "panDown", "panLeft", "panRight", "recognition"];
     private const long SuspendLimit = 120_000;
     private const double TapZoom = 0.32, zoomPerSecond = 1.2;
-    private readonly uint[] hotkeyVirtualKey = new uint[HotkeyNames.Length + 1];
-    private readonly uint[] hotkeyModifiers = new uint[HotkeyNames.Length + 1];
     // A held continuous shortcut (zoom, pan) is tracked here and integrated per frame instead of
     // relying on the OS repeating the hotkey.
     private readonly Dictionary<int, long> interactions = new();
@@ -82,6 +78,7 @@ internal sealed class OverlayApplication : IDisposable
     internal OverlayApplication(nint hwnd, nint panelHwnd, Uri backend)
     {
         this.hwnd = hwnd; this.panelHwnd = panelHwnd; client = new(backend, Wake); tiles = new(ResourceReady, client); markers = new(ResourceReady);
+        hotkeyManager = new(hwnd, HotkeyKeyChanged, WheelHotkey);
         recognitionWindow = new RecognitionWindow(panelHwnd, (url, token) => client.AssetAsync(url, token), value => client.SaveRecognitionAsync(value), Wake);
         renderer.Initialize(hwnd); recognitionWindow.Initialize(null); ApplyWindow(); client.Start();
     }
@@ -171,50 +168,59 @@ internal sealed class OverlayApplication : IDisposable
     }
     private void Hotkeys()
     {
-        for (int id = 1; id <= HotkeyNames.Length; id++) Native.UnregisterHotKey(hwnd, id);
         interactions.Clear();
-        hotkeyCount = 0; var failed = new List<string>();
-        var values = new[] { settings.Hotkeys.ToggleEdit, settings.Hotkeys.ToggleVisible, settings.Hotkeys.ZoomIn, settings.Hotkeys.ZoomOut, settings.Hotkeys.FloorUp, settings.Hotkeys.FloorDown, settings.Hotkeys.ToggleBasemap, settings.Hotkeys.PanUp, settings.Hotkeys.PanDown, settings.Hotkeys.PanLeft, settings.Hotkeys.PanRight, settings.Hotkeys.Recognition };
-        hotkeysActive = values.Any(value => !string.IsNullOrWhiteSpace(value));
-        if (!hotkeysActive) return;
-        for (int index = 0; index < values.Length; index++)
-        {
-            var id = index + 1; var value = values[index]; hotkeyVirtualKey[id] = 0; hotkeyModifiers[id] = 0;
-            if (string.IsNullOrWhiteSpace(value)) continue;
-            var parts = value.Split('+'); uint modifiers = 0x4000;
-            foreach (var part in parts[..^1]) modifiers |= part switch { "Alt" => 1u, "Ctrl" => 2u, "Shift" => 4u, "Win" => 8u, _ => 0 };
-            var key = parts[^1]; uint vk = key.Length == 1 ? key[0] : key.StartsWith('F') && int.TryParse(key[1..], out var f) ? (uint)(111 + f) : key switch { "Space" => 32u, "Insert" => 45u, "Delete" => 46u, "Home" => 36u, "End" => 35u, "PageUp" => 33u, "PageDown" => 34u, "Up" => 0x26u, "Down" => 0x28u, "Left" => 0x25u, "Right" => 0x27u, "Backquote" => 0xC0u, "Minus" => 0xBDu, "Equal" => 0xBBu, "BracketLeft" => 0xDBu, "BracketRight" => 0xDDu, "Backslash" => 0xDCu, "Semicolon" => 0xBAu, "Quote" => 0xDEu, "Comma" => 0xBCu, "Period" => 0xBEu, "Slash" => 0xBFu, _ => 0 };
-            // The dashboard reports this next to the offending field, so name it instead of the
-            // generic error channel.
-            if (vk == 0 || !Native.RegisterHotKey(hwnd, id, modifiers, vk)) { failed.Add(HotkeyNames[index]); OverlayDiagnostics.Log("error", "hotkey_failed", $"Hotkey unavailable: {HotkeyNames[index]}={value}"); }
-            else { hotkeyVirtualKey[id] = vk; hotkeyModifiers[id] = modifiers & ~0x4000u; hotkeyCount++; }
-        }
-        hotkeyFailed = [.. failed];
+        hotkeyManager.Configure(settings.Hotkeys);
+        hotkeyCount = hotkeyManager.Count;
+        hotkeyFailed = hotkeyManager.Failed;
+        hotkeysActive = hotkeyManager.HasBindings;
     }
     // Zoom and pan keep moving while the key is held; everything else fires once per press.
     private static bool Continuous(int id) => id is 3 or 4 or 8 or 9 or 10 or 11;
-    // The dashboard suspends these while it records a shortcut: a registered hot key is swallowed
-    // before the browser sees it, so Alt+Up could never be recorded while the overlay owned it.
+    // The dashboard suspends these while it records a shortcut. Raw input keeps delivering the
+    // stroke to the browser either way, so this only stops the overlay from acting on it.
     private void SuspendHotkeys(bool suspended)
     {
         hotkeysSuspended = suspended;
         hotkeysSuspendedUntil = Environment.TickCount64 + SuspendLimit;
         if (suspended)
         {
-            for (int id = 1; id <= HotkeyNames.Length; id++) Native.UnregisterHotKey(hwnd, id);
+            hotkeyManager.Suspend();
             // Registration state stays as reported: the dashboard would otherwise paint every field
             // as broken for as long as the recorder is open.
             interactions.Clear();
         }
-        else Hotkeys();
+        else
+        {
+            hotkeyManager.Resume(settings.Hotkeys);
+            hotkeyCount = hotkeyManager.Count;
+            hotkeyFailed = hotkeyManager.Failed;
+            hotkeysActive = hotkeyManager.HasBindings;
+        }
     }
-    private static bool ModifierDown(uint modifiers)
+    private void HotkeyKeyChanged(int id, bool pressed)
     {
-        if ((modifiers & 1u) != 0 && Native.GetAsyncKeyState(Native.VkMenu) >= 0) return false;
-        if ((modifiers & 2u) != 0 && Native.GetAsyncKeyState(Native.VkControl) >= 0) return false;
-        if ((modifiers & 4u) != 0 && Native.GetAsyncKeyState(Native.VkShift) >= 0) return false;
-        if ((modifiers & 8u) != 0 && Native.GetAsyncKeyState(Native.VkLWin) >= 0 && Native.GetAsyncKeyState(Native.VkRWin) >= 0) return false;
-        return true;
+        if (!pressed) { interactions.Remove(id); return; }
+        if (Continuous(id))
+        {
+            if (!settings.Visible) return;
+            if (interactions.ContainsKey(id)) return;
+            var now = Environment.TickCount64;
+            if (interactions.Count == 0) lastFrameAt = now;
+            interactions[id] = now;
+            if (id is 3 or 4) ZoomBy(id, TapZoom);
+            dirty = true;
+            Begin("hotkey");
+        }
+        else RunHotkey(id);
+    }
+    private void WheelHotkey(int id)
+    {
+        if (Continuous(id) && !settings.Visible) return;
+        if (id is 3 or 4) ZoomBy(id, TapZoom);
+        else if (id is >= 8 and <= 11) scene.Center += Direction(id) * 48 / scene.Scale;
+        else RunHotkey(id);
+        dirty = true;
+        Begin("hotkey");
     }
     private void RunHotkey(int id)
     {
@@ -431,7 +437,7 @@ internal sealed class OverlayApplication : IDisposable
         double zoom = 0;
         foreach (var (id, started) in interactions.ToArray())
         {
-            if (Native.GetAsyncKeyState((int)hotkeyVirtualKey[id]) >= 0 || !ModifierDown(hotkeyModifiers[id]) || now - started > 30000) { interactions.Remove(id); continue; }
+            if (now - started > 30000) { interactions.Remove(id); continue; }
             var acceleration = Math.Clamp((now - started) / 100f, 0, 1);
             if (id is 3 or 4) zoom += (id == 3 ? 1 : -1) * zoomPerSecond * seconds * acceleration;
             else { direction += Direction(id); panAcceleration = Math.Max(panAcceleration, acceleration); }
@@ -797,23 +803,9 @@ internal sealed class OverlayApplication : IDisposable
             ApplyWindow(); _ = client.SaveAsync(settings); return 0;
         }
         if (message == Native.WmCaptureChanged) { drag = 0; return null; }
-        if (message == 0x0312)
-        {
-            var id = (int)wParam;
-            if (id < 1 || id > HotkeyNames.Length) return 0;
-            if (Continuous(id))
-            {
-                if (!settings.Visible || interactions.ContainsKey(id)) return 0;
-                var now = Environment.TickCount64;
-                if (interactions.Count == 0) lastFrameAt = now;
-                interactions[id] = now;
-                if (id is 3 or 4) ZoomBy(id, TapZoom);
-                dirty = true;
-                Begin("hotkey");
-            }
-            else RunHotkey(id);
-            return 0;
-        }
+        // Raw input no longer swallows the key, so the message only stops here; the default
+        // procedure still runs for it.
+        if (hotkeyManager.Consume(message, lParam)) return null;
         if (message == Native.WmNcHitTest)
         {
             if (!editing) return -1;
@@ -872,7 +864,7 @@ internal sealed class OverlayApplication : IDisposable
     }
     public void Dispose()
     {
-        if (disposed) return; disposed = true; loading.Cancel(); for (int id = 1; id <= HotkeyNames.Length; id++) Native.UnregisterHotKey(hwnd, id);
+        if (disposed) return; disposed = true; loading.Cancel(); hotkeyManager.Dispose();
         recognitionRun?.Cancel();
         client.Dispose(); tiles.Dispose(); markers.Dispose();
         if (svgWorker.Wait(1000)) { rasterizer.Dispose(); svgWorker.Release(); }

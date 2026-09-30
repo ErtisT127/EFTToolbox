@@ -60,7 +60,6 @@ export type ClientConflict = {
   key: string;
   resource: ConflictResource;
   entityId?: string;
-  paused?: boolean;
 };
 
 export type ClientState = {
@@ -275,10 +274,6 @@ const clientState = createSlice({
     submitItemsSettings() {},
     submitMapPreferences() {},
     submitCalibrationPreferences() {},
-    pauseConflict(state, action: PayloadAction<string>) {
-      const conflict = state.conflicts.find((item) => item.key === action.payload);
-      if (conflict) conflict.paused = true;
-    },
     setCalibrationEditorDraft(
       state,
       action: PayloadAction<{
@@ -354,7 +349,6 @@ export const {
   submitItemsSettings,
   submitMapPreferences,
   submitCalibrationPreferences,
-  pauseConflict,
   setCalibrationEditorDraft,
   setCalibrationEditorHistory,
   setCalibrationEditorSaveState,

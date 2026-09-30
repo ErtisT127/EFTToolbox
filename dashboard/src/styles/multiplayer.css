@@ -200,13 +200,6 @@
   padding: 0;
 }
 
-.mp-paste-invite {
-  width: 100%;
-  min-width: 0;
-  resize: vertical;
-  font: inherit;
-}
-
 /* Inline affordances inside inputs (password clear/generate) get a circular hover, never a
    rectangle pressed against the input edge. */
 .mp-password-field {
