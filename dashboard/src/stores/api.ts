@@ -140,7 +140,6 @@ export const api = createApi({
         headers: { 'If-Match': revision },
         body: value,
       }),
-      invalidatesTags: ['Settings'],
     }),
     getRecognitionSettings: build.query<Versioned<RecognitionSettings>, void>({
       query: () => 'recognition-settings',
@@ -156,7 +155,6 @@ export const api = createApi({
         headers: { 'If-Match': revision },
         body: value,
       }),
-      invalidatesTags: ['Settings'],
     }),
     getGameMonitorSettings: build.query<Versioned<GameMonitorSettings>, void>({
       query: () => 'game-monitor/settings',
@@ -176,7 +174,6 @@ export const api = createApi({
         headers: { 'If-Match': revision },
         body: value,
       }),
-      invalidatesTags: ['Settings'],
     }),
     browseGameMonitorDirectory: build.mutation<string | { path?: string }, 'screenshots' | 'logs'>({
       query: (kind) => ({ url: `game-monitor/browse/${kind}`, method: 'POST' }),
@@ -188,7 +185,6 @@ export const api = createApi({
         headers: { 'If-Match': revision },
         body: value,
       }),
-      invalidatesTags: ['Settings'],
     }),
     resetUserSettings: build.mutation<Versioned<UserSettings>, void>({
       query: () => ({ url: 'data/reset-user-settings', method: 'POST' }),
@@ -219,7 +215,6 @@ export const api = createApi({
         headers: { 'If-Match': revision },
         body: value,
       }),
-      invalidatesTags: ['Preferences'],
     }),
     getMarkerPreferences: build.query<Versioned<MarkerPreferences>, void>({
       query: () => 'marker-preferences',
@@ -235,7 +230,6 @@ export const api = createApi({
         headers: { 'If-Match': revision },
         body: value,
       }),
-      invalidatesTags: ['Preferences'],
     }),
     getItemsSettings: build.query<Versioned<ItemsSettings>, void>({
       query: () => 'items-settings',
@@ -248,7 +242,6 @@ export const api = createApi({
         headers: { 'If-Match': revision },
         body: value,
       }),
-      invalidatesTags: ['Settings'],
     }),
     getCalibrationPreferences: build.query<Versioned<CalibratorPreferences>, void>({
       query: () => 'calibration-preferences',
@@ -272,7 +265,6 @@ export const api = createApi({
         headers: { 'If-Match': revision },
         body: value,
       }),
-      invalidatesTags: ['Calibration'],
     }),
     getCalibration: build.query<Versioned<CalibrationDocument>, { id: string; basemap: string }>({
       query: ({ id, basemap }) => `maps/${encodeURIComponent(id)}/calibration?basemap=${basemap}`,
@@ -324,7 +316,6 @@ export const api = createApi({
         headers: { 'If-Match': revision },
         body: value,
       }),
-      invalidatesTags: ['Multiplayer'],
     }),
     getMultiplayerStatus: build.query<MultiplayerStatus, void>({
       query: () => 'multiplayer/status',

@@ -10,9 +10,12 @@ import { ContractSchemaVersion } from '../../contracts/version.gen.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const upstream = path.join(root, 'data/upstream');
+const defaultsDirectory = path.join(root, 'scripts/defaults');
 const args = process.argv.slice(2);
-if (args.some((arg) => arg !== '--lite')) throw new Error('Usage: pnpm toolbox package [--lite]');
+if (args.some((arg) => !['--lite', '--debug'].includes(arg)))
+  throw new Error('Usage: pnpm toolbox package [--lite] [--debug]');
 const lite = args.includes('--lite');
+const debug = args.includes('--debug');
 await verifyDisplayResources(path.join(upstream, 'assets'));
 const output = path.join(root, 'build/package', new Date().toISOString().replace(/[:.]/g, '-'));
 const run = (command, args) =>
@@ -76,11 +79,9 @@ const mapIdFromFile = (name) => {
   const language = base.slice(index + 1);
   return language === 'zh' || language === 'en' ? base.slice(0, index) : '';
 };
-// A map without tiles only renders when a floor carries SVG, so the lite package keeps the tiles of
-// exactly those maps. The set is read from the data instead of being listed here: a new tile-only
-// map keeps its tiles automatically, and a map that would be left with neither tiles nor SVG fails
-// the package instead of shipping a blank canvas.
-const tileOnlyMaps = async (modes) => {
+// Keep tiles for any map with a floor that has no SVG artwork. The viewport uses the first/base tile
+// as a satellite fallback when the selected floor has no tile, so mixed maps must retain all layers.
+const mapsNeedingTiles = async (modes) => {
   const ids = new Set();
   for (const mode of await readdir(modes, { withFileTypes: true })) {
     if (!mode.isDirectory()) continue;
@@ -90,9 +91,12 @@ const tileOnlyMaps = async (modes) => {
       if (!id) continue;
       const map = JSON.parse(await readFile(path.join(maps, file.name), 'utf8'));
       const tiles = (map.tiles ?? []).length;
-      const hasSvg = (map.floors ?? []).some((floor) => (floor.svgGroups ?? []).length > 0);
-      if (!tiles && !hasSvg) throw new Error(`Map ${id} has neither tiles nor SVG`);
-      if (tiles && !hasSvg) ids.add(id);
+      const floorsWithoutSvg = (map.floors ?? []).filter(
+        (floor) => !(floor.svgGroups ?? []).length,
+      );
+      if (!tiles && floorsWithoutSvg.length === (map.floors ?? []).length)
+        throw new Error(`Map ${id} has neither tiles nor SVG`);
+      if (tiles && floorsWithoutSvg.length) ids.add(id);
     }
   }
   return ids;
@@ -200,7 +204,7 @@ step('Building backend');
 run('go', [
   'build',
   '-ldflags',
-  '-H=windowsgui',
+  ['-H=windowsgui', ...(!debug ? ['-s', '-w'] : [])].join(' '),
   '-o',
   path.join(output, 'EFTToolbox.exe'),
   './backend/cmd/EFTToolbox',
@@ -226,23 +230,23 @@ await copyFile(path.join(upstream, 'stickers.json'), path.join(data, 'stickers.j
 await copyIfPresent(path.join(upstream, 'catalog_zh.json'), path.join(data, 'catalog_zh.json'));
 await copyIfPresent(path.join(upstream, 'catalog_en.json'), path.join(data, 'catalog_en.json'));
 await copyIfPresent(
-  path.join(upstream, 'stun-valid-hosts.txt'),
+  path.join(defaultsDirectory, 'stun-valid-hosts.txt'),
   path.join(data, 'stun-valid-hosts.txt'),
 );
 await copyIfPresent(
-  path.join(upstream, 'stun-valid-ipv4s.txt'),
+  path.join(defaultsDirectory, 'stun-valid-ipv4s.txt'),
   path.join(data, 'stun-valid-ipv4s.txt'),
 );
 await copyIfPresent(
-  path.join(upstream, 'stun-valid-ipv6s.txt'),
+  path.join(defaultsDirectory, 'stun-valid-ipv6s.txt'),
   path.join(data, 'stun-valid-ipv6s.txt'),
 );
 await copyIfPresent(
-  path.join(upstream, 'stun-nat-ipv4s.txt'),
+  path.join(defaultsDirectory, 'stun-nat-ipv4s.txt'),
   path.join(data, 'stun-nat-ipv4s.txt'),
 );
 if (lite) {
-  const keep = await tileOnlyMaps(path.join(data, 'modes'));
+  const keep = await mapsNeedingTiles(path.join(data, 'modes'));
   await simplifyMaps(path.join(data, 'modes'), keep);
   await mkdir(path.join(data, 'tiles'), { recursive: true });
   await copyLiteTiles(

@@ -464,6 +464,15 @@ func (h *overlayHub) overlayConnected() bool {
 	return false
 }
 
+// Caller holds mu. Keep the cached view and the event stream in sync whenever the native overlay
+// membership changes.
+func (h *overlayHub) updateOverlayConnectionLocked() {
+	connected := h.overlayConnected()
+	h.view.Connected = connected
+	view := h.view
+	h.publish(contracts.ServerEvent{Type: "overlay_status", OverlayView: &view})
+}
+
 func (h *overlayHub) websocket(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
@@ -472,6 +481,12 @@ func (h *overlayHub) websocket(ctx context.Context, w http.ResponseWriter, r *ht
 	defer closeWebSocket(conn)
 	readCtx := conn.CloseRead(context.Background())
 	h.mu.Lock()
+	isOverlay := r.URL.Query().Get("client") == "overlay"
+	ch := make(chan contracts.ServerEvent, 64)
+	h.clients[ch] = isOverlay
+	if isOverlay {
+		h.updateOverlayConnectionLocked()
+	}
 	players := make([]contracts.PlayerState, 0, len(h.players))
 	for _, p := range h.players {
 		players = append(players, p)
@@ -510,16 +525,12 @@ func (h *overlayHub) websocket(ctx context.Context, w http.ResponseWriter, r *ht
 	if h.recognition != nil {
 		e.RecognitionResult = h.recognition
 	}
-	ch := make(chan contracts.ServerEvent, 64)
-	h.clients[ch] = r.URL.Query().Get("client") == "overlay"
 	h.mu.Unlock()
 	defer func() {
 		h.mu.Lock()
 		delete(h.clients, ch)
-		if r.URL.Query().Get("client") == "overlay" {
-			h.view.Connected = h.overlayConnected()
-			view := h.view
-			h.publish(contracts.ServerEvent{Type: "overlay_status", OverlayView: &view})
+		if isOverlay {
+			h.updateOverlayConnectionLocked()
 		}
 		h.mu.Unlock()
 	}()
@@ -609,6 +620,9 @@ func (h *overlayHub) register(mux *http.ServeMux) {
 			apiError(w, http.StatusInternalServerError, "user_settings_reset_failed")
 			return
 		}
+		h.mu.Lock()
+		h.publish(contracts.ServerEvent{Type: "user_settings_reset", OperationId: operationID(r)})
+		h.mu.Unlock()
 		versionedJSONResponse(w, value, revision, etag)
 	})
 	mux.HandleFunc("PUT /api/user-settings", func(w http.ResponseWriter, r *http.Request) {
@@ -1031,40 +1045,95 @@ func recognitionTemplateSummary(rows []contracts.RecognitionRow) string {
 func recognitionCandidates(catalog contracts.ItemsCatalog, texts []string, settings contracts.RecognitionSettings) [][]contracts.RecognitionCandidate {
 	limit := settings.CandidateLimit
 	result := make([][]contracts.RecognitionCandidate, 0, len(texts))
+	items := prepareRecognitionItems(catalog.Items)
+	byQuery := make(map[string][]contracts.RecognitionCandidate, len(texts))
 	for _, text := range texts {
-		candidates := []contracts.RecognitionCandidate{}
 		query := normalizeRecognitionText(text)
-		if usableRecognitionQuery(query, settings.OcrMinLength) {
-			type scored struct {
-				item  contracts.ItemsCatalogItem
-				score float64
+		if candidates, ok := byQuery[query]; ok {
+			result = append(result, candidates)
+			continue
+		}
+		candidates := []contracts.RecognitionCandidate{}
+		if usableRecognitionQuery(query, settings.OcrMinLength) && limit > 0 {
+			matches := make([]scoredRecognitionItem, 0, limit)
+			for index, item := range items {
+				score := recognitionPreparedItemScore(item, query)
+				if score < settings.NameSimilarity {
+					continue
+				}
+				matches = insertRecognitionScore(matches, scoredRecognitionItem{item: item.item, score: score, index: index}, limit)
 			}
-			matches := make([]scored, 0, limit*4)
-			for _, item := range catalog.Items {
-				score := recognitionItemScore(item, query)
-				if score >= settings.NameSimilarity {
-					matches = append(matches, scored{item: item, score: score})
-				}
-			}
-			slices.SortStableFunc(matches, func(a, b scored) int {
-				if a.score != b.score {
-					if a.score > b.score {
-						return -1
-					}
-					return 1
-				}
-				return strings.Compare(a.item.Name, b.item.Name)
-			})
-			for index, match := range matches {
-				if index >= limit {
-					break
-				}
+			for _, match := range matches {
 				candidates = append(candidates, contracts.RecognitionCandidate{Id: match.item.Id, Name: match.item.Name, ShortName: match.item.ShortName, Image: match.item.Image, TraderPrice: match.item.TraderPrice, FleaPrice: match.item.FleaPrice, Similarity: match.score})
 			}
 		}
+		byQuery[query] = candidates
 		result = append(result, candidates)
 	}
 	return result
+}
+
+type preparedRecognitionItem struct {
+	item      contracts.ItemsCatalogItem
+	shortName string
+	name      string
+}
+
+type scoredRecognitionItem struct {
+	item  contracts.ItemsCatalogItem
+	score float64
+	index int
+}
+
+func prepareRecognitionItems(items []contracts.ItemsCatalogItem) []preparedRecognitionItem {
+	prepared := make([]preparedRecognitionItem, len(items))
+	for index, item := range items {
+		prepared[index] = preparedRecognitionItem{
+			item:      item,
+			shortName: normalizeRecognitionText(item.ShortName),
+			name:      normalizeRecognitionText(item.Name),
+		}
+	}
+	return prepared
+}
+
+func recognitionPreparedItemScore(item preparedRecognitionItem, query string) float64 {
+	short := recognitionSimilarity(query, item.shortName)
+	name := recognitionSimilarity(query, item.name)
+	if short >= name {
+		return short
+	}
+	return name
+}
+
+func insertRecognitionScore(matches []scoredRecognitionItem, candidate scoredRecognitionItem, limit int) []scoredRecognitionItem {
+	position := len(matches)
+	for index, match := range matches {
+		if recognitionScoreBefore(candidate, match) {
+			position = index
+			break
+		}
+	}
+	if position >= limit {
+		return matches
+	}
+	if len(matches) == limit {
+		matches = matches[:limit-1]
+	}
+	matches = append(matches, scoredRecognitionItem{})
+	copy(matches[position+1:], matches[position:])
+	matches[position] = candidate
+	return matches
+}
+
+func recognitionScoreBefore(a, b scoredRecognitionItem) bool {
+	if a.score != b.score {
+		return a.score > b.score
+	}
+	if a.item.Name != b.item.Name {
+		return strings.Compare(a.item.Name, b.item.Name) < 0
+	}
+	return a.index < b.index
 }
 
 // An OCR dump also carries counters, separators and stray glyphs: "50/50" or "392/400" are not item

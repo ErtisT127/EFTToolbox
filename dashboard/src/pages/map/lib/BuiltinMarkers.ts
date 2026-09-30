@@ -28,6 +28,7 @@ export class BuiltinMarkers extends L.Layer {
   private index: KDBush;
   private canvas = document.createElement('canvas');
   private sprites = new Map<string, Sprite>();
+  private pendingImages = new Set<HTMLImageElement>();
   private nativeLayers = L.layerGroup();
   private tooltip = L.tooltip({ direction: 'top', offset: [0, -12] });
   private outlines = L.layerGroup();
@@ -125,6 +126,7 @@ export class BuiltinMarkers extends L.Layer {
     this.outlines.remove();
     this.tooltip.remove();
     this.canvas.remove();
+    this.pendingImages.clear();
     for (const sprite of this.sprites.values()) sprite.image.onload = sprite.image.onerror = null;
     this.sprites.clear();
     return this;
@@ -134,6 +136,7 @@ export class BuiltinMarkers extends L.Layer {
     this.restoreRaised();
     this.clearHover();
     this.nativeLayers.clearLayers();
+    this.pendingImages.clear();
     const hidden = new Set(preference.hiddenCategories),
       tasks = new Set(preference.selectedTasks);
     for (const entry of this.entries) {
@@ -303,8 +306,12 @@ export class BuiltinMarkers extends L.Layer {
       img.draggable = false;
       img.width = img.height = this.iconSize;
       // Settling only needs a re-check; the icon itself paints whenever the browser is done.
-      img.onload = img.onerror = () => this.schedule();
+      img.onload = img.onerror = () => {
+        this.pendingImages.delete(img);
+        this.schedule();
+      };
       element.append(img);
+      if (!img.complete) this.pendingImages.add(img);
     }
     if (entry.named) {
       const caption = document.createElement('span');
@@ -407,10 +414,7 @@ export class BuiltinMarkers extends L.Layer {
         Math.round(p.y * dpr - sprite.height / 2),
       );
     }
-    for (const entry of this.entries) {
-      const image = entry.visible && entry.native?.getElement()?.querySelector('img');
-      if (image && !image.complete) pending = true;
-    }
+    if (this.pendingImages.size) pending = true;
     if (this.laidOut && !pending && !this.settled) {
       this.settled = true;
       this.onIconsSettled();

@@ -122,7 +122,7 @@ func newModeRepository(root, mode string) (*modeRepository, error) {
 // mapLang maps the API locale query onto the generated per-language map file suffix
 // ({id}_zh.json / {id}_en.json), the same split the items catalog uses.
 func mapLang(locale string) string {
-	if locale == "en-US" {
+	if locale == "en-US" || locale == "en" {
 		return "en"
 	}
 	return "zh"
@@ -300,28 +300,22 @@ func (s *mapStore) resetMapPreferences() error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	modeNames := map[string]bool{}
 	for _, mode := range modes {
 		if !mode.IsDir() || !safeID.MatchString(mode.Name()) {
 			continue
 		}
-		modeRoot := filepath.Join(root, mode.Name())
-		for _, file := range []struct {
-			name  string
-			value any
-		}{
-			{"map-preferences.json", defaults.MapPreferences()},
-			{"game-monitor-state.json", gameMonitorState{SchemaVersion: contracts.ContractSchemaVersion}},
-		} {
-			if err := s.saveTo(modeRoot, file.name, file.value); err != nil {
-				return err
-			}
-		}
+		modeNames[mode.Name()] = true
 	}
 	if s.repository() != nil {
-		if err := s.saveTo(s.userRoot(), "map-preferences.json", defaults.MapPreferences()); err != nil {
+		modeNames[s.repository().mode] = true
+	}
+	for mode := range modeNames {
+		modeRoot := filepath.Join(root, mode)
+		if err := s.saveTo(modeRoot, "map-preferences.json", defaults.MapPreferences()); err != nil {
 			return err
 		}
-		if err := s.saveTo(s.userRoot(), "game-monitor-state.json", gameMonitorState{SchemaVersion: contracts.ContractSchemaVersion}); err != nil {
+		if err := s.saveTo(modeRoot, "game-monitor-state.json", gameMonitorState{SchemaVersion: contracts.ContractSchemaVersion}); err != nil {
 			return err
 		}
 	}
@@ -337,6 +331,48 @@ func (s *mapStore) resetMapPreferences() error {
 	}
 	if s.changed != nil {
 		s.changed("preferences_changed", "", "")
+	}
+	return nil
+}
+
+func (s *mapStore) migrateLegacyModeFiles(mode string) error {
+	legacyRoot := filepath.Join(s.root, "user")
+	modeRoot := filepath.Join(legacyRoot, "modes", mode)
+	for _, file := range []struct {
+		name  string
+		valid func([]byte) bool
+	}{
+		{"map-preferences.json", func(data []byte) bool {
+			var value contracts.Preferences
+			return json.Unmarshal(data, &value) == nil && value.SchemaVersion == contracts.ContractSchemaVersion
+		}},
+		{"game-monitor-state.json", func(data []byte) bool {
+			var value gameMonitorState
+			return json.Unmarshal(data, &value) == nil && value.SchemaVersion == contracts.ContractSchemaVersion
+		}},
+	} {
+		legacyPath := filepath.Join(legacyRoot, file.name)
+		legacyData, err := os.ReadFile(legacyPath)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil || !file.valid(legacyData) {
+			continue
+		}
+		canonicalPath := filepath.Join(modeRoot, file.name)
+		if _, err := os.Stat(canonicalPath); errors.Is(err, os.ErrNotExist) {
+			if err := s.savePath(canonicalPath, json.RawMessage(legacyData)); err != nil {
+				return err
+			}
+		} else {
+			canonicalData, readErr := os.ReadFile(canonicalPath)
+			if readErr != nil || !file.valid(canonicalData) {
+				continue
+			}
+		}
+		if err := os.Remove(legacyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 	return nil
 }

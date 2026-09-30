@@ -75,6 +75,9 @@ func (h *overlayHub) startGameMonitor(ctx context.Context) {
 	repo, err := newModeRepository(h.store.root, settings.Mode)
 	if err == nil {
 		h.store.setRepository(repo)
+		if err := h.store.migrateLegacyModeFiles(settings.Mode); err != nil {
+			log.Printf("migrate legacy mode files: %v", err)
+		}
 	}
 	h.appliedMapID = h.loadAppliedMap()
 	h.monitorStatus = contracts.GameMonitorStatus{SchemaVersion: contracts.ContractSchemaVersion, Mode: settings.Mode, MapId: h.appliedMapID, ScreenshotWatching: settings.ScreenshotDirectory != "", LogWatching: settings.LogDirectory != ""}

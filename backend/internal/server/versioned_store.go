@@ -42,6 +42,9 @@ func (s *VersionedFileStore) readLocked(name string, fallback any) (any, error) 
 	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return nil, errors.New("null JSON document")
 	}
+	if filepath.Clean(name) == filepath.Join("user", "user-settings.json") {
+		data = migrateUserSettings(data)
+	}
 	value := fallback
 	if kind := reflect.TypeOf(fallback); kind != nil {
 		if kind.Kind() == reflect.Pointer {
@@ -59,6 +62,44 @@ func (s *VersionedFileStore) readLocked(name string, fallback any) (any, error) 
 		return nil, errors.New("multiple JSON values")
 	}
 	return value, nil
+}
+
+func migrateUserSettings(data []byte) []byte {
+	var value map[string]json.RawMessage
+	if json.Unmarshal(data, &value) != nil {
+		return data
+	}
+	if raw, ok := value["settingsVersion"]; ok {
+		var version int
+		if json.Unmarshal(raw, &version) != nil {
+			return data
+		}
+		if version == currentUserSettingsVersion {
+			return data
+		}
+		if version != 0 {
+			return data
+		}
+	}
+	var recognition map[string]json.RawMessage
+	if raw, ok := value["recognition"]; ok {
+		if json.Unmarshal(raw, &recognition) != nil {
+			return data
+		}
+	} else {
+		recognition = map[string]json.RawMessage{}
+	}
+	if _, ok := recognition["ocrWarmup"]; !ok {
+		recognition["ocrWarmup"] = json.RawMessage("true")
+	}
+	encoded, err := json.Marshal(recognition)
+	if err != nil {
+		return data
+	}
+	value["recognition"] = encoded
+	value["settingsVersion"], _ = json.Marshal(currentUserSettingsVersion)
+	result, _ := json.Marshal(value)
+	return result
 }
 
 func ReadVersioned[T any](s *VersionedFileStore, name string, fallback T) (T, string, string, error) {

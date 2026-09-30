@@ -772,10 +772,7 @@ func (m *itemsManager) register(mux *http.ServeMux) {
 		if !localRequest(w, r) {
 			return
 		}
-		locale := "en"
-		if r.URL.Query().Get("locale") != "en-US" {
-			locale = "zh"
-		}
+		locale := mapLang(r.URL.Query().Get("locale"))
 		var value contracts.ItemsCatalog
 		if err := readJSON(m.catalogPath(locale), &value); err != nil || value.SchemaVersion != contracts.ContractSchemaVersion || value.Mode != m.mode() {
 			apiError(w, http.StatusNotFound, "items_not_available")

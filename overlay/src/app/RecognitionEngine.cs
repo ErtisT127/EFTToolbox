@@ -12,6 +12,9 @@ internal sealed record OcrBlock(string Text, float Score, double X, double Y, do
 internal sealed class RecognitionEngine : IDisposable
 {
     private PaddleOCREngine? ocr;
+    private readonly object warmupGate = new();
+    private CancellationTokenSource? warmupStop;
+    private Task? warmupTask;
     private static readonly object NativeConsoleLock = new();
     private const int StdOutputHandle = -11, StdErrorHandle = -12, GenericWrite = 0x40000000, OpenExisting = 3;
     private static readonly nint InvalidHandle = new(-1);
@@ -20,6 +23,40 @@ internal sealed class RecognitionEngine : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool SetStdHandle(int handle, nint value);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern nint CreateFile(string name, int access, int share, nint security, int creation, int flags, nint template);
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(nint handle);
+
+    internal void ConfigureWarmup(bool enabled)
+    {
+        lock (warmupGate)
+        {
+            if (!enabled)
+            {
+                warmupStop?.Cancel();
+                return;
+            }
+            if (warmupTask is { IsCompleted: false }) return;
+            warmupStop?.Dispose();
+            warmupStop = new CancellationTokenSource();
+            var token = warmupStop.Token;
+            warmupTask = Task.Run(() => Warmup(token), token);
+        }
+    }
+
+    private void Warmup(CancellationToken token)
+    {
+        try
+        {
+            token.ThrowIfCancellationRequested();
+            using var image = new Mat(1, 1, MatType.CV_8UC3, Scalar.Black);
+            Cv2.ImEncode(".png", image, out var encoded);
+            token.ThrowIfCancellationRequested();
+            _ = Detect(encoded);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception)
+        {
+            OverlayDiagnostics.Log("warn", "ocr_warmup_failed", exception.Message);
+        }
+    }
 
     /// <summary>Decodes a capture, enlarges it for the OCR and returns every text block above the
     /// confidence bar. The caller owns <paramref name="image"/>, the picture the icon check measures
@@ -167,6 +204,19 @@ internal sealed class RecognitionEngine : IDisposable
 
     public void Dispose()
     {
+        CancellationTokenSource? stop;
+        Task? task;
+        lock (warmupGate)
+        {
+            stop = warmupStop;
+            stop?.Cancel();
+            task = warmupTask;
+            warmupStop = null;
+            warmupTask = null;
+        }
+        try { task?.GetAwaiter().GetResult(); }
+        catch (OperationCanceledException) { }
+        stop?.Dispose();
         lock (NativeConsoleLock) ocr?.Dispose();
     }
 }

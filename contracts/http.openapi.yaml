@@ -472,20 +472,10 @@ paths:
   /api/game-monitor/settings:
     get:
       operationId: getGameMonitorSettings
-      responses:
-        {
-          '200':
-            {
-              description: Monitor settings,
-              content:
-                {
-                  application/json:
-                    { schema: { $ref: './proto/data.schema.json#/$defs/GameMonitorSettings' } },
-                },
-            },
-        }
+      responses: { '200': { $ref: '#/components/responses/VersionedGameMonitorSettings' } }
     put:
       operationId: putGameMonitorSettings
+      parameters: [{ $ref: '#/components/parameters/ExpectedRevision' }]
       requestBody:
         {
           required: true,
@@ -497,15 +487,9 @@ paths:
         }
       responses:
         {
-          '200':
-            {
-              description: Monitor settings,
-              content:
-                {
-                  application/json:
-                    { schema: { $ref: './proto/data.schema.json#/$defs/GameMonitorSettings' } },
-                },
-            },
+          '200': { $ref: '#/components/responses/VersionedGameMonitorSettings' },
+          '409': { $ref: '#/components/responses/RevisionConflict' },
+          '428': { $ref: '#/components/responses/RevisionRequired' },
         }
   /api/game-monitor/status:
     get:
@@ -530,6 +514,7 @@ paths:
   /api/items:
     get:
       operationId: getItemsCatalog
+      parameters: [{ $ref: '#/components/parameters/Locale' }]
       responses:
         {
           '200':
@@ -964,7 +949,13 @@ paths:
 components:
   parameters:
     MapId: { name: id, in: path, required: true, schema: { type: string } }
-    Locale: { name: locale, in: query, required: false, schema: { type: string, enum: [zh, en] } }
+    Locale:
+      {
+        name: locale,
+        in: query,
+        required: false,
+        schema: { type: string, enum: [zh-CN, en-US, zh, en] },
+      }
     Basemap: { name: basemap, in: query, required: true, schema: { type: string } }
     ExpectedRevision:
       name: If-Match
@@ -1169,6 +1160,18 @@ components:
       content:
         {
           application/json: { schema: { $ref: './proto/data.schema.json#/$defs/OverlaySettings' } },
+        }
+    VersionedGameMonitorSettings:
+      description: Versioned game monitor settings
+      headers:
+        {
+          ETag: { $ref: '#/components/headers/ETag' },
+          X-Revision: { $ref: '#/components/headers/X-Revision' },
+        }
+      content:
+        {
+          application/json:
+            { schema: { $ref: './proto/data.schema.json#/$defs/GameMonitorSettings' } },
         }
     VersionedItemsSettings:
       description: Versioned items settings

@@ -15,6 +15,8 @@ import (
 
 var errUserSettingsInvalid = errors.New("invalid saved user settings")
 
+const currentUserSettingsVersion = contracts.UserSettingsVersion
+
 var languages = []string{"zh-CN", "en-US"}
 
 // A missing or unknown language (an older settings file, a newer frontend) falls back to the
@@ -50,6 +52,13 @@ func defaultUserSettings() contracts.UserSettings {
 	value := defaults.UserSettings()
 	value.GameMonitor = defaultGameMonitorSettings()
 	return value
+}
+
+func normalizeUserSettings(v *contracts.UserSettings) bool {
+	return v.SchemaVersion == contracts.ContractSchemaVersion &&
+		v.SettingsVersion == currentUserSettingsVersion &&
+		validGameMonitorSettings(v.GameMonitor) &&
+		normalizeRecognition(&v.Recognition)
 }
 
 func normalizeRecognition(v *contracts.RecognitionSettings) bool {
@@ -93,6 +102,7 @@ func readUserSettings(root string) (contracts.UserSettings, error) {
 	if len(data) > 8<<20 {
 		return defaults, errUserSettingsInvalid
 	}
+	data = migrateUserSettings(data)
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var value *contracts.UserSettings
@@ -108,7 +118,7 @@ func readUserSettings(root string) (contracts.UserSettings, error) {
 	if decoder.Decode(new(any)) != io.EOF {
 		return *value, errUserSettingsInvalid
 	}
-	if value.SchemaVersion != contracts.ContractSchemaVersion || !validGameMonitorSettings(value.GameMonitor) || !normalizeRecognition(&value.Recognition) {
+	if !normalizeUserSettings(value) {
 		return *value, errUserSettingsInvalid
 	}
 	return *value, nil
@@ -166,7 +176,7 @@ func (h *overlayHub) prepareUserSettings(value *contracts.UserSettings, checkMod
 	normalizeLanguage(value)
 	normalizeCloseAction(value)
 	normalizeUpdateCheck(value)
-	if value.SchemaVersion != contracts.ContractSchemaVersion || !validGameMonitorSettings(value.GameMonitor) || !normalizeRecognition(&value.Recognition) {
+	if !normalizeUserSettings(value) {
 		return nil, "game_monitor_settings_invalid"
 	}
 	if !h.normalize(&value.Overlay) {
@@ -195,6 +205,9 @@ func (h *overlayHub) updateUserSettings(expected string, update func(*contracts.
 		previousLanguage := value.Language
 		if err := update(value); err != nil {
 			return err
+		}
+		if value.SettingsVersion == 0 {
+			value.SettingsVersion = currentUserSettingsVersion
 		}
 		languageChanged = value.Language != previousLanguage
 		var code string
@@ -253,7 +266,7 @@ func (h *overlayHub) updateUserSettings(expected string, update func(*contracts.
 			}
 			h.publish(contracts.ServerEvent{Type: "resources_changed"})
 		}
-		h.publish(contracts.ServerEvent{Type: "game_monitor_changed", GameMonitorStatus: &h.monitorStatus, OperationId: operationID})
+		h.publish(contracts.ServerEvent{Type: "game_monitor_changed", GameMonitorStatus: &h.monitorStatus, GameMonitorSettings: &value.GameMonitor, OperationId: operationID})
 	}
 	h.mu.Unlock()
 	// The phone follows the interface language; it only learns about it through the cast stream.

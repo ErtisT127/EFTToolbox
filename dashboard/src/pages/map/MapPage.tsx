@@ -197,12 +197,13 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [zoomState, setZoomState] = useState<{ zoom: number; min: number; max: number } | null>(
     null,
   );
-  const [canvasError, setCanvasError] = useState('');
+  const [canvasError, setCanvasError] = useState<{ mapId: string; key: string } | null>(null);
   const retryMap = () => {
-    setCanvasError('');
+    setCanvasError(null);
     void w.initialize();
   };
-  const blockingError = !w.loading && (w.error || canvasError);
+  const currentCanvasError = canvasError?.mapId === w.activeId ? canvasError.key : '';
+  const blockingError = !w.loading && (w.error || currentCanvasError);
   const atMin = zoomState !== null && zoomState.zoom <= zoomState.min + ZOOM_BOUND_EPSILON;
   const atMax = zoomState !== null && zoomState.zoom >= zoomState.max - ZOOM_BOUND_EPSILON;
   // The overlay owns this flag; the stored settings are only a stand-in until it reports.
@@ -374,9 +375,6 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mpVersion, mp.selfId, mp.status.members, mp.status.known, mp.markerPreferences, session]);
   useEffect(() => {
-    setCanvasError('');
-  }, [id]);
-  useEffect(() => {
     if (!panel) return;
     function key(event: KeyboardEvent) {
       if (isImeComposing(event)) return;
@@ -444,6 +442,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                 setPanel(null);
                 cancelCoordinateHide();
                 setCursor(null);
+                setCanvasError(null);
                 void w.select(m.id);
               }}
             >
@@ -480,15 +479,15 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
         onPointerEnter={cancelCoordinateHide}
         onPointerLeave={scheduleCoordinateHide}
       >
-        {w.loading ? (
+        {w.loading && !session ? (
           <div className="empty-state" role="status">
             <span className="spinner" />
             <p>{t('map.state.loading')}</p>
           </div>
         ) : w.error ? (
           <MapUnavailableState errorKey={w.error} onRetry={retryMap} />
-        ) : canvasError ? (
-          <MapUnavailableState errorKey={canvasError} onRetry={retryMap} />
+        ) : !w.loading && currentCanvasError ? (
+          <MapUnavailableState errorKey={currentCanvasError} onRetry={retryMap} />
         ) : !session || !preference ? (
           <div className="empty-state">
             <h2>{t('map.state.empty')}</h2>
@@ -519,7 +518,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
               onReady={(value) => {
                 map.current = value;
               }}
-              onError={setCanvasError}
+              onError={(key) => setCanvasError({ mapId: id, key })}
               ownerId={mp.selfId}
               ownerVisibility={ownerVisibility}
             />

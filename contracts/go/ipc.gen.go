@@ -6,6 +6,7 @@ import "math"
 const (
 	ContractSchemaVersion   int    = 1
 	ContractProtocolVersion string = "1"
+	UserSettingsVersion     int    = 1
 )
 
 type Status struct {
@@ -67,6 +68,7 @@ type ServerEvent struct {
 	OverlayView         *OverlayView          `json:"overlayView,omitempty"`
 	OverlayCommand      *OverlayCommand       `json:"overlayCommand,omitempty"`
 	GameMonitorStatus   *GameMonitorStatus    `json:"gameMonitorStatus,omitempty"`
+	GameMonitorSettings *GameMonitorSettings  `json:"gameMonitorSettings,omitempty"`
 	MultiplayerStatus   *MultiplayerStatus    `json:"multiplayerStatus,omitempty"`
 	RecognitionSettings *RecognitionSettings  `json:"recognitionSettings,omitempty"`
 	RecognitionRequest  *RecognitionRequest   `json:"recognitionRequest,omitempty"`
@@ -434,6 +436,7 @@ type RecognitionSettings struct {
 	CaptureWidth       int     `json:"captureWidth"`
 	CaptureHeight      int     `json:"captureHeight"`
 	AutoPush           bool    `json:"autoPush"`
+	OcrWarmup          bool    `json:"ocrWarmup"`
 	TemplateMatching   bool    `json:"templateMatching"`
 	TemplateStrict     bool    `json:"templateStrict"`
 	OcrUpscale         int     `json:"ocrUpscale"`
@@ -543,13 +546,14 @@ type OverlaySettings struct {
 }
 
 type UserSettings struct {
-	SchemaVersion int                 `json:"schemaVersion"`
-	Overlay       OverlaySettings     `json:"overlay"`
-	GameMonitor   GameMonitorSettings `json:"gameMonitor"`
-	Recognition   RecognitionSettings `json:"recognition"`
-	Language      string              `json:"language"`
-	CloseAction   string              `json:"closeAction"`
-	UpdateCheck   string              `json:"updateCheck"`
+	SchemaVersion   int                 `json:"schemaVersion"`
+	SettingsVersion int                 `json:"settingsVersion"`
+	Overlay         OverlaySettings     `json:"overlay"`
+	GameMonitor     GameMonitorSettings `json:"gameMonitor"`
+	Recognition     RecognitionSettings `json:"recognition"`
+	Language        string              `json:"language"`
+	CloseAction     string              `json:"closeAction"`
+	UpdateCheck     string              `json:"updateCheck"`
 }
 
 type OverlayBootstrap struct {

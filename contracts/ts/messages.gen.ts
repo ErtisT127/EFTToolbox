@@ -217,6 +217,8 @@ const zhCN = {
     "templateSimilarity": "模板相似度",
     "captureSize": "识别区域大小",
     "autoPush": "自动推送到悬浮窗",
+    "ocrWarmup": "启动时预热 OCR",
+    "ocrWarmupHint": "程序启动后在后台加载 OCR 引擎，减少第一次识别等待时间",
     "autoClose": "自动关闭悬浮窗",
     "autoCloseDelay": "自动关闭时间",
     "detailed": "详细设置",
@@ -249,6 +251,7 @@ const zhCN = {
     "windowSize": "悬浮窗尺寸",
     "windowPosition": "位置",
     "groups": {
+      "warmup": "识别引擎",
       "thresholds": "识别阈值",
       "ocr": "OCR",
       "template": "模板匹配",
@@ -309,7 +312,6 @@ const zhCN = {
     "state": {
       "loading": "加载离线地图",
       "unavailable": "地图暂不可用",
-      "reload": "重新加载",
       "empty": "暂无地图",
       "emptyHint": "准备离线地图数据后重试。"
     },
@@ -1012,6 +1014,8 @@ const enUS = {
     "templateSimilarity": "Template similarity",
     "captureSize": "Capture size",
     "autoPush": "Push to overlay",
+    "ocrWarmup": "Warm OCR on startup",
+    "ocrWarmupHint": "Load the OCR engine in the background after startup so the first recognition is faster",
     "autoClose": "Auto close overlay",
     "autoCloseDelay": "Auto-close after",
     "detailed": "Detailed settings",
@@ -1044,6 +1048,7 @@ const enUS = {
     "windowSize": "Panel size",
     "windowPosition": "Position",
     "groups": {
+      "warmup": "Recognition engine",
       "thresholds": "Matching thresholds",
       "ocr": "OCR",
       "template": "Template matching",
@@ -1104,7 +1109,6 @@ const enUS = {
     "state": {
       "loading": "Loading offline map",
       "unavailable": "Map unavailable",
-      "reload": "Reload",
       "empty": "No maps",
       "emptyHint": "Prepare offline map data, then retry."
     },

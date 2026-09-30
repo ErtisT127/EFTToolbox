@@ -16,7 +16,7 @@ export function MapUnavailableState({
       tone="network"
       title={t('map.state.unavailable')}
       description={t(errorKey as LocaleKey)}
-      actions={[{ label: t('map.state.reload'), onClick: onRetry }]}
+      actions={[{ label: t('common.retry'), onClick: onRetry }]}
     />
   );
 }

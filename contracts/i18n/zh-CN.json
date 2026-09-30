@@ -212,6 +212,8 @@
     "templateSimilarity": "模板相似度",
     "captureSize": "识别区域大小",
     "autoPush": "自动推送到悬浮窗",
+    "ocrWarmup": "启动时预热 OCR",
+    "ocrWarmupHint": "程序启动后在后台加载 OCR 引擎，减少第一次识别等待时间",
     "autoClose": "自动关闭悬浮窗",
     "autoCloseDelay": "自动关闭时间",
     "detailed": "详细设置",
@@ -244,6 +246,7 @@
     "windowSize": "悬浮窗尺寸",
     "windowPosition": "位置",
     "groups": {
+      "warmup": "识别引擎",
       "thresholds": "识别阈值",
       "ocr": "OCR",
       "template": "模板匹配",
@@ -304,7 +307,6 @@
     "state": {
       "loading": "加载离线地图",
       "unavailable": "地图暂不可用",
-      "reload": "重新加载",
       "empty": "暂无地图",
       "emptyHint": "准备离线地图数据后重试。"
     },

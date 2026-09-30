@@ -18,7 +18,7 @@ import {
   submitMapPreferences,
 } from '../../stores/clientState';
 import { useLocale, type LocaleKey } from '../../hooks/useLocale';
-import { errorKeyOf } from '../../lib/errors';
+import { DataLoadError, errorKeyOf } from '../../lib/errors';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { useRegisterConflictActions } from '../../stores/conflictActions';
 import { ErrorState } from '../../components/ErrorState';
@@ -41,11 +41,13 @@ export function SettingsPage({ initialTab }: { initialTab?: SettingsTab }) {
   const value = store.settings;
   const view = store.view;
   const settingsLoadError =
-    !value && !store.loading
-      ? store.error
-      : !monitor.settings && !monitor.loading
-        ? monitor.error
-        : '';
+    store.hasConnected && !store.connected
+      ? 'errors.request_failed'
+      : !value && !store.loading
+        ? store.error
+        : !monitor.settings && !monitor.loading
+          ? monitor.error
+          : '';
   const [tab, setTab] = useState<SettingsTab>(initialTab ?? settingsTabs[0]);
   // The recognition page jumps straight to its own tab.
   useEffect(() => {
@@ -158,6 +160,8 @@ export function SettingsPage({ initialTab }: { initialTab?: SettingsTab }) {
           : mapQuery.data && !isUsableMapData(mapQuery.data)
             ? 'errors.map_data_invalid'
             : '';
+  if (store.hasConnected && !store.connected)
+    throw new DataLoadError('errors.request_failed', 'settings');
   const pageError = settingsLoadError || mapLoadError;
   const isUserSettingsInvalid = settingsLoadError === 'errors.user_settings_invalid';
   const pageErrorState = pageError ? (

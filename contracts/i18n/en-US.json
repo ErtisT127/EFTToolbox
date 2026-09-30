@@ -212,6 +212,8 @@
     "templateSimilarity": "Template similarity",
     "captureSize": "Capture size",
     "autoPush": "Push to overlay",
+    "ocrWarmup": "Warm OCR on startup",
+    "ocrWarmupHint": "Load the OCR engine in the background after startup so the first recognition is faster",
     "autoClose": "Auto close overlay",
     "autoCloseDelay": "Auto-close after",
     "detailed": "Detailed settings",
@@ -244,6 +246,7 @@
     "windowSize": "Panel size",
     "windowPosition": "Position",
     "groups": {
+      "warmup": "Recognition engine",
       "thresholds": "Matching thresholds",
       "ocr": "OCR",
       "template": "Template matching",
@@ -304,7 +307,6 @@
     "state": {
       "loading": "Loading offline map",
       "unavailable": "Map unavailable",
-      "reload": "Reload",
       "empty": "No maps",
       "emptyHint": "Prepare offline map data, then retry."
     },

@@ -31,6 +31,19 @@ export function RecognitionSettingsTab() {
   return (
     <>
       <fieldset>
+        <legend>{t('recognition.groups.warmup')}</legend>
+        <label className="settings-check">
+          <input
+            type="checkbox"
+            checked={settings.ocrWarmup}
+            onChange={(event) => save({ ocrWarmup: event.target.checked })}
+          />
+          <HintTooltip content={t('recognition.ocrWarmupHint')}>
+            {t('recognition.ocrWarmup')}
+          </HintTooltip>
+        </label>
+      </fieldset>
+      <fieldset>
         <legend>{t('recognition.groups.thresholds')}</legend>
         <RecognitionTuningFields
           settings={settings}

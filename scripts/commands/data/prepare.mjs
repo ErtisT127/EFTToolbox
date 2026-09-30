@@ -420,6 +420,7 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
     for (const layer of meta.layers) addTiles(layer.id, layer.tilePath);
     const categories = new Map(),
       markers = [],
+      markerIds = new Set(),
       mapTasks = new Map();
     const category = (key, name, groupId, color, symbol, nameEn) => {
       const icon =
@@ -467,10 +468,11 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
         .update(JSON.stringify([id, categoryId, entry.id || '', name, p || position, taskId]))
         .digest('hex')
         .slice(0, 24);
-      if (markers.some((m) => m.id === markerId)) {
+      if (markerIds.has(markerId)) {
         counts.dedup++;
         return;
       }
+      markerIds.add(markerId);
       counts.emitted++;
       markers.push({
         id: markerId,

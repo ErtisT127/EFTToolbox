@@ -1,5 +1,5 @@
 import { Layers } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type L from 'leaflet';
 import type {
   Annotation,
@@ -16,9 +16,8 @@ import type {
   Sticker,
 } from '../../../contracts/ts/ipc.gen';
 import { MapCanvas, type ToolOptions } from '../pages/map/MapCanvas';
-import { LayerPanel } from '../pages/map/LayerPanel';
-import { AppPopover } from '../components/AppPopover';
-import { selectableFloors } from '../stores/workspaceStore';
+const CastLayers = lazy(() => import('./CastLayers'));
+import { selectableFloors } from '../pages/map/lib/floors';
 import { useLocale, type LocaleKey } from '../hooks/useLocale';
 import { api } from '../stores/api';
 import { store } from '../stores/store';
@@ -637,30 +636,20 @@ export function CastApp() {
               <Layers size={20} fill="currentColor" />
             </button>
           </div>
-          <AppPopover
-            open={layersOpen}
-            reference={layersButtonRef}
-            placement={portrait ? 'bottom-start' : 'right-start'}
-            boundaryRef={castRootRef}
-            onDismiss={() => setLayersOpen(false)}
-          >
-            <div
-              id="cast-layer-panel"
-              className="layer-panel floating cast-layer-panel"
-              role="dialog"
-              aria-modal="false"
-              aria-label={t('map.layers.title')}
-            >
-              <LayerPanel
+          {layersOpen && (
+            <Suspense fallback={null}>
+              <CastLayers
+                reference={layersButtonRef}
+                boundaryRef={castRootRef}
+                portrait={portrait}
                 data={model.data}
                 items={model.items}
                 preference={model.preference}
-                readOnly
                 onPreference={setPreference}
                 onClose={() => setLayersOpen(false)}
               />
-            </div>
-          </AppPopover>
+            </Suspense>
+          )}
           {tileBusy && !terminal && (
             <div className="cast-busy" role="status" aria-label={t('cast.loadingResources')}>
               <span className="spinner" />

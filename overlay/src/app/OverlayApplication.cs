@@ -29,7 +29,6 @@ internal sealed class OverlayApplication : IDisposable
     // producing anything the moment its token is cancelled.
     private CancellationTokenSource? recognitionRun;
     private string recognitionRequestId = "";
-    private readonly Dictionary<string, byte[]> recognitionIcons = [];
     private Preferences preferences = new();
     private OverlayBootstrap? bootstrap;
     // The shared owner-visibility rule's inputs: the local owner id, the room roster, and the
@@ -291,6 +290,8 @@ internal sealed class OverlayApplication : IDisposable
     /// <summary>The request a run works on, plus the token that supersedes it.</summary>
     private readonly record struct RecognitionRun(string RequestId, CancellationToken Token, RecognitionSettings Settings);
 
+    private sealed record RecognitionScore(RecognitionCandidate Candidate, double Score);
+
     private async Task RunRecognition(RecognitionRun run, string imageData)
     {
         var token = run.Token;
@@ -333,6 +334,9 @@ internal sealed class OverlayApplication : IDisposable
         if (candidates is null || token.IsCancellationRequested) return ([], false);
         var strict = settings.TemplateStrict;
         var threshold = settings.TemplateSimilarity;
+        var artworkByUrl = await FetchRecognitionArtworkAsync(candidates.Candidates, token);
+        if (token.IsCancellationRequested) return ([], false);
+        using var matchLimiter = new SemaphoreSlim(MatchConcurrency());
         var seen = new HashSet<string>();
         var rows = new List<RecognitionRow>();
         for (var index = 0; index < blocks.Count && index < candidates.Candidates.Length; index++)
@@ -340,18 +344,14 @@ internal sealed class OverlayApplication : IDisposable
             if (token.IsCancellationRequested) break;
             var shortlist = candidates.Candidates[index];
             if (shortlist.Length == 0) continue;
-            var bestScore = 0.0;
-            RecognitionCandidate? best = null;
-            foreach (var candidate in shortlist)
-            {
-                if (token.IsCancellationRequested) break;
-                var artwork = await IconBytesAsync(candidate.Image, token);
-                if (artwork is null) continue;
-                var score = recognition.MatchIcon(image, blocks[index], artwork, settings, token);
-                if (score > bestScore) { best = candidate; bestScore = score; }
-                if (bestScore >= 0.995) break;
-            }
-            var chosen = bestScore >= threshold && best is not null ? best : strict ? null : shortlist[0];
+            var scores = await Task.WhenAll(shortlist.Select(candidate => ScoreRecognitionCandidateAsync(
+                image, blocks[index], candidate, settings, token, matchLimiter, artworkByUrl)));
+            var best = scores.OfType<RecognitionScore>()
+                .OrderByDescending(value => value.Score)
+                .ThenBy(value => value.Candidate.Name)
+                .FirstOrDefault();
+            var bestScore = best?.Score ?? 0;
+            var chosen = best is not null && bestScore >= threshold ? best.Candidate : strict ? null : shortlist[0];
             if (chosen is null || !seen.Add(chosen.Id)) continue;
             rows.Add(new RecognitionRow
             {
@@ -362,21 +362,47 @@ internal sealed class OverlayApplication : IDisposable
         return ([.. rows], true);
     }
 
-    private async Task<byte[]?> IconBytesAsync(string url, CancellationToken token)
+    private static int FetchConcurrency() => Math.Min(8, Math.Max(2, Environment.ProcessorCount));
+
+    private static int MatchConcurrency() => Math.Min(4, Math.Max(1, Environment.ProcessorCount / 2));
+
+    private async Task<ConcurrentDictionary<string, byte[]>> FetchRecognitionArtworkAsync(
+        IReadOnlyList<RecognitionCandidate[]> candidates,
+        CancellationToken token)
     {
-        if (url.Length == 0) return null;
-        lock (recognitionIcons)
+        var urls = candidates.SelectMany(value => value).Select(value => value.Image)
+            .Where(value => value.Length > 0).Distinct(StringComparer.Ordinal).ToArray();
+        var artwork = new ConcurrentDictionary<string, byte[]>(StringComparer.Ordinal);
+        await Parallel.ForEachAsync(urls, new ParallelOptions
         {
-            if (recognitionIcons.TryGetValue(url, out var cached)) return cached;
-        }
-        var bytes = await client.AssetAsync(url, token);
-        if (bytes is null) return null;
-        lock (recognitionIcons)
+            MaxDegreeOfParallelism = FetchConcurrency(),
+            CancellationToken = token,
+        }, async (url, cancellationToken) =>
         {
-            if (recognitionIcons.Count > 512) recognitionIcons.Clear();
-            recognitionIcons[url] = bytes;
+            var bytes = await client.AssetAsync(url, cancellationToken);
+            if (bytes is not null) artwork[url] = bytes;
+        });
+        return artwork;
+    }
+
+    private async Task<RecognitionScore?> ScoreRecognitionCandidateAsync(
+        Mat image,
+        OcrBlock block,
+        RecognitionCandidate candidate,
+        RecognitionSettings settings,
+        CancellationToken token,
+        SemaphoreSlim limiter,
+        ConcurrentDictionary<string, byte[]> artworkByUrl)
+    {
+        if (!artworkByUrl.TryGetValue(candidate.Image, out var artwork))
+            return null;
+        await limiter.WaitAsync(token);
+        try
+        {
+            var score = await Task.Run(() => recognition.MatchIcon(image, block, artwork, settings, token), token);
+            return new RecognitionScore(candidate, score);
         }
-        return bytes;
+        finally { limiter.Release(); }
     }
 
     private void FailRecognition(RecognitionRun run, Exception error)
@@ -637,12 +663,15 @@ internal sealed class OverlayApplication : IDisposable
         if (e.RecognitionSettings is { } recognition)
         {
             client.InvalidateSettingsETags();
-            if (!recognitionWindow.HasPendingSave && !client.RecognitionSavePending && !client.RecognitionConflict)
+            if (e.Type == "user_settings_reset" ||
+                (!recognitionWindow.HasPendingSave && !client.RecognitionSavePending && !client.RecognitionConflict))
             {
                 recognitionSettings = recognition;
                 recognitionWindow.ApplySettings(recognition);
+                this.recognition.ConfigureWarmup(recognition.OcrWarmup);
             }
         }
+        if (e.Type == "user_settings_reset") recognitionWindow.ResetPosition();
         // A snapshot is what a late client sees; showing the panel from it would pop an old result
         // back up on every reconnect, so only live events move the window.
         var snapshot = e.Type == "snapshot";

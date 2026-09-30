@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useSelector } from 'react-redux';
 import {
   ArrowLeft,
@@ -208,7 +209,15 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
     } else if (catalog && settings) {
       setLoadError(null);
     }
-  }, [catalogQuery.isError, settingsQuery.isError, catalog, settings, t]);
+  }, [
+    catalogQuery.isError,
+    settingsQuery.isError,
+    catalog,
+    settings,
+    overlay.connected,
+    overlay.hasConnected,
+    t,
+  ]);
 
   useEffect(() => {
     if (!settings || settingsDraft) return;
@@ -266,8 +275,13 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
     setDescending(nextState.descending);
     saveSettings(nextState);
   };
+  const resetTableScroll = () => {
+    if (tableNode) tableNode.scrollTop = 0;
+    setScrollTop(0);
+  };
   const changeCategory = (next: string) => {
-    setCategory(next);
+    if (next !== category) resetTableScroll();
+    flushSync(() => setCategory(next));
     saveSettings({ category: next });
   };
   const cancelUpdate = () => {
@@ -345,6 +359,8 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
 
   // Rendering the failure instead of handling it locally lets the module's error boundary take
   // over the whole page with the shared error state.
+  if (overlay.hasConnected && !overlay.connected)
+    throw new DataLoadError('errors.request_failed', 'items');
   if (loadError) throw loadError;
 
   return (
@@ -355,7 +371,10 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
           <input
             aria-label={t('items.search')}
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              if (event.target.value !== search) resetTableScroll();
+              setSearch(event.target.value);
+            }}
             placeholder={t('items.searchPlaceholder')}
           />
           {search && (

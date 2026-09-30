@@ -93,6 +93,78 @@ func TestResetUserSettingsRestoresDefaultsOnly(t *testing.T) {
 	}
 }
 
+func TestRecognitionWarmupMigrationPreservesExplicitDisable(t *testing.T) {
+	root, handler := mapFixture(t)
+	path := filepath.Join(root, "user", "user-settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	write := func(warmup any) {
+		t.Helper()
+		value := defaultUserSettings()
+		raw, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var document map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &document); err != nil {
+			t.Fatal(err)
+		}
+		var recognition map[string]json.RawMessage
+		if err := json.Unmarshal(document["recognition"], &recognition); err != nil {
+			t.Fatal(err)
+		}
+		if warmup == nil {
+			delete(recognition, "ocrWarmup")
+			delete(document, "settingsVersion")
+		} else {
+			recognition["ocrWarmup"], err = json.Marshal(warmup)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		document["recognition"], err = json.Marshal(recognition)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func() contracts.UserSettings {
+		t.Helper()
+		response := callLocalJSON(t, handler, http.MethodGet, "/api/user-settings", nil)
+		if response.Code != http.StatusOK {
+			t.Fatalf("settings GET failed: %d %s", response.Code, response.Body.String())
+		}
+		var value contracts.UserSettings
+		if err := json.Unmarshal(response.Body.Bytes(), &value); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+
+	write(nil)
+	if err := SetHostCloseAction(root, "tray"); err != nil {
+		t.Fatal(err)
+	}
+	if value, err := readUserSettings(root); err != nil || !value.Recognition.OcrWarmup {
+		t.Fatalf("legacy host write disabled OCR warmup: %+v %v", value.Recognition, err)
+	}
+	if value := read(); !value.Recognition.OcrWarmup {
+		t.Fatal("legacy settings did not enable OCR warmup")
+	}
+	write(false)
+	if value := read(); value.Recognition.OcrWarmup {
+		t.Fatal("explicitly disabled OCR warmup was overwritten")
+	}
+}
+
 func TestHostCloseActionDefaultsAndPersistence(t *testing.T) {
 	root := t.TempDir()
 	if action := HostCloseAction(root); action != "ask" {

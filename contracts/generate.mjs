@@ -42,6 +42,7 @@ const scalarDefinition = (name) => {
 const versions = [
   ['ContractSchemaVersion', 'SchemaVersion'],
   ['ContractProtocolVersion', 'ProtocolVersion'],
+  ['UserSettingsVersion', 'UserSettingsVersion'],
 ].map(([name, definition]) => {
   const value = schema.$defs[definition]?.const;
   if (value === undefined) throw new Error(`Missing contract constant: ${definition}`);

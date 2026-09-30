@@ -1,6 +1,6 @@
 import { ChevronRight, X } from 'lucide-react';
 import type { Annotation, MapData, MapPreference } from '../../../../contracts/ts/ipc.gen';
-import { selectableFloors } from '../../stores/workspaceStore';
+import { selectableFloors } from './lib/floors';
 import { useLocale, type LocaleKey } from '../../hooks/useLocale';
 
 type OwnerRow = {

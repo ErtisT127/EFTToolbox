@@ -10,6 +10,10 @@
       "type": "string",
       "const": "1"
     },
+    "UserSettingsVersion": {
+      "type": "integer",
+      "const": 1
+    },
     "Status": {
       "type": "object",
       "additionalProperties": false,
@@ -126,6 +130,7 @@
             "multiplayer_changed",
             "items_changed",
             "recognition_settings",
+            "user_settings_reset",
             "recognition_request",
             "recognition_result",
             "recognition_started",
@@ -194,6 +199,9 @@
         },
         "gameMonitorStatus": {
           "$ref": "#/$defs/GameMonitorStatus"
+        },
+        "gameMonitorSettings": {
+          "$ref": "#/$defs/GameMonitorSettings"
         },
         "multiplayerStatus": {
           "$ref": "#/$defs/MultiplayerStatus"
@@ -1241,6 +1249,7 @@
         "captureWidth",
         "captureHeight",
         "autoPush",
+        "ocrWarmup",
         "templateMatching",
         "templateStrict",
         "ocrUpscale",
@@ -1297,6 +1306,10 @@
         },
         "autoPush": {
           "description": "Show the recognition result in the overlay panel; the dashboard shows it either way.",
+          "type": "boolean"
+        },
+        "ocrWarmup": {
+          "description": "Warm the OCR engine after the overlay starts so the first recognition does not pay model startup cost.",
           "type": "boolean"
         },
         "templateMatching": {
@@ -1686,6 +1699,7 @@
       "additionalProperties": false,
       "required": [
         "schemaVersion",
+        "settingsVersion",
         "overlay",
         "gameMonitor",
         "recognition",
@@ -1695,6 +1709,7 @@
       ],
       "properties": {
         "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
+        "settingsVersion": { "$ref": "#/$defs/UserSettingsVersion" },
         "overlay": { "$ref": "#/$defs/OverlaySettings" },
         "gameMonitor": { "$ref": "#/$defs/GameMonitorSettings" },
         "recognition": { "$ref": "#/$defs/RecognitionSettings" },

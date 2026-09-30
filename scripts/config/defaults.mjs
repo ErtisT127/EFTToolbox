@@ -1,8 +1,9 @@
-import { ContractSchemaVersion } from '../../contracts/version.gen.mjs';
+import { ContractSchemaVersion, UserSettingsVersion } from '../../contracts/version.gen.mjs';
 
 export const defaults = {
   userSettings: {
     schemaVersion: ContractSchemaVersion,
+    settingsVersion: UserSettingsVersion,
     overlay: {
       schemaVersion: ContractSchemaVersion,
       visible: false,
@@ -59,6 +60,7 @@ export const defaults = {
       captureWidth: 640,
       captureHeight: 640,
       autoPush: true,
+      ocrWarmup: true,
       templateMatching: true,
       templateStrict: false,
       ocrUpscale: 2,

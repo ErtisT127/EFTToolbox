@@ -3,9 +3,9 @@ import { useSelector } from 'react-redux';
 import type {
   GameMonitorSettings as ContractMonitorSettings,
   GameMonitorStatus as ContractMonitorStatus,
+  ServerEvent,
 } from '../../../contracts/ts/ipc.gen';
-import { isRevisionConflict } from './api';
-import { api } from './api';
+import { api, isRevisionConflict } from './api';
 import { errorKeyOf } from '../lib/errors';
 import { store, type RootState } from './store';
 import { clearConflict, setConflict, setGameMonitorState } from './clientState';
@@ -14,15 +14,6 @@ export type GameMode = 'pvp' | 'pve' | 'pvp-season';
 
 export type GameMonitorSettings = ContractMonitorSettings;
 export type GameMonitorStatus = ContractMonitorStatus;
-
-type MonitorEvent = {
-  type?: string;
-  gameMonitorSettings?: GameMonitorSettings;
-  gameMonitorStatus?: GameMonitorStatus;
-  monitorSettings?: GameMonitorSettings;
-  monitorStatus?: GameMonitorStatus;
-  mode?: GameMode;
-};
 
 class GameMonitorStore {
   get settingsDraft() {
@@ -209,11 +200,11 @@ class GameMonitorStore {
     }
   }
 
-  handleEvent(event: MonitorEvent) {
-    if (event.gameMonitorSettings || event.monitorSettings) {
+  handleEvent(event: ServerEvent) {
+    if (event.gameMonitorSettings) {
       store.dispatch(api.util.invalidateTags(['Settings']));
     }
-    const incomingStatus = event.gameMonitorStatus || event.monitorStatus;
+    const incomingStatus = event.gameMonitorStatus;
     const previousMap = this.status?.mapId;
     if (incomingStatus)
       void store.dispatch(
@@ -225,13 +216,6 @@ class GameMonitorStore {
       incomingStatus.mapId !== previousMap
     )
       this.mapRevision++;
-    if (event.mode && incomingStatus)
-      void store.dispatch(
-        api.util.upsertQueryData('getGameMonitorStatus', undefined, {
-          ...incomingStatus,
-          mode: event.mode,
-        }),
-      );
     if (event.type === 'resources_changed') this.resourceRevision++;
     this.changed();
   }

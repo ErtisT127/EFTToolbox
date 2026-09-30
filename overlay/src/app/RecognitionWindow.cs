@@ -56,7 +56,7 @@ internal sealed class RecognitionWindow : IDisposable
         renderer.Initialize(hwnd);
         SetAssets(assetDirectory);
         // The swap chain has to exist before the first frame, even while the window is hidden.
-        ApplyWindow();
+        ApplyWindow(place: false);
     }
 
     internal bool Visible => visible;
@@ -76,9 +76,21 @@ internal sealed class RecognitionWindow : IDisposable
     internal void ApplySettings(RecognitionSettings value)
     {
         var previous = settings;
+        // (0,0) is the persisted "use the default position" sentinel. Once this process has
+        // resolved it to the bottom-right corner, keep that local position until the user drags
+        // the panel or the dashboard has a real saved coordinate.
+        if (placed && value.WindowLeft == 0 && value.WindowTop == 0)
+            value = value with { WindowLeft = settings.WindowLeft, WindowTop = settings.WindowTop };
         settings = value;
-        if (initialized && (previous.WindowWidth != value.WindowWidth || previous.WindowHeight != value.WindowHeight || previous.WindowLeft != value.WindowLeft || previous.WindowTop != value.WindowTop))
+        if (initialized && (!placed || previous.WindowWidth != value.WindowWidth || previous.WindowHeight != value.WindowHeight || previous.WindowLeft != value.WindowLeft || previous.WindowTop != value.WindowTop))
             ApplyWindow();
+    }
+
+    internal void ResetPosition()
+    {
+        placed = false;
+        settings = settings with { WindowLeft = 0, WindowTop = 0 };
+        if (initialized) ApplyWindow();
     }
 
     /// <summary>Raised the moment a run starts, so the reader sees the window before the OCR does its
@@ -160,7 +172,7 @@ internal sealed class RecognitionWindow : IDisposable
         Native.ShowWindow(hwnd, 0);
     }
 
-    private void ApplyWindow()
+    private void ApplyWindow(bool place = true)
     {
         var metrics = new PanelMetrics(Scale());
         // The contract's floor is a logical size; the columns add the DPI on top, so a scaled display
@@ -168,7 +180,9 @@ internal sealed class RecognitionWindow : IDisposable
         var minimumWidth = Math.Max(320, (int)(Math.Ceiling(metrics.MinimumWidth() / 8) * 8));
         var width = Math.Clamp(settings.WindowWidth, minimumWidth, 900);
         var height = Math.Clamp(settings.WindowHeight, 200, 640);
-        var (left, top) = Position(width, height);
+        var left = settings.WindowLeft;
+        var top = settings.WindowTop;
+        if (place) (left, top) = Position(width, height);
         settings = settings with { WindowLeft = left, WindowTop = top, WindowWidth = width, WindowHeight = height };
         Native.SetWindowPos(hwnd, -1, left, top, width, height, 0x0010 | 0x0020);
         renderer.Resize(width, height);

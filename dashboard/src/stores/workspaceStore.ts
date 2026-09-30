@@ -16,6 +16,7 @@ import {
 } from '../defaults.gen.ts';
 import { api, isRevisionConflict } from './api.ts';
 import { errorKeyOf } from '../lib/errors.ts';
+import { selectableFloors } from '../pages/map/lib/floors';
 import { store, type RootState, waitForAnnotationSaves } from './store.ts';
 import {
   clearAnnotationDraft,
@@ -44,15 +45,7 @@ class DataLoadError extends Error {
   }
 }
 
-export function selectableFloors(data: MapData, basemap: string) {
-  return data.floors.filter(
-    (floor) =>
-      floor.id !== data.baseFloor &&
-      (basemap === 'tiles'
-        ? data.tiles.some((tile) => tile.floorId === floor.id) || floor.svgGroups.length > 0
-        : floor.svgGroups.length > 0),
-  );
-}
+export { selectableFloors } from '../pages/map/lib/floors';
 
 // The UI language, applied at boot from user settings; map data requests follow it so map and
 // marker names render in the same language as the interface.
@@ -398,7 +391,7 @@ export class Workspace {
 
   async select(id: string, reload = false) {
     const sequence = ++this.sequence;
-    store.dispatch(setWorkspaceState({ activeId: id, error: '', loading: true }));
+    store.dispatch(setWorkspaceState({ error: '', loading: true }));
     try {
       if (reload) {
         const catalog = await store
@@ -435,6 +428,7 @@ export class Workspace {
       preferences.selectedMap = id;
       this.normalizePreference(preferences, id, this.sessions.get(id)!.data);
       this.setPreferencesDraft(preferences);
+      store.dispatch(setWorkspaceState({ activeId: id }));
     } catch (error) {
       if (sequence === this.sequence)
         store.dispatch(setWorkspaceState({ error: errorKeyOf(error, 'errors.request_failed') }));
@@ -514,27 +508,6 @@ export class Workspace {
     const value = structuredClone(this.calibratorPreference);
     Object.assign(value, changes);
     this.setCalibratorPreferencesDraft(value);
-  }
-  private findPreference(preferences: Preferences, id: string, data: MapData) {
-    let preference = preferences.maps.find((entry) => entry.mapId === id);
-    if (!preference) {
-      preference = {
-        mapId: id,
-        basemap: data.svgUrl ? 'svg' : 'tiles',
-        floorId: data.defaultFloor,
-        hiddenCategories: data.categories
-          .filter((category) => !defaultGroups.includes(category.groupId))
-          .map((category) => category.id),
-        collapsedGroups: [],
-        showAnnotations: true,
-        selectedTasks: [],
-        taskFilterActive: false,
-        center: [],
-        zoom: 0,
-      };
-      preferences.maps.push(preference);
-    }
-    return preference;
   }
   // Stickers are map-independent, so usage lives on the global preferences. The picker sorts by
   // count, which is why this is a tally rather than a most-recently-used list.

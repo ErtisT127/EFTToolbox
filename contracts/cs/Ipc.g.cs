@@ -6,6 +6,7 @@ namespace EFTToolbox.Contracts;
 public static class ContractVersions {
   public const int ContractSchemaVersion = 1;
   public const string ContractProtocolVersion = "1";
+  public const int UserSettingsVersion = 1;
 }
 
 public sealed record Status {
@@ -67,6 +68,7 @@ public sealed record ServerEvent {
   [JsonPropertyName("overlayView")] public OverlayView? OverlayView { get; init; } = null;
   [JsonPropertyName("overlayCommand")] public OverlayCommand? OverlayCommand { get; init; } = null;
   [JsonPropertyName("gameMonitorStatus")] public GameMonitorStatus? GameMonitorStatus { get; init; } = null;
+  [JsonPropertyName("gameMonitorSettings")] public GameMonitorSettings? GameMonitorSettings { get; init; } = null;
   [JsonPropertyName("multiplayerStatus")] public MultiplayerStatus? MultiplayerStatus { get; init; } = null;
   [JsonPropertyName("recognitionSettings")] public RecognitionSettings? RecognitionSettings { get; init; } = null;
   [JsonPropertyName("recognitionRequest")] public RecognitionRequest? RecognitionRequest { get; init; } = null;
@@ -434,6 +436,7 @@ public sealed record RecognitionSettings {
   [JsonPropertyName("captureWidth")] public int CaptureWidth { get; init; } = default;
   [JsonPropertyName("captureHeight")] public int CaptureHeight { get; init; } = default;
   [JsonPropertyName("autoPush")] public bool AutoPush { get; init; } = default;
+  [JsonPropertyName("ocrWarmup")] public bool OcrWarmup { get; init; } = default;
   [JsonPropertyName("templateMatching")] public bool TemplateMatching { get; init; } = default;
   [JsonPropertyName("templateStrict")] public bool TemplateStrict { get; init; } = default;
   [JsonPropertyName("ocrUpscale")] public int OcrUpscale { get; init; } = default;
@@ -544,6 +547,7 @@ public sealed record OverlaySettings {
 
 public sealed record UserSettings {
   [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; init; } = default;
+  [JsonPropertyName("settingsVersion")] public int SettingsVersion { get; init; } = default;
   [JsonPropertyName("overlay")] public OverlaySettings Overlay { get; init; } = new();
   [JsonPropertyName("gameMonitor")] public GameMonitorSettings GameMonitor { get; init; } = new();
   [JsonPropertyName("recognition")] public RecognitionSettings Recognition { get; init; } = new();

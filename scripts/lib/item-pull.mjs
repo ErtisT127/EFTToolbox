@@ -1,7 +1,7 @@
 // Reusable upstream item pull: snapshot loading/fetching, the content-hash image cache and the
 // five-field catalog. CLI commands are thin wrappers; a backend pull entry can reuse the same
 // functions and artifact contracts (items/manifest.json and items/{mode}/items_*.json).
-import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename, stat, readdir, unlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { download } from './download.mjs';
@@ -10,6 +10,8 @@ import { ContractSchemaVersion } from '../../contracts/version.gen.mjs';
 export const modes = ['pvp', 'pve', 'pvp-season'];
 const upstreamModes = { pvp: 'regular', pve: 'pve', 'pvp-season': 'pvp-season' };
 const imageExtensions = ['.webp', '.png', '.jpg'];
+const retainedPreviousImages = 2;
+const contentImageName = /^(?:item|trader|mob|category)-[0-9a-f]{24}\.(?:webp|png|jpg)$/;
 
 const snapshotUrl = (mode, name) => `https://json.tarkov.dev/${upstreamModes[mode]}/${name}`;
 
@@ -180,13 +182,21 @@ export async function syncImages(upstream, jobs, concurrency = 6) {
       }
     }),
   );
-  // Start from the prior manifest so sources that dropped out of the upstream data keep their
-  // entries (and their files tracked) instead of silently losing the cache record.
-  const sources = new Map(entries);
+  // Rebuild the manifest from active jobs. A dropped source survives only while an existing
+  // catalog or map still references its file, which lets the next catalog write reclaim it.
+  const sources = new Map();
+  const jobUrls = new Set(jobs.map((job) => job.url));
   for (const job of jobs) {
     const result = results.get(job.url);
-    if (!result) continue;
     const entry = entries.get(job.url);
+    if (!result) {
+      if (entry)
+        sources.set(job.url, {
+          ...entry,
+          previous: (entry.previous ?? []).slice(0, retainedPreviousImages),
+        });
+      continue;
+    }
     const history = [...(entry?.previous ?? [])];
     if (entry && entry.sha256 !== result.sha256)
       history.unshift({ file: entry.file, sha256: entry.sha256 });
@@ -194,7 +204,20 @@ export async function syncImages(upstream, jobs, concurrency = 6) {
     for (const stale of history)
       if (stale.sha256 !== result.sha256 && !previous.some((p) => p.sha256 === stale.sha256))
         previous.push(stale);
-    sources.set(job.url, { source: job.url, file: result.file, sha256: result.sha256, previous });
+    sources.set(job.url, {
+      source: job.url,
+      file: result.file,
+      sha256: result.sha256,
+      previous: previous.slice(0, retainedPreviousImages),
+    });
+  }
+  const referenced = await referencedImageFiles(upstream);
+  for (const [url, entry] of entries) {
+    if (jobUrls.has(url)) continue;
+    const previous = (entry.previous ?? [])
+      .filter((image) => referenced.has(image.file))
+      .slice(0, retainedPreviousImages);
+    if (referenced.has(entry.file) || previous.length) sources.set(url, { ...entry, previous });
   }
   const manifest = {
     fetchedAt: new Date().toISOString(),
@@ -205,6 +228,64 @@ export async function syncImages(upstream, jobs, concurrency = 6) {
   await writeFile(staging, JSON.stringify(manifest, null, 2) + '\n');
   await rename(staging, manifestPath);
   return { manifest, downloaded, skipped };
+}
+
+async function referencedImageFiles(upstream) {
+  const files = new Set();
+  const add = (value) => {
+    if (typeof value !== 'string' || !value.startsWith('/api/assets/')) return;
+    const file = value.slice('/api/assets/'.length);
+    if (/^(?:items|portraits|maps\/icons)\/[A-Za-z0-9_./-]+$/.test(file)) files.add(file);
+  };
+  const visit = (value) => {
+    if (typeof value === 'string') add(value);
+    else if (Array.isArray(value)) value.forEach(visit);
+    else if (value && typeof value === 'object') Object.values(value).forEach(visit);
+  };
+  const roots = [
+    path.join(upstream, 'stickers.json'),
+    path.join(upstream, 'items'),
+    path.join(upstream, 'modes'),
+  ];
+  const walk = async (file) => {
+    let fileStat;
+    try {
+      fileStat = await stat(file);
+    } catch (error) {
+      if (error.code === 'ENOENT') return;
+      throw error;
+    }
+    if (fileStat.isDirectory()) {
+      for (const name of await readdir(file)) await walk(path.join(file, name));
+    } else if (file.endsWith('.json') && !file.endsWith('manifest.json')) {
+      visit(JSON.parse(await readFile(file, 'utf8')));
+    }
+  };
+  for (const root of roots) await walk(root);
+  return files;
+}
+
+export async function pruneImageAssets(upstream, manifest) {
+  const referenced = await referencedImageFiles(upstream);
+  for (const entry of manifest.sources ?? []) {
+    if (entry.file) referenced.add(entry.file);
+    for (const image of entry.previous ?? []) if (image.file) referenced.add(image.file);
+  }
+  for (const directory of ['items', 'portraits', 'maps/icons']) {
+    const root = path.join(upstream, 'assets', directory);
+    let names;
+    try {
+      names = await readdir(root, { withFileTypes: true });
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw error;
+    }
+    for (const entry of names) {
+      if (!entry.isFile() || !contentImageName.test(entry.name)) continue;
+      const file = `${directory}/${entry.name}`;
+      if (!referenced.has(file)) await unlink(path.join(root, entry.name));
+    }
+  }
 }
 
 // source URL -> served backend path, as baked into catalogs, markers and stickers.
@@ -458,4 +539,11 @@ export async function writeCatalog(upstream, mode, catalogs) {
     await writeFile(staging, JSON.stringify({ ...catalog, fetchedAt }) + '\n');
     await rename(staging, target);
   }
+  let manifest = { sources: [] };
+  try {
+    manifest = JSON.parse(await readFile(path.join(upstream, 'items', 'manifest.json'), 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  await pruneImageAssets(upstream, manifest);
 }

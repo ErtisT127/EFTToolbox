@@ -17,7 +17,7 @@ import {
   accent,
   latLng,
   isAnnotationVisible,
-  paintAnnotations,
+  AnnotationRenderer,
   hitAnnotation,
   type OwnerVisibility,
 } from './lib/annotations';
@@ -144,9 +144,9 @@ export function MapCanvas(props: Props) {
     // move, delete or get erased here.
     const canModify = (a: Annotation) =>
       !current.current.ownerVisibility || a.ownerId === current.current.ownerVisibility.selfId;
+    const annotationRenderer = new AnnotationRenderer(userLayer.current!);
     function paint(items: Annotation[]) {
-      paintAnnotations(
-        userLayer.current!,
+      annotationRenderer.paint(
         items,
         current.current.preference,
         current.current.stickers,
@@ -257,15 +257,21 @@ export function MapCanvas(props: Props) {
     let brushFrame = 0;
     let brushPreview: L.Polyline | null = null;
     let dragFrame = 0;
-    let pendingDragDraft: Annotation[] | null = null;
-    const scheduleDragPaint = (draft: Annotation[]) => {
-      pendingDragDraft = draft;
+    let pendingDragPaint: { ids: Set<string>; offset: MapPoint } | null = null;
+    const scheduleDragPaint = (ids: Set<string>, offset: MapPoint) => {
+      pendingDragPaint = { ids, offset };
       if (dragFrame) return;
       dragFrame = requestAnimationFrame(() => {
         dragFrame = 0;
-        if (pendingDragDraft) paint(pendingDragDraft);
-        pendingDragDraft = null;
+        const pending = pendingDragPaint;
+        pendingDragPaint = null;
+        if (pending) annotationRenderer.move(pending.ids, pending.offset);
       });
+    };
+    const cancelDragPaint = () => {
+      cancelAnimationFrame(dragFrame);
+      dragFrame = 0;
+      pendingDragPaint = null;
     };
     function clearBrush() {
       cancelAnimationFrame(brushFrame);
@@ -297,6 +303,15 @@ export function MapCanvas(props: Props) {
       g.draft = g.draft.filter((a) => !canModify(a) || !hit(a, pixel, o.eraserSize / 2));
       paint(g.draft);
     }
+    const translated = (items: Annotation[], ids: Set<string>, offset: MapPoint) =>
+      items.map((a) =>
+        ids.has(a.id)
+          ? {
+              ...a,
+              points: a.points.map((v) => ({ x: v.x + offset.x, y: v.y + offset.y })),
+            }
+          : a,
+      );
     function down(event: PointerEvent) {
       builtinClick = false;
       if (event.button !== 0 && event.button !== 1) return;
@@ -404,12 +419,7 @@ export function MapCanvas(props: Props) {
         if (g.dragIds.size) {
           const dx = p.x - g.startPoint.x,
             dy = p.y - g.startPoint.y;
-          g.draft = g.original.map((a) =>
-            g.dragIds.has(a.id)
-              ? { ...a, points: a.points.map((v) => ({ x: v.x + dx, y: v.y + dy })) }
-              : a,
-          );
-          scheduleDragPaint(g.draft);
+          scheduleDragPaint(g.dragIds, { x: dx, y: dy });
         } else {
           preview.clearLayers();
           L.rectangle([latLng(g.startPoint), latLng(p)], {
@@ -432,9 +442,7 @@ export function MapCanvas(props: Props) {
         if (g.accepted.distanceTo(endpoint) > 0) g.points.push(toPoint(endpoint));
       }
       clearBrush();
-      cancelAnimationFrame(dragFrame);
-      dragFrame = 0;
-      pendingDragDraft = null;
+      cancelDragPaint();
       gesture = null;
       host.classList.remove('panning');
       preview.clearLayers();
@@ -500,6 +508,13 @@ export function MapCanvas(props: Props) {
             selection.add(a.id);
         }
       }
+      if (g.kind === 'edit' && g.dragIds.size && g.moved) {
+        const end = toPoint(eventPixel(event));
+        g.draft = translated(g.original, g.dragIds, {
+          x: end.x - g.startPoint.x,
+          y: end.y - g.startPoint.y,
+        });
+      }
       if (!p.readOnly && g.draft !== g.original) p.onCommit(g.draft);
       paint(g.draft);
       if (
@@ -536,6 +551,7 @@ export function MapCanvas(props: Props) {
         event.target.isContentEditable);
     function cancelGesture() {
       clearBrush();
+      cancelDragPaint();
       if (!gesture) return;
       if (host.hasPointerCapture(gesture.pointerId)) host.releasePointerCapture(gesture.pointerId);
       paint(gesture.original);
@@ -810,6 +826,7 @@ export function MapCanvas(props: Props) {
       current.current.onTemporaryHand(false);
       clearTimeout(zoomTimer);
       clearBrush();
+      cancelDragPaint();
       host.removeEventListener('wheel', wheelMarkers);
       if (!current.current.readOnly) {
         host.removeEventListener('dragstart', preventDrag);

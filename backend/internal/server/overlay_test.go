@@ -216,6 +216,26 @@ func TestRecognitionClearDoesNotCancelNewerRun(t *testing.T) {
 	}
 }
 
+func TestRecognitionCandidatesKeepStableTopKOrder(t *testing.T) {
+	catalog := contracts.ItemsCatalog{Items: []contracts.ItemsCatalogItem{
+		{Id: "zulu", Name: "Zulu", ShortName: "same"},
+		{Id: "alpha", Name: "Alpha", ShortName: "same"},
+		{Id: "same-first", Name: "Same", ShortName: "same"},
+		{Id: "same-second", Name: "Same", ShortName: "same"},
+	}}
+	settings := contracts.RecognitionSettings{CandidateLimit: 3, OcrMinLength: 2, NameSimilarity: 1}
+	got := recognitionCandidates(catalog, []string{"same", "same"}, settings)
+	if len(got) != 2 || len(got[0]) != 3 || len(got[1]) != 3 {
+		t.Fatalf("unexpected candidate groups: %#v", got)
+	}
+	wantIDs := []string{"alpha", "same-first", "same-second"}
+	for index, want := range wantIDs {
+		if got[0][index].Id != want || got[1][index].Id != want {
+			t.Fatalf("candidate order = %#v, want %v", got[0], wantIDs)
+		}
+	}
+}
+
 func TestOverlayConnectionReplacement(t *testing.T) {
 	_, handler := mapFixture(t)
 	srv := httptest.NewServer(handler)

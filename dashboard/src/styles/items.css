@@ -791,10 +791,6 @@
   font-size: var(--text-md);
   line-height: 1.25;
 }
-.items-rows {
-  will-change: transform;
-}
-
 /* Mode switches and manual reloads reuse the same table, so the refresh reads as an overlay
    instead of a remount. */
 .items-refresh {

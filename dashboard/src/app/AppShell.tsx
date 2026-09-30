@@ -186,7 +186,13 @@ export function AppShell() {
             <SettingsPage initialTab={settingsTab} />
           </ErrorBoundary>
         ) : (
-          <ErrorBoundary module="items" resetKeys={[page]} onRetry={() => window.location.reload()}>
+          <ErrorBoundary
+            module="items"
+            resetKeys={[page]}
+            onRetry={() =>
+              store.dispatch(api.util.invalidateTags(['Items', 'ItemsStatus', 'Settings']))
+            }
+          >
             <ItemsPage onOpenSettings={() => openSettings('recognition')} />
           </ErrorBoundary>
         )}

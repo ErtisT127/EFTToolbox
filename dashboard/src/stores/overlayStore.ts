@@ -2,14 +2,15 @@ import { useSyncExternalStore } from 'react';
 import { useSelector } from 'react-redux';
 import i18n from '../i18n';
 import type { LocaleKey } from '../hooks/useLocale';
-import type {
-  OverlaySettings,
-  OverlayView,
-  OverlayCommand,
-  PlayerState,
-  ServerEvent,
-  RecognitionResult,
-  RecognitionSettings,
+import {
+  ContractProtocolVersion,
+  type OverlaySettings,
+  type OverlayView,
+  type OverlayCommand,
+  type PlayerState,
+  type ServerEvent,
+  type RecognitionResult,
+  type RecognitionSettings,
 } from '../../../contracts/ts/ipc.gen';
 import { reportClientLog, workspace } from './workspaceStore';
 import { gameMonitor } from './gameMonitorStore';
@@ -75,8 +76,12 @@ class OverlayStore {
     store.dispatch(setOverlayState({ view: value }));
   }
   players = new Map<string, PlayerState>();
+  private connectedOnce = false;
   get connected() {
     return store.getState().client.overlay.connected;
+  }
+  get hasConnected() {
+    return this.connectedOnce;
   }
   set connected(value: boolean) {
     if (this.connected !== value) store.dispatch(setOverlayState({ connected: value }));
@@ -388,9 +393,9 @@ class OverlayStore {
       stale = setTimeout(reconnect, 7000);
       current.onmessage = (event) => {
         try {
-          const e = JSON.parse(String(event.data)) as ServerEvent & Record<string, unknown>;
+          const e = JSON.parse(String(event.data)) as ServerEvent;
           const protocolVersion = String(e.status?.protocolVersion || '');
-          if (protocolVersion !== '1') throw new Error('Unsupported protocol');
+          if (protocolVersion !== ContractProtocolVersion) throw new Error('Unsupported protocol');
           if (e.type === 'resources_changed') {
             store.dispatch(api.util.invalidateTags(['Maps', 'Items', 'Preferences']));
           }
@@ -404,16 +409,12 @@ class OverlayStore {
                 { type: 'Calibration', id: `${e.mapId}:tiles` },
               ]),
             );
-          if (
-            e.overlaySettings ||
-            e.recognitionSettings ||
-            e.gameMonitorSettings ||
-            e.monitorSettings
-          )
+          if (e.overlaySettings || e.recognitionSettings || e.gameMonitorSettings)
             store.dispatch(api.util.invalidateTags(['Settings']));
           if (e.multiplayerStatus) store.dispatch(api.util.invalidateTags(['Multiplayer']));
           gameMonitor.handleEvent(e);
           if (e.multiplayerStatus) multiplayer.handleStatus(e.multiplayerStatus);
+          this.connectedOnce = true;
           this.connected = true;
           clearTimeout(stale);
           stale = setTimeout(reconnect, 7000);
