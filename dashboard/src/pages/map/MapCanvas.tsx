@@ -902,7 +902,7 @@ export function MapCanvas(props: Props) {
     renderUsers.current(items);
   }, [items, preference.floorId, preference.showAnnotations, props.ownerVisibility, ready]);
   useEffect(() => {
-    if (!props.playerSource) renderPlayers.current(props.players);
+    renderPlayers.current(props.playerSource?.current || props.players);
   }, [
     props.players,
     props.playerSource,
