@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Numerics;
 using ImGuiNET;
 using Vortice.D3DCompiler;
@@ -156,6 +157,7 @@ internal sealed class OverlayRenderer : IDisposable
     internal double LastPresentMs { get; private set; }
     internal unsafe void Render(MapScene scene, MarkerLayer markers, TileLayerRenderer tiles, bool circle, bool backdrop, int opacity, bool editing, Operation? operation = null)
     {
+        var renderTimer = Stopwatch.StartNew();
         var draw = BeginFrame(opacity);
         if (scene.Map is not null)
         {
@@ -175,16 +177,17 @@ internal sealed class OverlayRenderer : IDisposable
             markers.Draw(draw, scene, Images, Texts, operation);
         }
         if (editing) DrawBorder(draw, circle);
-        EndFrame(circle);
+        EndFrame(circle, renderTimer);
     }
 
     /// <summary>The recognition window draws nothing but its panel; it owns its own device, swap
     /// chain and ImGui context, so the frame plumbing is shared but the content is not.</summary>
     internal unsafe void RenderRecognition(RecognitionPanelView panel, int opacity)
     {
+        var renderTimer = Stopwatch.StartNew();
         var draw = BeginFrame(opacity);
         DrawRecognitionPanel(draw, panel);
-        EndFrame(false);
+        EndFrame(false, renderTimer);
     }
 
     /// <summary>Opens a frame and sets the window's one and only alpha: the composition effect group
@@ -202,9 +205,8 @@ internal sealed class OverlayRenderer : IDisposable
         return ImGui.GetBackgroundDrawList();
     }
 
-    private unsafe void EndFrame(bool circle)
+    private unsafe void EndFrame(bool circle, Stopwatch renderTimer)
     {
-        var renderTimer = frameTimer;
         ImGui.Render();
 
         context.OMSetRenderTargets(renderTarget!);
@@ -255,12 +257,11 @@ internal sealed class OverlayRenderer : IDisposable
                 context.DrawIndexed(command.ElemCount, command.IdxOffset, (int)command.VtxOffset);
             }
         }
-        LastDrawMs = renderTimer.Elapsed.TotalMilliseconds; renderTimer.Restart();
+        LastDrawMs = renderTimer.Elapsed.TotalMilliseconds;
+        var presentTimer = Stopwatch.StartNew();
         swapChain.Present(1, PresentFlags.None).CheckError();
-        LastPresentMs = renderTimer.Elapsed.TotalMilliseconds;
+        LastPresentMs = presentTimer.Elapsed.TotalMilliseconds;
     }
-
-    private readonly System.Diagnostics.Stopwatch frameTimer = System.Diagnostics.Stopwatch.StartNew();
 
     /// <summary>The recognition panel: a title strip that also drags the window, then one scrollable
     /// column of rows (artwork, wrapped name, prices with their unit). Every measurement comes from

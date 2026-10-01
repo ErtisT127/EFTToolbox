@@ -49,11 +49,14 @@ internal sealed class OverlayApplication : IDisposable
     private Operation? operation;
     private bool loadingScene;
     private long nextFrame, lastFiles, lastReport;
+    private long annotationGeneration;
     private bool resourceFilesChanged;
     private string error = "";
     private string resourceKey = "";
     private double observedSvgZoom = double.NaN;
     private float observedSvgDpi;
+    private int observedSvgWidth;
+    private int observedSvgHeight;
     private long svgQualityDue;
     private int drag;
     private Native.CursorPoint dragStart;
@@ -128,7 +131,7 @@ internal sealed class OverlayApplication : IDisposable
     private void Begin(string source, string? id = null, bool resources = false)
     {
         if (operation is null) operation = new(source, scene.Map?.Id ?? "", scene.Floor, scene.Basemap, generation, settings.SvgResolution, id);
-        else if (resources) { var previous = operation; operation = new(previous.Source, scene.Map?.Id ?? "", scene.Floor, scene.Basemap, generation, settings.SvgResolution, previous.Id, previous.Started) { ResourceLoad = true }; operation.UpdateTiming(_ => previous.Timing); }
+        else if (resources) { var previous = operation; operation = new(previous.Source, scene.Map?.Id ?? "", scene.Floor, scene.Basemap, generation, settings.SvgResolution, previous.Id) { ResourceLoad = true }; }
         if (resources && operation is not null) operation.ResourceLoad = true;
         dirty = true;
     }
@@ -148,9 +151,12 @@ internal sealed class OverlayApplication : IDisposable
             if (loadingScene || error == "errors.overlay_resource_failed") resourceKey = "";
             loadingScene = false;
         }
+        var previousDpi = scene.Dpi;
+        scene.Width = width; scene.Height = height; scene.Dpi = Native.GetDpiForWindow(hwnd) / 96f; scene.ClampZoom(); renderer.Resize(width, height);
         if (settings.Visible && !wasVisible) LoadResources();
         wasVisible = settings.Visible;
-        scene.Width = width; scene.Height = height; scene.Dpi = Native.GetDpiForWindow(hwnd) / 96f; scene.ClampZoom(); renderer.Resize(width, height); dirty = true;
+        if (previousDpi != scene.Dpi && settings.Visible && settings.SvgQualityMode != "auto") LoadResources(true, viewOnly: true);
+        dirty = true;
     }
     internal static OverlaySettings ClampWindow(OverlaySettings value, Native.Rect monitor)
     {
@@ -492,7 +498,7 @@ internal sealed class OverlayApplication : IDisposable
         if (settings.Left != value.Left || settings.Top != value.Top || settings.Width != value.Width || settings.Height != value.Height) _ = client.SaveAsync(settings);
         if (old.SvgResolution != settings.SvgResolution || old.SvgQualityMode != settings.SvgQualityMode) LoadResources();
     }
-    private void Select(Preferences next, bool force = false)
+    private void Select(Preferences next, bool force = false, bool follow = false)
     {
         var maps = next.Maps is null ? [] : (MapPreference[])next.Maps.Clone();
         for (var i = 0; i < maps.Length; i++)
@@ -509,8 +515,12 @@ internal sealed class OverlayApplication : IDisposable
         next = next with { Maps = maps, StickerUsage = next.StickerUsage ?? [] };
         var selectionChanged = preferences.SelectedMap != next.SelectedMap;
         var p = next.Maps.FirstOrDefault(p => p.MapId == next.SelectedMap); preferences = next;
-        if (p is null) return;
-        if (scene.Map?.Id != next.SelectedMap) { if (scene.Map is null || selectionChanged || force) LoadMap(next.SelectedMap, p); return; }
+        if (p is null)
+        {
+            if (scene.Map?.Id != next.SelectedMap) LoadMap(next.SelectedMap, follow: follow);
+            return;
+        }
+        if (scene.Map?.Id != next.SelectedMap) { if (scene.Map is null || selectionChanged || force) LoadMap(next.SelectedMap, p, follow: follow); return; }
         var old = scene.Preference; scene.Preference = p;
         if (force || old.FloorId != p.FloorId || old.Basemap != p.Basemap)
         {
@@ -518,16 +528,17 @@ internal sealed class OverlayApplication : IDisposable
         }
         if (force || !old.Center.SequenceEqual(p.Center)) if (p.Center.Length == 2) scene.Center = new((float)p.Center[1], (float)-p.Center[0]);
         if (force || old.Zoom != p.Zoom) scene.Zoom = p.Zoom;
-        scene.ClampZoom(); Begin("dashboard"); LoadResources();
+        scene.ClampZoom(); Begin("dashboard"); LoadResources(); if (follow) FollowSelf();
     }
     private void LoadMap(string id, MapPreference? preference = null, bool follow = false, bool preserveView = false)
     {
+        if (string.IsNullOrWhiteSpace(id)) return;
         var keepView = preserveView && scene.Map?.Id == id;
         var previousView = (scene.Center, scene.Zoom, scene.Floor, scene.Basemap);
         // The language this load starts with; the reload below compares it against the live value so
         // a change that arrives while the file is being read never leaves the old names baked in.
         var language = Messages.Language;
-        if (bootstrap is null) return; loading.Cancel(); loading.Dispose(); loading = new(); var token = loading.Token; var version = ++generation;
+        if (bootstrap is null) return; loading.Cancel(); loading.Dispose(); loading = new(); var token = loading.Token; var version = ++generation; annotationGeneration++;
         tiles.Clear(); renderer.Tiles.Clear(); renderer.Svg.Clear(); scene.SvgRegion = null; resourceKey = ""; scene.Map = null; loadingScene = true; Begin("map", resources: true);
         var b = bootstrap;
         _ = Task.Run(() =>
@@ -590,9 +601,12 @@ internal sealed class OverlayApplication : IDisposable
     {
         if (scene.Map is null || bootstrap is null || !settings.Visible) return;
         scene.NormalizeFloor();
-        if (viewOnly && loadingScene) return;
+        if (viewOnly && loadingScene && !force) return;
         var map = scene.Map; var floor = scene.Floor; var raster = scene.Basemap == "tiles";
-        var key = $"{map.Id}:{floor}:{raster}:{settings.SvgQualityMode}:{settings.SvgResolution}";
+        var resolution = settings.SvgQualityMode == "auto"
+            ? settings.SvgResolution
+            : Math.Max(1, (int)Math.Ceiling(settings.SvgResolution * scene.Dpi));
+        var key = $"{map.Id}:{floor}:{raster}:{settings.SvgQualityMode}:{resolution}";
         if (!force && key == resourceKey) return;
         var keep = resourceKey.StartsWith($"{map.Id}:{floor}:{raster}:", StringComparison.Ordinal);
         resourceKey = key; var version = ++generation; loading.Cancel(); loading.Dispose(); loading = new(); var token = loading.Token;
@@ -601,8 +615,8 @@ internal sealed class OverlayApplication : IDisposable
         Begin("resources", resources: true);
         if (map.SvgUrl == "" || (raster && map.Tiles.Any(t => t.FloorId == floor))) { loadingScene = false; return; }
         var region = settings.SvgQualityMode == "auto" ? SvgRegion.Around(scene) : null;
-        observedSvgZoom = scene.Zoom; observedSvgDpi = scene.Dpi; svgQualityDue = 0;
-        loadingScene = true; var path = Assets.LocalPath(bootstrap.AssetDirectory, map.SvgUrl) ?? ""; var resolution = settings.SvgResolution; var op = operation; var queued = Stopwatch.GetTimestamp();
+        observedSvgZoom = scene.Zoom; observedSvgDpi = scene.Dpi; observedSvgWidth = scene.Width; observedSvgHeight = scene.Height; svgQualityDue = 0;
+        loadingScene = true; var path = Assets.LocalPath(bootstrap.AssetDirectory, map.SvgUrl) ?? ""; var op = operation; var queued = Stopwatch.GetTimestamp();
         _ = Task.Run(async () =>
         {
             var entered = false;
@@ -613,7 +627,7 @@ internal sealed class OverlayApplication : IDisposable
                 {
                     if (version != generation) return;
                     var timer = Stopwatch.StartNew(); renderer.Svg.Put("map", image); scene.SvgRegion = region;
-                    if (op is not null) op.UpdateTiming(value => value with { QueueMs = queueMs, ReadMs = image.ReadMs, ParseMs = image.ParseMs, RasterMs = image.RasterMs, UploadMs = timer.Elapsed.TotalMilliseconds, Resource = path });
+                    op?.Resource(path, queueMs, image.ReadMs, image.ParseMs, image.RasterMs, timer.Elapsed.TotalMilliseconds);
                     loadingScene = false; dirty = true;
                     if (error == "errors.overlay_resource_failed") error = "";
                 }); Wake();
@@ -626,9 +640,9 @@ internal sealed class OverlayApplication : IDisposable
     private void UpdateSvgView(long now)
     {
         if (!settings.Visible || settings.SvgQualityMode != "auto" || scene.Map is not { } map || map.SvgUrl == "" || scene.Basemap == "tiles" && map.Tiles.Any(t => t.FloorId == scene.Floor)) { svgQualityDue = 0; return; }
-        if (observedSvgZoom != scene.Zoom || observedSvgDpi != scene.Dpi)
+        if (observedSvgZoom != scene.Zoom || observedSvgDpi != scene.Dpi || observedSvgWidth != scene.Width || observedSvgHeight != scene.Height)
         {
-            observedSvgZoom = scene.Zoom; observedSvgDpi = scene.Dpi; svgQualityDue = now + 150;
+            observedSvgZoom = scene.Zoom; observedSvgDpi = scene.Dpi; observedSvgWidth = scene.Width; observedSvgHeight = scene.Height; svgQualityDue = now + 150;
         }
         var outside = scene.SvgRegion is { } region && !region.Contains(scene);
         if (!loadingScene && (outside || svgQualityDue != 0 && now >= svgQualityDue)) LoadResources(true, viewOnly: true);
@@ -649,8 +663,19 @@ internal sealed class OverlayApplication : IDisposable
         // Owner visibility rides the session: the id on every event, the roster on multiplayer
         // changes, the owner lists on their own event (the file watcher covers external edits).
         if (e.OwnerId is { } owner && owner != ownerId) { ownerId = owner; ApplyOwnerVisibility(); }
-        if (e.MultiplayerStatus is { } roster) { multiplayerStatus = roster; ApplyOwnerVisibility(); }
+        if (e.MultiplayerStatus is { } roster) { multiplayerStatus = roster; scene.ShowPlayerNames = roster.ShowPlayerNames == true; ApplyOwnerVisibility(); }
         if (e.MarkerPreferences is { } ownerLists) { markerPreferences = ownerLists; ApplyOwnerVisibility(); }
+        // Automatic monitor switches publish the authoritative map id without rewriting the
+        // dashboard's manual map-preference file. Build a local preference snapshot so the native
+        // overlay follows the switch even when the dashboard window is minimized.
+        if (e.Type == "map_changed" && e.MapId is { Length: > 0 } targetMapId && e.Preferences is null && bootstrap is { } currentBootstrap)
+        {
+            var stored = File.Exists(currentBootstrap.PreferencesFile)
+                ? OverlayStateClient.Read<Preferences>(currentBootstrap.PreferencesFile)
+                : null;
+            var source = stored ?? preferences;
+            e = e with { Preferences = source with { SelectedMap = targetMapId } };
+        }
         var nextPreference = e.Preferences?.Maps.FirstOrDefault(p => p.MapId == e.Preferences.SelectedMap);
         var replacesResources = e.Preferences is { } next && next.SelectedMap != preferences.SelectedMap
             || nextPreference is { } view && (view.FloorId != scene.Preference.FloorId || view.Basemap != scene.Preference.Basemap)
@@ -676,7 +701,7 @@ internal sealed class OverlayApplication : IDisposable
             {
                 recognitionSettings = recognition;
                 recognitionWindow.ApplySettings(recognition);
-                this.recognition.ConfigureWarmup(recognition.OcrWarmup);
+                this.recognition.ConfigureWarmup(recognition);
             }
         }
         if (e.Type == "user_settings_reset") recognitionWindow.ResetPosition();
@@ -697,7 +722,7 @@ internal sealed class OverlayApplication : IDisposable
                 catch (Exception error) { FailRecognition(run, error); }
             });
         }
-        if (e.Preferences is { } p) Select(p);
+        if (e.Preferences is { } p) Select(p, follow: e.Type == "map_changed");
         if (e.Type == "snapshot")
         {
             lastView = null;
@@ -714,7 +739,8 @@ internal sealed class OverlayApplication : IDisposable
         if (e.Type == "player_remove" && e.PlayerId is { } id) scene.Players.Remove(id);
         if (e.Type == "annotations_changed" && e.MapId == scene.Map?.Id && bootstrap is { } b)
         {
-            var mapId = e.MapId; _ = Task.Run(() => { try { var a = ReadAnnotations(b, mapId!); completions.Enqueue(() => { if (scene.Map?.Id == mapId) { scene.Annotations = a; dirty = true; } }); Wake(); } catch (Exception ex) { OverlayDiagnostics.Log("warn", "annotations_failed", ex.Message); } });
+            var mapId = e.MapId; var generation = ++annotationGeneration;
+            _ = Task.Run(() => { try { var a = ReadAnnotations(b, mapId!); completions.Enqueue(() => { if (scene.Map?.Id == mapId && generation == annotationGeneration) { scene.Annotations = a; dirty = true; } }); Wake(); } catch (Exception ex) { OverlayDiagnostics.Log("warn", "annotations_failed", ex.Message); } });
         }
         if (e.OverlayCommand is { } command)
         {
@@ -810,8 +836,8 @@ internal sealed class OverlayApplication : IDisposable
         {
             markers.Upload(renderer.Images, renderer.Texts); tiles.Upload(renderer.Tiles);
             if (bootstrap is { } b3) tiles.Update(scene, b3.TileDirectory, renderer.Tiles, operation);
-            var timer = Stopwatch.StartNew(); renderer.Render(scene, markers, tiles, settings.Shape == "circle", settings.Backdrop, settings.Opacity ?? 100, editing, operation); renderCount++;
-            if (operation is { } op) { op.UpdateTiming(value => value with { DrawMs = renderer.LastDrawMs, PresentMs = renderer.LastPresentMs }); if (!loadingScene && !tiles.Loading) { op.Complete(op.ResourceLoad); operation = null; } }
+            renderer.Render(scene, markers, tiles, settings.Shape == "circle", settings.Backdrop, settings.Opacity ?? 100, editing, operation); renderCount++;
+            if (operation is { } op) { op.UpdateTiming(value => value with { DrawMs = renderer.LastDrawMs, PresentMs = renderer.LastPresentMs }); if (!loadingScene && !tiles.Loading && !markers.Loading) { op.Complete(op.ResourceLoad); operation = null; } }
             dirty = false; nextFrame = now + 17;
         }
         if (!settings.Visible) operation = null;

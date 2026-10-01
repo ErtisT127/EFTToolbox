@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	mathrand "math/rand/v2"
 	"net"
 	"net/http"
@@ -96,11 +97,21 @@ func (s *stunSignaler) route() {
 	for {
 		n, from, err := s.conn.ReadFromUDP(buffer)
 		if err != nil {
+			select {
+			case <-s.closed:
+			default:
+				log.Printf("multiplayer stun signal socket read failed: local=%s error=%v", s.conn.LocalAddr(), err)
+			}
 			return
 		}
 		data := append([]byte(nil), buffer[:n]...)
 		if stun.IsMessage(data) {
 			if _, err := s.pipe.Write(data); err != nil {
+				select {
+				case <-s.closed:
+				default:
+					log.Printf("multiplayer stun probe route failed: local=%s stage=forward_response error=%v", s.conn.LocalAddr(), err)
+				}
 				return
 			}
 			continue
@@ -121,6 +132,7 @@ func (s *stunSignaler) writeStun() {
 			return
 		}
 		if _, err := s.conn.WriteToUDP(buffer[:n], s.server); err != nil {
+			log.Printf("multiplayer stun probe write failed: local=%s server=%s error=%v", s.conn.LocalAddr(), s.server, err)
 			return
 		}
 	}
@@ -267,6 +279,37 @@ func signalKey(roomKey string) []byte {
 	return key[:]
 }
 
+func signalAttemptID(nonce string) string {
+	digest := sha256.Sum256([]byte(nonce))
+	return hex.EncodeToString(digest[:4])
+}
+
+type stunSignalLogLimiter struct {
+	mu         sync.Mutex
+	next       time.Time
+	suppressed int
+}
+
+func (l *stunSignalLogLimiter) printf(format string, args ...any) {
+	now := time.Now()
+	l.mu.Lock()
+	if now.Before(l.next) {
+		l.suppressed++
+		l.mu.Unlock()
+		return
+	}
+	suppressed := l.suppressed
+	l.suppressed = 0
+	l.next = now.Add(time.Second)
+	l.mu.Unlock()
+	if suppressed > 0 {
+		log.Printf("multiplayer stun signal diagnostics rate limited: suppressed=%d", suppressed)
+	}
+	log.Printf(format, args...)
+}
+
+var stunSignalDiagnostics stunSignalLogLimiter
+
 var (
 	errSignalEnvelopeInvalid = errors.New("invalid signal envelope")
 	errSignalKeyInvalid      = errors.New("invalid signal key")
@@ -382,27 +425,34 @@ func (s *stunListener) run() {
 	for {
 		select {
 		case packet := <-s.signaler.messages:
+			started := time.Now()
 			var request signalRequest
-			if decodeSignalJSON(packet.data, &request) != nil || len(request.Nonce) != 16 || len(request.Payload) > 2<<20 {
+			if err := decodeSignalJSON(packet.data, &request); err != nil || len(request.Nonce) != 16 || len(request.Payload) > 2<<20 {
+				stunSignalDiagnostics.printf("multiplayer stun signal rejected: stage=decode_envelope remote=%s elapsedMs=%d code=%s", packet.from, time.Since(started).Milliseconds(), contracts.SignalErrorMultiplayerSignalInvalid)
 				s.reply(packet.from, contracts.SignalPayloadResponse{Error: contracts.SignalErrorMultiplayerSignalInvalid})
 				continue
 			}
+			attempt := signalAttemptID(request.Nonce)
 			var payload contracts.SignalPayloadRequest
 			if err := openSignal(s.key, request.Nonce, request.Payload, &payload); err != nil {
 				code, _ := signalOpenFailure(err)
+				stunSignalDiagnostics.printf("multiplayer stun signal rejected: attempt=%s stage=open_signal remote=%s elapsedMs=%d code=%s", attempt, packet.from, time.Since(started).Milliseconds(), code)
 				s.reply(packet.from, contracts.SignalPayloadResponse{Error: code})
 				continue
 			}
 			if payload.Offer == "" || len(payload.Offer) > 1<<20 {
+				stunSignalDiagnostics.printf("multiplayer stun signal rejected: attempt=%s stage=offer_validate remote=%s elapsedMs=%d code=%s", attempt, packet.from, time.Since(started).Milliseconds(), contracts.SignalErrorMultiplayerSignalInvalid)
 				s.reply(packet.from, contracts.SignalPayloadResponse{Error: contracts.SignalErrorMultiplayerSignalInvalid})
 				continue
 			}
 			if !s.capacity() {
+				stunSignalDiagnostics.printf("multiplayer stun signal rejected: attempt=%s stage=capacity remote=%s elapsedMs=%d code=%s", attempt, packet.from, time.Since(started).Milliseconds(), contracts.SignalErrorMultiplayerRoomFull)
 				s.reply(packet.from, contracts.SignalPayloadResponse{Error: contracts.SignalErrorMultiplayerRoomFull})
 				continue
 			}
 			answer, failure := s.accept(payload.Offer)
 			if failure != nil {
+				stunSignalDiagnostics.printf("multiplayer stun signal rejected: attempt=%s stage=accept_guest remote=%s elapsedMs=%d code=%s", attempt, packet.from, time.Since(started).Milliseconds(), failure.code)
 				s.reply(packet.from, contracts.SignalPayloadResponse{Error: contracts.SignalErrorCode(failure.code), Detail: failure.detail})
 				continue
 			}
@@ -414,19 +464,23 @@ func (s *stunListener) run() {
 }
 
 func (s *stunListener) reply(to *net.UDPAddr, value contracts.SignalPayloadResponse) {
-	envelope, err := sealSignal(s.key, value)
-	if err != nil {
+		envelope, err := sealSignal(s.key, value)
+		if err != nil {
+		log.Printf("multiplayer stun signal reply failed: remote=%s stage=seal_response error=%v", to, err)
 		return
 	}
 	data, _ := json.Marshal(envelope)
 	if len(data) > maxSignalDatagram {
 		envelope, err = sealSignal(s.key, contracts.SignalPayloadResponse{Error: contracts.SignalErrorMultiplayerSignalInvalid})
 		if err != nil {
+			log.Printf("multiplayer stun signal reply failed: remote=%s stage=seal_error_response error=%v", to, err)
 			return
 		}
 		data, _ = json.Marshal(envelope)
 	}
-	_, _ = s.signaler.conn.WriteToUDP(data, to)
+	if _, err := s.signaler.conn.WriteToUDP(data, to); err != nil {
+		log.Printf("multiplayer stun signal reply failed: remote=%s stage=write_response bytes=%d error=%v", to, len(data), err)
+	}
 }
 
 // joining side
@@ -476,36 +530,63 @@ func signalFailure(payload contracts.SignalPayloadResponse) *apiFailure {
 	return failDetail(status, string(payload.Error), payload.Detail)
 }
 
-func signalStun(hostAddr, key, offer string) (string, *apiFailure) {
+func signalStun(hostAddr, key, offer string) (answer string, failure *apiFailure) {
+	started := time.Now()
+	stage := "resolve_host"
+	attempt := ""
+	resolved := ""
+	local := ""
+	sentBytes := 0
+	receivedBytes := 0
+	networkError := ""
+	defer func() {
+		if failure != nil {
+			log.Printf("multiplayer stun signal failed: attempt=%s stage=%s elapsedMs=%d code=%s target=%s resolved=%s local=%s sentBytes=%d receivedBytes=%d error=%s", attempt, stage, time.Since(started).Milliseconds(), failure.code, hostAddr, resolved, local, sentBytes, receivedBytes, networkError)
+		}
+	}()
 	network := stunNetwork(hostAddr)
 	raddr, err := net.ResolveUDPAddr(network, hostAddr)
 	if err != nil {
+		networkError = err.Error()
 		return "", fail(http.StatusBadRequest, "multiplayer_share_invalid")
 	}
+	resolved = raddr.String()
+	stage = "dial_udp"
 	conn, err := net.DialUDP(network, nil, raddr)
 	if err != nil {
+		networkError = err.Error()
 		return "", fail(http.StatusGatewayTimeout, "multiplayer_signaling_timeout")
 	}
 	defer func() { _ = conn.Close() }()
+	local = conn.LocalAddr().String()
+	stage = "encode_offer"
 	body, err := sealSignal(key, contracts.SignalPayloadRequest{Offer: offer})
 	if err != nil {
 		return "", fail(http.StatusInternalServerError, "multiplayer_connection_failed")
 	}
+	attempt = signalAttemptID(body.Nonce)
 	encoded, _ := json.Marshal(body)
 	if len(encoded) > maxSignalDatagram {
 		return "", fail(http.StatusBadRequest, "multiplayer_signal_invalid")
 	}
-	if _, err := conn.Write(encoded); err != nil {
+	stage = "send_offer"
+	if sentBytes, err = conn.Write(encoded); err != nil {
+		networkError = err.Error()
 		return "", fail(http.StatusGatewayTimeout, "multiplayer_signaling_timeout")
 	}
+	stage = "read_answer"
 	if err := conn.SetReadDeadline(time.Now().Add(6 * time.Second)); err != nil {
+		networkError = err.Error()
 		return "", fail(http.StatusGatewayTimeout, "multiplayer_signaling_timeout")
 	}
 	buffer := make([]byte, 1<<16)
 	n, err := conn.Read(buffer)
+	receivedBytes = n
 	if err != nil {
+		networkError = err.Error()
 		return "", fail(http.StatusGatewayTimeout, "multiplayer_signaling_timeout")
 	}
+	stage = "decode_answer"
 	var envelope signalResponse
 	var payload contracts.SignalPayloadResponse
 	if decodeSignalJSON(buffer[:n], &envelope) != nil {

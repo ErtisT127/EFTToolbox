@@ -157,7 +157,7 @@ func TestMapDiscoveryAndPersistence(t *testing.T) {
 	if response := callJSON(t, restarted, "PUT", "/api/maps/fixture/annotations", saved); response.Code != 200 {
 		t.Fatal(response.Body.String())
 	}
-	files, err := os.ReadDir(filepath.Join(root, "user", "modes", "pvp", "maps"))
+	files, err := os.ReadDir(filepath.Join(root, "user", "maps"))
 	if err != nil || len(files) != 1 {
 		t.Fatalf("temporary files leaked: %v %v", files, err)
 	}
@@ -169,7 +169,7 @@ func TestInvalidAnnotationCannotOverwriteSavedData(t *testing.T) {
 	if response := callJSON(t, handler, "PUT", "/api/maps/fixture/annotations", valid); response.Code != 200 {
 		t.Fatal(response.Body.String())
 	}
-	before, err := os.ReadFile(filepath.Join(root, "user", "modes", "pvp", "maps", "fixture.annotations.json"))
+	before, err := os.ReadFile(filepath.Join(root, "user", "maps", "fixture.annotations.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestInvalidAnnotationCannotOverwriteSavedData(t *testing.T) {
 	if response := callJSON(t, handler, "PUT", "/api/maps/fixture/annotations", invalid); response.Code != 400 {
 		t.Fatalf("accepted unknown floor: %d", response.Code)
 	}
-	after, err := os.ReadFile(filepath.Join(root, "user", "modes", "pvp", "maps", "fixture.annotations.json"))
+	after, err := os.ReadFile(filepath.Join(root, "user", "maps", "fixture.annotations.json"))
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("invalid write changed saved data")
 	}

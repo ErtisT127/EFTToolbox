@@ -20,6 +20,7 @@ import { notices } from '../stores/noticeStore';
 import { ItemsPage } from '../pages/items/ItemsPage';
 import { api } from '../stores/api';
 import { store } from '../stores/store';
+import { setMapPreferencesDraft } from '../stores/clientState';
 import { publishNonClientRegions, subscribeHostEvents } from '../lib/hostWindow';
 import { update } from '../stores/updateStore';
 
@@ -29,6 +30,7 @@ const reportHostReady = () => fetch('/api/host/ready', { method: 'POST' }).catch
 
 export function AppShell() {
   const [page, setPage] = useState<AppPage>('map');
+  const [recognitionRequest, setRecognitionRequest] = useState(0);
   // Which settings tab a jump lands on: the map opens its own, the items page the recognition tab.
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('system');
   // Resetting module data is destructive, so it asks with the app's own dialog instead of the
@@ -36,8 +38,11 @@ export function AppShell() {
   const [pendingReset, setPendingReset] = useState<'calibrator' | 'settings' | null>(null);
   const { t } = useLocale();
   const recovery = useGlobalErrorRecovery();
-  const { overlay, monitor, failed, saving, workspace: w } = recovery;
+  const { overlay, monitor, failed, saving } = recovery;
   const initialized = useRef(false);
+  const hiddenRef = useRef(false);
+  const resourceReloadRef = useRef<Promise<void> | null>(null);
+  const mapRequestRef = useRef(0);
   useEffect(() => {
     if (!initialized.current) {
       initialized.current = true;
@@ -70,15 +75,24 @@ export function AppShell() {
     };
     const hidden = () => {
       if (document.visibilityState === 'hidden') {
+        hiddenRef.current = true;
         void workspace.savePreferences();
         void workspace.saveCalibratorPreferences();
-      }
-    };
-    const unsubscribeHostState = subscribeHostEvents('host-state', ({ background }) => {
-      if (background) {
-        disconnect();
         return;
       }
+      if (!hiddenRef.current) return;
+      hiddenRef.current = false;
+      // The renderer may have been suspended while hidden. Reconnect to obtain the backend
+      // snapshot instead of relying on events that the suspended page could not process.
+      disconnect();
+      disconnect = overlay.connect();
+      store.dispatch(api.util.invalidateTags(['Settings', 'Maps', 'Preferences', 'Multiplayer']));
+    };
+    const unsubscribeHostState = subscribeHostEvents('host-state', ({ background }) => {
+      // A hidden WebView may stop rendering, but it must not be allowed to stop the backend's
+      // multiplayer and overlay event stream. The next foreground transition reconnects to get a
+      // fresh authoritative snapshot after any renderer suspension.
+      if (background) return;
       disconnect();
       disconnect = overlay.connect();
       // The host keeps its own close dialog, and it can write the close behavior while the window is
@@ -90,6 +104,10 @@ export function AppShell() {
       setSettingsTab('system');
       setPage('settings');
     });
+    const unsubscribeOpenRecognition = subscribeHostEvents('open-recognition', () => {
+      setRecognitionRequest((request) => request + 1);
+      setPage('items');
+    });
     window.addEventListener('beforeunload', beforeUnload);
     document.addEventListener('visibilitychange', hidden);
     return () => {
@@ -98,24 +116,46 @@ export function AppShell() {
       document.removeEventListener('visibilitychange', hidden);
       unsubscribeHostState();
       unsubscribeOpenSettings();
+      unsubscribeOpenRecognition();
     };
   }, [overlay]);
   useEffect(() => {
-    if (monitor.resourceRevision > 0) void workspace.reloadForResources();
+    if (monitor.resourceRevision <= 0) return;
+    const reload = workspace.reloadForResources();
+    resourceReloadRef.current = reload;
+    void reload.then(
+      () => {
+        if (resourceReloadRef.current === reload) resourceReloadRef.current = null;
+      },
+      () => {
+        if (resourceReloadRef.current === reload) resourceReloadRef.current = null;
+      },
+    );
   }, [monitor.resourceRevision]);
   // The desktop host needs the title bar's regions to hit-test the window buttons and the drag
   // handle; in a browser this is a no-op.
   useEffect(() => publishNonClientRegions(), []);
   useEffect(() => {
     const id = monitor.status?.mapId;
-    if (
-      monitor.mapRevision > 0 &&
-      id &&
-      w.catalog.some((map) => map.id === id) &&
-      w.activeId !== id
-    )
-      void workspace.select(id, true);
-  }, [monitor.mapRevision]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (monitor.mapRevision > 0 && id) {
+      const request = ++mapRequestRef.current;
+      // A backend map change is authoritative. Drop a draft from the previous map/mode
+      // before reloading preferences, otherwise workspace.select would keep using the stale draft.
+      store.dispatch(setMapPreferencesDraft(undefined));
+      const resources = resourceReloadRef.current || Promise.resolve();
+      void resources.then(async () => {
+        if (request !== mapRequestRef.current) return;
+        const preferences = await store
+          .dispatch(api.endpoints.getMapPreferences.initiate(undefined, { forceRefetch: true }))
+          .unwrap();
+        if (request !== mapRequestRef.current) return;
+        // The fetched preference is authoritative for filters; the backend status is authoritative
+        // for the map selected by the automatic position update.
+        store.dispatch(setMapPreferencesDraft({ ...preferences.value, selectedMap: id }));
+        await workspace.select(id, true);
+      });
+    }
+  }, [monitor.mapRevision, monitor.status?.mapId]);
   const navigate = (next: typeof page) => {
     setPage(next);
   };
@@ -193,7 +233,10 @@ export function AppShell() {
               store.dispatch(api.util.invalidateTags(['Items', 'ItemsStatus', 'Settings']))
             }
           >
-            <ItemsPage onOpenSettings={() => openSettings('recognition')} />
+            <ItemsPage
+              openRecognitionRequest={recognitionRequest}
+              onOpenSettings={() => openSettings('recognition')}
+            />
           </ErrorBoundary>
         )}
         <footer className="statusbar">

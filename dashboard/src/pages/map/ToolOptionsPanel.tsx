@@ -1,6 +1,6 @@
 import type { Ref } from 'react';
 import { Search, Trash2, X } from 'lucide-react';
-import type { Annotation, Sticker, StickerUsage } from '../../../../contracts/ts/ipc.gen';
+import type { Sticker, StickerUsage } from '../../../../contracts/ts/ipc.gen';
 import type { Tool, ToolOptions } from './MapCanvas';
 import { resolvePick, type ResolvedPick } from './StickerPicker';
 import { ColorPicker } from '../../components/ColorPicker';
@@ -10,14 +10,14 @@ import { useLocale, type LocaleKey } from '../../hooks/useLocale';
 type Props = {
   tool: Tool;
   options: ToolOptions;
-  items: Annotation[];
   stickers: Map<string, Sticker>;
   recent: StickerUsage[];
   browseStickers: boolean;
   stickerButton: Ref<HTMLButtonElement>;
   setOption: (value: Partial<ToolOptions>) => void;
   previewSize: (size: number) => void;
-  onCommit: (items: Annotation[]) => void;
+  onClearBrushes: () => void;
+  canClearBrushes: boolean;
   onBrowse: () => void;
   onClose: () => void;
 };
@@ -25,14 +25,14 @@ type Props = {
 export function ToolOptionsPanel({
   tool,
   options,
-  items,
   stickers,
   recent,
   browseStickers,
   stickerButton,
   setOption,
   previewSize,
-  onCommit,
+  onClearBrushes,
+  canClearBrushes,
   onBrowse,
   onClose,
 }: Props) {
@@ -68,11 +68,7 @@ export function ToolOptionsPanel({
             }}
           />
           <div className="tool-actions">
-            <button
-              className="clear-button"
-              disabled={!items.some((a) => a.kind === 'stroke')}
-              onClick={() => onCommit(items.filter((a) => a.kind !== 'stroke'))}
-            >
+            <button className="clear-button" disabled={!canClearBrushes} onClick={onClearBrushes}>
               <Trash2 size={14} />
               {t('map.toolSettings.clear')}
             </button>

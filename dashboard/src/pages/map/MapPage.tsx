@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { isImeComposing } from '../../lib/ime';
 import {
@@ -34,7 +34,7 @@ import { ToolOptionsPanel } from './ToolOptionsPanel';
 import { workspace, useWorkspace } from '../../stores/workspaceStore';
 import { api } from '../../stores/api';
 import { store } from '../../stores/store';
-import { clearAnnotationDraft, clearConflict } from '../../stores/clientState';
+import { clearConflict, resetAnnotationSession } from '../../stores/clientState';
 import type { RootState } from '../../stores/store';
 import { multiplayer, useMultiplayer } from '../../stores/multiplayerStore';
 import { mapTimes, timePhase } from './lib/time';
@@ -220,6 +220,11 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
     : !!overlay.settings?.visible;
   const map = useRef<L.Map | null>(null);
   const workArea = useRef<HTMLDivElement>(null);
+  const [workAreaNode, setWorkAreaNode] = useState<HTMLDivElement | null>(null);
+  const setWorkArea = useCallback((node: HTMLDivElement | null) => {
+    workArea.current = node;
+    setWorkAreaNode(node);
+  }, []);
   useEffect(() => {
     const syncFullscreen = () =>
       setIsFullscreen(!!workArea.current && document.fullscreenElement === workArea.current);
@@ -308,7 +313,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   useRegisterConflictActions(`annotations:${id}`, {
     loadRemote: () => {
       if (!annotationConflict || !id) return;
-      store.dispatch(clearAnnotationDraft(id));
+      store.dispatch(resetAnnotationSession(id));
       store.dispatch(clearConflict(annotationConflict.key));
       void store.dispatch(api.endpoints.getAnnotations.initiate(id, { forceRefetch: true }));
     },
@@ -333,17 +338,21 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
     () => ({ enabled: followZoom, zoomLevel: followZoomLevel }),
     [followZoom, followZoomLevel],
   );
-  const shownFloor = preference?.floorId;
+  const mapData = session?.data;
+  const self = useMemo(
+    () =>
+      id && players
+        ? [...players.values()].find((player) => player.isSelf && player.mapId === id)
+        : undefined,
+    [id, players],
+  );
+  const selfFloor = self?.resolution.status === 'resolved' ? self.resolution.floorId : null;
   useEffect(() => {
-    if (!followFloor || !session || shownFloor === undefined) return;
-    const self = [...players.values()].find(
-      (player) => player.isSelf && player.mapId === session.data.id,
-    );
-    const floor = self?.resolution.status === 'resolved' ? self.resolution.floorId : null;
-    if (!floor || floor === shownFloor) return;
-    if (!session.data.floors.some((entry) => entry.id === floor)) return;
-    w.updatePreference(session.data.id, { floorId: floor });
-  }, [followFloor, players, session, shownFloor, w]);
+    if (!followFloor || !id || !mapData || !selfFloor) return;
+    if (w.preferenceFor(id).floorId === selfFloor) return;
+    if (!mapData.floors.some((entry) => entry.id === selfFloor)) return;
+    w.updatePreference(id, { floorId: selfFloor });
+  }, [followFloor, id, mapData, selfFloor, w]);
   // Teammate visibility: active members default visible, departed owners default hidden, and a
   // manual hide always wins. Rebuilt whenever the multiplayer store or the map session changes.
   // The arrays are keyed by value: the store hands out a fresh fallback object on every read.
@@ -483,7 +492,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
       </div>
       <div
         className="workspace"
-        ref={workArea}
+        ref={setWorkArea}
         onPointerEnter={cancelCoordinateHide}
         onPointerLeave={scheduleCoordinateHide}
       >
@@ -514,6 +523,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
               players={players}
               playerFollow={followCenter}
               playerAutoZoom={playerAutoZoom}
+              showPlayerNames={mp.showPlayerNames}
               tool={tool}
               options={options}
               onCommit={(items) => w.commit(id, items)}
@@ -683,14 +693,23 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                 <ToolOptionsPanel
                   tool={tool}
                   options={options}
-                  items={session.items}
                   stickers={stickerIndex}
                   recent={tool === 'marker' ? w.recentStickers() : []}
                   browseStickers={browseStickers}
                   stickerButton={stickerButton}
                   setOption={setOption}
                   previewSize={previewSize}
-                  onCommit={(items) => w.commit(id, items)}
+                  canClearBrushes={session.items.some(
+                    (item) => item.kind === 'stroke' && item.ownerId === mp.selfId,
+                  )}
+                  onClearBrushes={() =>
+                    w.commit(
+                      id,
+                      session.items.filter(
+                        (item) => item.kind !== 'stroke' || item.ownerId !== mp.selfId,
+                      ),
+                    )
+                  }
                   onBrowse={() => setBrowseStickers(true)}
                   onClose={closeToolSettings}
                 />
@@ -737,7 +756,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                   </div>
                 </dl>
               </aside>
-              <MembersPanel />
+              <MembersPanel portalContainer={workAreaNode} />
               <div className="task-control">
                 {/* One trigger per row, its panel right after it in the DOM so Tab reaches the
                     panel controls; the panel itself opens to the left of its own button. */}

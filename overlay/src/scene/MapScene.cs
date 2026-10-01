@@ -18,6 +18,7 @@ internal sealed class MapScene
     internal SvgRegion? SvgRegion { get; set; }
     internal Annotation[] Annotations { get; set; } = [];
     internal OwnerVisibility Owners { get; set; } = OwnerVisibility.ShowAll;
+    internal bool ShowPlayerNames { get; set; }
     internal Dictionary<string, PlayerState> Players { get; } = new();
     internal Vector2 Unit => Map?.Tiles.FirstOrDefault()?.Transform is { Length: 4 } a ? new((float)Math.Abs(a[0]), (float)Math.Abs(a[2])) : Vector2.One;
     internal Vector2 Scale => Unit * (float)Math.Pow(2, Zoom) * Dpi;

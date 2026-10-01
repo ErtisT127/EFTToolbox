@@ -1,4 +1,13 @@
-import { access, copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import {
+  access,
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -12,16 +21,39 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const upstream = path.join(root, 'data/upstream');
 const defaultsDirectory = path.join(root, 'scripts/defaults');
 const args = process.argv.slice(2);
-if (args.some((arg) => !['--lite', '--debug'].includes(arg)))
-  throw new Error('Usage: pnpm toolbox package [--lite] [--debug]');
+if (args.some((arg) => !['--lite', '--debug', '--fast'].includes(arg)))
+  throw new Error('Usage: pnpm toolbox package [--lite] [--debug] [--fast]');
 const lite = args.includes('--lite');
 const debug = args.includes('--debug');
-await verifyDisplayResources(path.join(upstream, 'assets'));
+const fast = args.includes('--fast');
+const semverTag = /^v(\d+)\.(\d+)\.(\d+)$/;
+let tag = '';
+try {
+  tag = execFileSync('git', ['describe', '--tags', '--exact-match', 'HEAD'], {
+    cwd: root,
+    encoding: 'utf8',
+    windowsHide: true,
+  }).trim();
+} catch {
+  if (!debug) throw new Error('Release packaging requires HEAD to have a vMAJOR.MINOR.PATCH tag');
+}
+const tagMatch = tag ? semverTag.exec(tag) : null;
+if (tag && !tagMatch) throw new Error(`Invalid release tag ${tag}; expected vMAJOR.MINOR.PATCH`);
+const buildVersion = tagMatch
+  ? `${tagMatch[1]}.${tagMatch[2]}.${tagMatch[3]}${debug ? '-dev' : ''}`
+  : '0.0.0-dev';
+if (!fast) await verifyDisplayResources(path.join(upstream, 'assets'));
 const output = path.join(root, 'build/package', new Date().toISOString().replace(/[:.]/g, '-'));
 const run = (command, args) =>
   execFileSync(command, args, { cwd: root, stdio: 'inherit', windowsHide: true });
 let stepCount = 0;
 const step = (label) => console.log(`[${++stepCount}/11] ${label}`);
+const copyTimestampOptions = ['/COPY:DA', '/DCOPY:DA'];
+const copyFileFresh = async (source, destination) => {
+  await copyFile(source, destination);
+  const now = new Date();
+  await utimes(destination, now, now);
+};
 const copyDirectory = (source, destination, exclude = []) => {
   const result = spawnSync(
     'robocopy',
@@ -29,6 +61,7 @@ const copyDirectory = (source, destination, exclude = []) => {
       source,
       destination,
       '/E',
+      ...copyTimestampOptions,
       ...(exclude.length ? ['/XF', ...exclude] : []),
       '/NFL',
       '/NDL',
@@ -47,27 +80,52 @@ const copyDirectory = (source, destination, exclude = []) => {
 const copyIfPresent = async (source, destination) => {
   try {
     await access(source);
-    await copyFile(source, destination);
+    await copyFileFresh(source, destination);
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
 };
+// PaddleOCRSharp ships table/layout models and a CPU diagnostic helper alongside the text OCR
+// assets. This application only constructs PaddleOCREngine, so keeping those files would add
+// payload without adding a callable feature.
+const removeUnusedOverlayAssets = async (directory) => {
+  await Promise.all([
+    rm(path.join(directory, 'CPU指令集检测工具.exe'), { force: true }),
+    rm(path.join(directory, 'inference', 'layout_publaynet_dict.txt'), { force: true }),
+    rm(path.join(directory, 'inference', 'PaddleOCRStructure.config.json'), { force: true }),
+    rm(path.join(directory, 'inference', 'table_structure_dict_ch.txt'), { force: true }),
+    rm(path.join(directory, 'inference', 'ch_ppstructure_mobile_v2.0_SLANet_infer'), {
+      force: true,
+      recursive: true,
+    }),
+  ]);
+};
 // The package is what users double-click, so it is checked against what the desktop host needs to
-// start (validateStartup in backend/cmd/EFTToolbox) plus the data it reads later. Missing pieces
-// then fail the package instead of surfacing as a startup error page.
-const verifyPackage = async (output) => {
-  for (const name of [
+// start (validateStartup in backend/cmd/EFTToolbox) plus the data full packages read later. Missing
+// pieces then fail the package instead of surfacing as a startup error page.
+const verifyPackage = async (output, includeData) => {
+  const required = [
     'EFTToolbox.exe',
     'dashboard/index.html',
     'dashboard/cast.html',
     'overlay/overlay.exe',
-    'data/upstream/modes',
-    'data/upstream/assets',
-    'data/upstream/items',
-    'data/upstream/stickers.json',
-    'data/upstream/tiles/manifest.json',
+    'overlay/inference/PaddleOCR.config.json',
+    'overlay/inference/ppocr_keys.txt',
+    'overlay/inference/ch_PP-OCRv4_det_infer/inference.pdmodel',
+    'overlay/inference/ch_PP-OCRv4_rec_infer/inference.pdmodel',
+    'overlay/inference/ch_ppocr_mobile_v2.0_cls_infer/inference.pdmodel',
+    'LICENSE',
     'THIRD-PARTY-NOTICES.txt',
-  ]) {
+  ];
+  if (includeData)
+    required.push(
+      'data/upstream/modes',
+      'data/upstream/assets',
+      'data/upstream/items',
+      'data/upstream/stickers.json',
+      'data/upstream/tiles/manifest.json',
+    );
+  for (const name of required) {
     try {
       await access(path.join(output, name));
     } catch {
@@ -159,6 +217,7 @@ const copyLiteTiles = async (modes, sourceRoot, destinationRoot, keep) => {
         path.join(sourceRoot, shard),
         path.join(destinationRoot, shard),
         ...files,
+        ...copyTimestampOptions,
         '/NFL',
         '/NDL',
         '/NJH',
@@ -215,8 +274,11 @@ await mkdir(output, { recursive: true });
 step('Building backend');
 run('go', [
   'build',
+  // Without the production tag Wails compiles its dev variants, which leave WebView2 DevTools
+  // enabled in the shipped exe; debug packages keep them on purpose for local troubleshooting.
+  ...(!debug ? ['-tags', 'production'] : []),
   '-ldflags',
-  ['-H=windowsgui', ...(!debug ? ['-s', '-w'] : [])].join(' '),
+  ['-H=windowsgui', `-X=main.version=${buildVersion}`, ...(!debug ? ['-s', '-w'] : [])].join(' '),
   '-o',
   path.join(output, 'EFTToolbox.exe'),
   './backend/cmd/EFTToolbox',
@@ -234,50 +296,54 @@ run('dotnet', [
   `-p:DebugType=${debug ? 'portable' : 'none'}`,
   `-p:DebugSymbols=${debug}`,
 ]);
+await removeUnusedOverlayAssets(path.join(output, 'overlay'));
 step('Copying package files');
 copyDirectory(path.join(root, 'build/dashboard'), path.join(output, 'dashboard'));
 const data = path.join(output, 'data/upstream');
-copyDirectory(path.join(upstream, 'modes'), path.join(data, 'modes'), [
-  'versions.json',
-  'validation-report.json',
-]);
-copyDirectory(path.join(upstream, 'assets'), path.join(data, 'assets'));
-copyDirectory(path.join(upstream, 'items'), path.join(data, 'items'));
-await copyFile(path.join(upstream, 'stickers.json'), path.join(data, 'stickers.json'));
-await copyIfPresent(path.join(upstream, 'catalog_zh.json'), path.join(data, 'catalog_zh.json'));
-await copyIfPresent(path.join(upstream, 'catalog_en.json'), path.join(data, 'catalog_en.json'));
-await copyIfPresent(
-  path.join(defaultsDirectory, 'stun-valid-hosts.txt'),
-  path.join(data, 'stun-valid-hosts.txt'),
-);
-await copyIfPresent(
-  path.join(defaultsDirectory, 'stun-valid-ipv4s.txt'),
-  path.join(data, 'stun-valid-ipv4s.txt'),
-);
-await copyIfPresent(
-  path.join(defaultsDirectory, 'stun-valid-ipv6s.txt'),
-  path.join(data, 'stun-valid-ipv6s.txt'),
-);
-await copyIfPresent(
-  path.join(defaultsDirectory, 'stun-nat-ipv4s.txt'),
-  path.join(data, 'stun-nat-ipv4s.txt'),
-);
-if (lite) {
-  const keep = await mapsNeedingTiles(path.join(data, 'modes'));
-  await simplifyMaps(path.join(data, 'modes'), keep);
-  await mkdir(path.join(data, 'tiles'), { recursive: true });
-  await copyLiteTiles(
-    path.join(data, 'modes'),
-    path.join(upstream, 'tiles'),
-    path.join(data, 'tiles'),
-    keep,
+if (!fast) {
+  copyDirectory(path.join(upstream, 'modes'), path.join(data, 'modes'), [
+    'versions.json',
+    'validation-report.json',
+  ]);
+  copyDirectory(path.join(upstream, 'assets'), path.join(data, 'assets'));
+  copyDirectory(path.join(upstream, 'items'), path.join(data, 'items'));
+  await copyFileFresh(path.join(upstream, 'stickers.json'), path.join(data, 'stickers.json'));
+  await copyIfPresent(path.join(upstream, 'catalog_zh.json'), path.join(data, 'catalog_zh.json'));
+  await copyIfPresent(path.join(upstream, 'catalog_en.json'), path.join(data, 'catalog_en.json'));
+  await copyIfPresent(
+    path.join(defaultsDirectory, 'stun-valid-hosts.txt'),
+    path.join(data, 'stun-valid-hosts.txt'),
   );
-} else copyDirectory(path.join(upstream, 'tiles'), path.join(data, 'tiles'));
+  await copyIfPresent(
+    path.join(defaultsDirectory, 'stun-valid-ipv4s.txt'),
+    path.join(data, 'stun-valid-ipv4s.txt'),
+  );
+  await copyIfPresent(
+    path.join(defaultsDirectory, 'stun-valid-ipv6s.txt'),
+    path.join(data, 'stun-valid-ipv6s.txt'),
+  );
+  await copyIfPresent(
+    path.join(defaultsDirectory, 'stun-nat-ipv4s.txt'),
+    path.join(data, 'stun-nat-ipv4s.txt'),
+  );
+  if (lite) {
+    const keep = await mapsNeedingTiles(path.join(data, 'modes'));
+    await simplifyMaps(path.join(data, 'modes'), keep);
+    await mkdir(path.join(data, 'tiles'), { recursive: true });
+    await copyLiteTiles(
+      path.join(data, 'modes'),
+      path.join(upstream, 'tiles'),
+      path.join(data, 'tiles'),
+      keep,
+    );
+  } else copyDirectory(path.join(upstream, 'tiles'), path.join(data, 'tiles'));
+}
 // The notices are generated here rather than copied: the single shipped file then always names every
-// third-party component of this build.
-step('Writing third-party notices');
+// third-party component of this build. The project license is shipped alongside it for redistribution.
+step('Writing package licenses');
+await copyFileFresh(path.join(root, 'LICENSE'), path.join(output, 'LICENSE'));
 await writeFile(path.join(output, 'THIRD-PARTY-NOTICES.txt'), noticesText());
 step('Verifying package');
-await verifyDisplayResources(path.join(data, 'assets'));
-await verifyPackage(output);
+if (!fast) await verifyDisplayResources(path.join(data, 'assets'));
+await verifyPackage(output, !fast);
 console.log(`Portable package: ${output}`);

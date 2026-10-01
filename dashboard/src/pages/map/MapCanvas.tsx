@@ -63,6 +63,7 @@ type Props = {
   };
   playerFollow?: boolean;
   playerAutoZoom?: { enabled: boolean; zoomLevel: number };
+  showPlayerNames?: boolean;
   readOnly?: boolean;
   /** The local player's id, stamped onto every annotation this client creates. */
   ownerId: string;
@@ -166,8 +167,12 @@ export function MapCanvas(props: Props) {
       map.fire('resize');
     };
     window.addEventListener('resize', refreshPixelRatio);
-    let followedPosition = '';
-    const playerMarkers = new Map<string, { marker: L.Marker; element: HTMLDivElement }>();
+    let followedView = '';
+    let followFrame = 0;
+    const playerMarkers = new Map<
+      string,
+      { marker: L.Marker; element: HTMLDivElement; label: HTMLSpanElement }
+    >();
     function paintPlayers(players: Map<string, PlayerState>) {
       const p = current.current;
       const layer = playerLayer.current;
@@ -179,13 +184,16 @@ export function MapCanvas(props: Props) {
       const positionKey = self
         ? `${self.playerId}:${self.mapPosition.x}:${self.mapPosition.y}`
         : '';
-      if (self && positionKey !== followedPosition) {
+      const zoom = p.playerAutoZoom?.enabled ? p.playerAutoZoom.zoomLevel : undefined;
+      const viewKey = self
+        ? `${positionKey}:${self.resolution.floorId ?? ''}:${p.playerFollow !== false ? 'center' : ''}:${zoom ?? ''}:${ready}`
+        : '';
+      if (self && viewKey !== followedView) {
         // Centre and zoom follow independently: the settings expose them as separate switches, so
         // either one is allowed to be on alone. A position that follows neither is left alone.
         const center = p.playerFollow === false ? undefined : latLng(self.mapPosition);
-        const zoom = p.playerAutoZoom?.enabled ? p.playerAutoZoom.zoomLevel : undefined;
         if (center || zoom !== undefined) {
-          followedPosition = positionKey;
+          followedView = viewKey;
           map.setView(center ?? map.getCenter(), zoom ?? map.getZoom(), { animate: false });
         }
       }
@@ -196,12 +204,18 @@ export function MapCanvas(props: Props) {
         if (!entry) {
           const element = document.createElement('div');
           element.className = 'player-marker';
+          const label = document.createElement('span');
+          label.className = 'player-name';
+          const wrapper = document.createElement('div');
+          wrapper.className = 'player-marker-wrap';
+          wrapper.append(element, label);
           entry = {
             element,
+            label,
             marker: L.marker(latLng(player.mapPosition), {
               pane: 'player',
               icon: L.divIcon({
-                html: element,
+                html: wrapper,
                 className: 'player-anchor',
                 iconSize: [28, 28],
                 iconAnchor: [14, 14],
@@ -221,6 +235,8 @@ export function MapCanvas(props: Props) {
         element.style.background = player.color || '';
         // The arrow tip points up at zero degrees; rotate it to the player's heading.
         element.style.transform = `rotate(${player.heading}deg)`;
+        entry.label.textContent = player.displayName;
+        entry.label.hidden = !p.showPlayerNames;
         element.style.opacity =
           player.resolution.status === 'resolved' &&
           player.resolution.floorId !== null &&
@@ -838,9 +854,21 @@ export function MapCanvas(props: Props) {
     map.on('zoomend zoomlevelschange', publishZoom);
     current.current.onReady(map);
     publishZoom();
+    // The first player paint can happen while Leaflet is still settling its container size. Apply
+    // the authoritative center and zoom once more on the next frame so a map switch cannot leave
+    // the initial view at the old map's scale.
+    followedView = '';
+    followFrame = requestAnimationFrame(() => {
+      followFrame = requestAnimationFrame(() => {
+        followFrame = 0;
+        map.invalidateSize({ pan: false });
+        paintPlayers(current.current.playerSource?.current || current.current.players);
+      });
+    });
     setReady((value) => value + 1);
     return () => {
       window.removeEventListener('resize', refreshPixelRatio);
+      cancelAnimationFrame(followFrame);
       unsubscribePlayers?.();
       current.current.onTemporaryHand(false);
       clearTimeout(zoomTimer);
@@ -909,6 +937,7 @@ export function MapCanvas(props: Props) {
     preference.floorId,
     props.playerFollow,
     props.playerAutoZoom,
+    props.showPlayerNames,
     ready,
   ]);
   useEffect(() => {

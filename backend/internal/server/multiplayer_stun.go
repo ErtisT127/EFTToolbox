@@ -214,11 +214,18 @@ func probeStunServers(servers []string) contracts.StunProbeResults {
 	return contracts.StunProbeResults{Results: results}
 }
 
-// natCheck compares this socket's mapping at two different servers: identical means the mapping
-// does not depend on the remote endpoint (cone), differing means symmetric, where hole punching
-// without a relay cannot work. The peers come from the cached/static NAT-testing list.
+// natCheck combines mapping and filtering behavior. A stable mapping alone is not enough to call a
+// NAT cone: the selected server must support RFC 5780 and accept a changed-source response.
 func natCheck(servers []string) contracts.NatCheckResult {
-	return compareNAT(servers)
+	result := compareNAT(servers)
+	if result.Kind != "cone" {
+		return result
+	}
+	endpointIndependent, supported := probeNATFiltering(servers)
+	if !supported || !endpointIndependent {
+		return contracts.NatCheckResult{Kind: "unknown", Message: strPtr("multiplayer_nat_filtering_unverified")}
+	}
+	return result
 }
 
 // natCheckAttempts bounds the fan-out: public STUN servers rot constantly, so the whole list is
@@ -229,7 +236,8 @@ const natCheckAttempts = 6
 // the endpoint no matter how many peers are dead.
 const natCheckDeadline = 2 * time.Second
 
-// compareNAT is the network half of natCheck, split out so tests can inject peers.
+// compareNAT measures mapping behavior only. It deliberately does not label a stable mapping as
+// publicly reachable; natCheck adds the RFC 5780 filtering check before returning cone.
 func compareNAT(servers []string) contracts.NatCheckResult {
 	if len(servers) < 2 {
 		return contracts.NatCheckResult{Kind: "unknown", Message: strPtr("multiplayer_nat_unreachable")}
@@ -307,6 +315,90 @@ func compareNAT(servers []string) contracts.NatCheckResult {
 		return contracts.NatCheckResult{Kind: "cone"}
 	}
 	return contracts.NatCheckResult{Kind: "symmetric", Message: strPtr("multiplayer_nat_symmetric")}
+}
+
+const natFilteringAttempts = 3
+
+// probeNATFiltering uses RFC 5780's CHANGE-REQUEST against servers that advertise OTHER-ADDRESS.
+// The first regular response proves the server supports the behavior test; a changed-source
+// response proves endpoint-independent filtering. Servers without that extension are skipped.
+func probeNATFiltering(servers []string) (endpointIndependent, supported bool) {
+	deadline := time.Now().Add(natCheckDeadline)
+	attempts := 0
+	for _, server := range servers {
+		if attempts == natFilteringAttempts || time.Now().After(deadline) {
+			break
+		}
+		attempts++
+		perServerDeadline := time.Now().Add(750 * time.Millisecond)
+		if perServerDeadline.After(deadline) {
+			perServerDeadline = deadline
+		}
+		result, ok := probeNATFilteringServer(server, perServerDeadline)
+		if ok {
+			return result, true
+		}
+	}
+	return false, false
+}
+
+func probeNATFilteringServer(server string, deadline time.Time) (bool, bool) {
+	host, port, err := splitStunAddress(server)
+	if err != nil {
+		return false, false
+	}
+	raddr, err := net.ResolveUDPAddr("udp4", net.JoinHostPort(host, port))
+	if err != nil {
+		return false, false
+	}
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{Port: 0})
+	if err != nil {
+		return false, false
+	}
+	defer func() { _ = conn.Close() }()
+
+	regular := stun.MustBuild(stun.TransactionID, stun.BindingRequest)
+	response, _, err := stunRoundTrip(conn, raddr, regular, deadline)
+	if err != nil {
+		return false, false
+	}
+	var other stun.OtherAddress
+	if err := other.GetFrom(response); err != nil {
+		return false, false
+	}
+	otherAddr := &net.UDPAddr{IP: other.IP, Port: other.Port}
+
+	changed := stun.MustBuild(stun.TransactionID, stun.BindingRequest)
+	changed.Add(stun.AttrChangeRequest, []byte{0, 0, 0, 6})
+	_, from, err := stunRoundTrip(conn, raddr, changed, deadline)
+	if err != nil {
+		return false, true
+	}
+	if !from.IP.Equal(otherAddr.IP) || from.Port != otherAddr.Port {
+		return false, true
+	}
+	return true, true
+}
+
+func stunRoundTrip(conn *net.UDPConn, server *net.UDPAddr, request *stun.Message, deadline time.Time) (*stun.Message, *net.UDPAddr, error) {
+	if _, err := conn.WriteToUDP(request.Raw, server); err != nil {
+		return nil, nil, err
+	}
+	if err := conn.SetReadDeadline(deadline); err != nil {
+		return nil, nil, err
+	}
+	buffer := make([]byte, 1500)
+	for {
+		n, from, err := conn.ReadFromUDP(buffer)
+		if err != nil {
+			return nil, nil, err
+		}
+		response := &stun.Message{Raw: append([]byte(nil), buffer[:n]...)}
+		if err := response.Decode(); err != nil || response.TransactionID != request.TransactionID {
+			continue
+		}
+		return response, from, nil
+	}
 }
 
 func strPtr(value string) *string { return &value }

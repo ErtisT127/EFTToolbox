@@ -5,7 +5,7 @@ import { useGameMonitor } from '../../../stores/gameMonitorStore';
 import { notices } from '../../../stores/noticeStore';
 import { reportClientLog, updateUserSettings } from '../../../stores/workspaceStore';
 import { useLocale, type LocaleKey } from '../../../hooks/useLocale';
-import { errorKeyOf } from '../../../lib/errors';
+import { errorDetailOf, errorKeyOf } from '../../../lib/errors';
 import { useGetUserSettingsQuery } from '../../../stores/api';
 
 const gameModes: GameMode[] = ['pvp', 'pve', 'pvp-season'];
@@ -52,7 +52,11 @@ export function SystemSettingsTab() {
         setApplying(false);
         const message = errorKeyOf(reason, 'errors.request_failed') as LocaleKey;
         notices.push(t(message));
-        reportClientLog('language_save_failed', 'Language could not be saved', String(reason));
+        reportClientLog(
+          'language_save_failed',
+          'Language could not be saved',
+          errorDetailOf(reason),
+        );
       });
   };
   // No reload is needed: the host reads the value when the window closes, not while it renders.
@@ -64,7 +68,7 @@ export function SystemSettingsTab() {
         reportClientLog(
           'close_action_save_failed',
           'Close behavior could not be saved',
-          String(reason),
+          errorDetailOf(reason),
         );
       },
     );
@@ -80,7 +84,7 @@ export function SystemSettingsTab() {
       reportClientLog(
         'update_check_setting_failed',
         'The automatic update check setting could not be saved',
-        String(reason),
+        errorDetailOf(reason),
       );
     });
   };

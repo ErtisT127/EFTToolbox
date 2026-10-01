@@ -184,6 +184,7 @@ export interface PlayerState {
   mapPosition: MapPoint;
   resolution: LocationResolution;
   heading: number;
+  worldHeading: number;
 }
 
 export interface SharedAnnotation {
@@ -658,6 +659,7 @@ export interface MultiplayerStatus {
   self?: MultiplayerMember;
   members?: Array<MultiplayerMember>;
   known?: Array<MultiplayerMember>;
+  showPlayerNames?: boolean;
   error?: string;
 }
 
@@ -667,6 +669,7 @@ export interface MultiplayerSettings {
   playerName: string;
   playerColor: string;
   showMembersPanel?: boolean;
+  showPlayerNames?: boolean;
   lastMode?: "custom" | "stun";
   lastAddress?: string;
   lastPort?: string;
@@ -689,8 +692,7 @@ export interface MultiplayerKickRequest {
 
 export interface MultiplayerJoinRequest {
   mode: "custom" | "stun";
-  address?: string;
-  port?: string;
+  address: string;
   stunServer?: string;
   key: string;
 }
@@ -792,7 +794,7 @@ export const RecognitionSettingsLimits = {
   templateMaxScale: { min: 0.8, max: 2.4, step: 0.1, precision: 1 },
   iconWindowRatio: { min: 0.8, max: 2, step: 0.1, precision: 1 },
   opacity: { min: 0, max: 100, step: 1, precision: 0 },
-  windowWidth: { min: 320, max: 900, step: 8, precision: 0 },
+  windowWidth: { min: 320, max: 1600, step: 8, precision: 0 },
   windowHeight: { min: 200, max: 640, step: 8, precision: 0 },
   windowLeft: { min: -100000, max: 100000, step: 1, precision: 0 },
   windowTop: { min: -100000, max: 100000, step: 1, precision: 0 },

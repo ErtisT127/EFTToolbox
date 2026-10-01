@@ -39,6 +39,7 @@ internal sealed class RecognitionWindow : IDisposable
     private int drag;
     private Native.CursorPoint dragStart;
     private Native.Rect dragBounds;
+    private int windowWidth, windowHeight;
     private int saveQueued;
     private int saveDirty;
 
@@ -151,10 +152,10 @@ internal sealed class RecognitionWindow : IDisposable
         var scale = Scale();
         var metrics = new PanelMetrics(scale);
         var ready = view.Items.Count(item => item.Name.Texture != 0);
-        var key = $"{scale:F2}|{settings.WindowWidth}x{settings.WindowHeight}|{ready}/{view.Items.Count}";
+        var key = $"{scale:F2}|{windowWidth}x{windowHeight}|{ready}/{view.Items.Count}";
         if (loggedMetrics == key) return;
         loggedMetrics = key;
-        var columns = metrics.Columns(settings.WindowWidth);
+        var columns = metrics.Columns(windowWidth);
         var first = view.Items.Count > 0 ? view.Items[0] : null;
         OverlayDiagnostics.Log("info", "recognition_panel_metrics",
             $"scale={scale:F2} dpi={Native.GetDpiForWindow(hwnd)} client={settings.WindowWidth}x{settings.WindowHeight} row={metrics.RowHeight:F0} name={columns.NameWidth:F0} trader={columns.TraderWidth:F0} flea={columns.FleaWidth:F0} namesReady={ready}/{view.Items.Count} nameWrap={metrics.NameWrapWidth(columns.NameWidth):F0} nameTexture={(first is null ? 0 : first.Name.Size.X):F0}x{(first is null ? 0 : first.Name.Size.Y):F0}");
@@ -178,12 +179,15 @@ internal sealed class RecognitionWindow : IDisposable
         // The contract's floor is a logical size; the columns add the DPI on top, so a scaled display
         // widens the window rather than squeezing the name column.
         var minimumWidth = Math.Max(320, (int)(Math.Ceiling(metrics.MinimumWidth() / 8) * 8));
-        var width = Math.Clamp(settings.WindowWidth, minimumWidth, 900);
-        var height = Math.Clamp(settings.WindowHeight, 200, 640);
+        var logicalWidth = Math.Clamp(settings.WindowWidth, 320, 1600);
+        var logicalHeight = Math.Clamp(settings.WindowHeight, 200, 640);
+        var width = Math.Max(minimumWidth, (int)Math.Round(logicalWidth * Scale()));
+        var height = Math.Max(1, (int)Math.Round(logicalHeight * Scale()));
         var left = settings.WindowLeft;
         var top = settings.WindowTop;
         if (place) (left, top) = Position(width, height);
-        settings = settings with { WindowLeft = left, WindowTop = top, WindowWidth = width, WindowHeight = height };
+        settings = settings with { WindowLeft = left, WindowTop = top, WindowWidth = logicalWidth, WindowHeight = logicalHeight };
+        windowWidth = width; windowHeight = height;
         Native.SetWindowPos(hwnd, -1, left, top, width, height, 0x0010 | 0x0020);
         renderer.Resize(width, height);
     }
@@ -217,6 +221,13 @@ internal sealed class RecognitionWindow : IDisposable
 
     internal nint? Message(uint message, nuint wParam, nint lParam)
     {
+        if (message == Native.WmDpiChanged)
+        {
+            renderer.Texts.Clear();
+            renderer.Images.Clear();
+            ApplyWindow();
+            return 0;
+        }
         if (!visible) return null;
         var m = new PanelMetrics(Scale());
         var x = (int)(short)((long)lParam & 65535);
@@ -243,7 +254,7 @@ internal sealed class RecognitionWindow : IDisposable
         }
         if (message == Native.WmLButtonDown)
         {
-            var (min, max) = m.CloseButton(settings.WindowWidth);
+            var (min, max) = m.CloseButton(windowWidth);
             if (x >= min.X && x <= max.X && y >= min.Y && y <= max.Y) { Hide(); return 0; }
             var zone = Zone(m, x, y);
             // The scrollbar is a control, not a window edge: dragging it scrolls the list.
@@ -276,8 +287,9 @@ internal sealed class RecognitionWindow : IDisposable
                 if (drag is 5 or 7 or 8) bottom += dy;
             }
             var minimumWidth = Math.Max(320, (int)(Math.Ceiling(m.MinimumWidth() / 8) * 8));
-            var width = Math.Clamp(right - left, minimumWidth, 900);
-            var height = Math.Clamp(bottom - top, 200, 640);
+            var scale = Scale();
+            var width = Math.Clamp(right - left, minimumWidth, Math.Max((int)Math.Round(1600 * scale), minimumWidth));
+            var height = Math.Clamp(bottom - top, Math.Max(1, (int)Math.Round(200 * scale)), Math.Max(1, (int)Math.Round(640 * scale)));
             // A move follows the pointer; a resize keeps the corner the reader is not holding, so a
             // size that has reached its limit stops there instead of sliding the window along.
             var anchorX = drag == 9 ? left : drag is 1 or 4 or 5 ? right - width : dragBounds.Left;
@@ -285,7 +297,8 @@ internal sealed class RecognitionWindow : IDisposable
             var area = Monitor(anchorX + width / 2, anchorY + height / 2);
             var newLeft = Math.Clamp(anchorX, area.Left, Math.Max(area.Left, area.Right - width));
             var newTop = Math.Clamp(anchorY, area.Top, Math.Max(area.Top, area.Bottom - height));
-            settings = settings with { WindowLeft = newLeft, WindowTop = newTop, WindowWidth = width, WindowHeight = height };
+            settings = settings with { WindowLeft = newLeft, WindowTop = newTop, WindowWidth = Math.Clamp((int)Math.Round(width / scale), 320, 1600), WindowHeight = Math.Clamp((int)Math.Round(height / scale), 200, 640) };
+            windowWidth = width; windowHeight = height;
             Native.SetWindowPos(hwnd, -1, newLeft, newTop, width, height, 0x0010 | 0x0020);
             renderer.Resize(width, height);
             return 0;
@@ -301,7 +314,7 @@ internal sealed class RecognitionWindow : IDisposable
         if (message == Native.WmCaptureChanged) { drag = 0; return null; }
         if (message == Native.WmMouseWheel)
         {
-            var (_, rowsHeight) = m.RowsArea(settings.WindowHeight);
+            var (_, rowsHeight) = m.RowsArea(windowHeight);
             var max = Math.Max(0, (result?.Rows.Length ?? 0) * m.RowHeight - rowsHeight);
             scroll = Math.Clamp(scroll - (short)((long)wParam >> 16) / 120f * m.RowHeight, 0, max);
             return 0;
@@ -312,7 +325,7 @@ internal sealed class RecognitionWindow : IDisposable
     /// <summary>1..8 are the resize zones clockwise from the top-left corner; 9 is the interior.</summary>
     private int Zone(PanelMetrics m, int x, int y)
     {
-        var width = settings.WindowWidth; var height = settings.WindowHeight;
+        var width = windowWidth; var height = windowHeight;
         var ring = ResizeRing * m.Scale;
         // The scrollbar strip is never a resize edge, so the reader can always grab it.
         var left = x <= ring; var right = x >= width - ring && !Scrolls(m, x, y);
@@ -335,13 +348,13 @@ internal sealed class RecognitionWindow : IDisposable
     private bool Scrolls(PanelMetrics m, float x, float y)
     {
         if (!Scrollable(m)) return false;
-        var (rowsTop, rowsHeight) = m.RowsArea(settings.WindowHeight);
-        return x >= m.ScrollbarLeft(settings.WindowWidth) && y >= rowsTop && y <= rowsTop + rowsHeight;
+        var (rowsTop, rowsHeight) = m.RowsArea(windowHeight);
+        return x >= m.ScrollbarLeft(windowWidth) && y >= rowsTop && y <= rowsTop + rowsHeight;
     }
 
     private bool Scrollable(PanelMetrics m)
     {
-        var (_, rowsHeight) = m.RowsArea(settings.WindowHeight);
+        var (_, rowsHeight) = m.RowsArea(windowHeight);
         return (result?.Rows.Length ?? 0) * m.RowHeight > rowsHeight + 1;
     }
 
@@ -349,7 +362,7 @@ internal sealed class RecognitionWindow : IDisposable
     /// jumps, which is the behaviour a scrollbar is expected to have.</summary>
     private void ScrollTo(PanelMetrics m, float y)
     {
-        var (rowsTop, rowsHeight) = m.RowsArea(settings.WindowHeight);
+        var (rowsTop, rowsHeight) = m.RowsArea(windowHeight);
         if (!Scrollable(m)) { scroll = 0; return; }
         var content = (result?.Rows.Length ?? 0) * m.RowHeight;
         var travel = Math.Max(1, rowsHeight - Math.Max(24f * m.Scale, rowsHeight * rowsHeight / content));
@@ -431,7 +444,7 @@ internal sealed class RecognitionWindow : IDisposable
         const string HeaderColor = "#8f9992";
         const string TitleColor = "#e1e7e3";
         var messageColor = failed ? "#c4554b" : loading ? "#c8a24a" : "#c9d2cb";
-        var columns = metrics.Columns(settings.WindowWidth);
+        var columns = metrics.Columns(windowWidth);
         // The rasterizer works in logical pixels and multiplies by the DPI itself.
         var nameWrap = metrics.NameWrapWidth(columns.NameWidth);
         var nameHeader = Messages.Get("recognition.panel.name");

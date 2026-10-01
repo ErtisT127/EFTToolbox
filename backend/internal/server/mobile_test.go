@@ -164,6 +164,72 @@ func TestCastSessionContextSyncsToCast(t *testing.T) {
 	}
 }
 
+func TestCastEventsDoNotDependOnDashboardConnection(t *testing.T) {
+	root := t.TempDir()
+	hub := &overlayHub{store: &mapStore{root: root, files: &VersionedFileStore{root: root}}, status: contracts.Status{ProtocolVersion: "1"}, players: map[string]contracts.PlayerState{}, clients: map[chan contracts.ServerEvent]bool{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	hub.mobile = newMobileManager(ctx, http.FS(fstest.MapFS{}), hub)
+	subscriber := make(chan mobilePacket, 8)
+	hub.mobile.mu.Lock()
+	hub.mobile.subscribers[subscriber] = struct{}{}
+	hub.mobile.mu.Unlock()
+
+	mapID := "target"
+	status := contracts.MultiplayerStatus{Enabled: true}
+	monitor := contracts.GameMonitorStatus{Mode: "pve"}
+	hub.mu.Lock()
+	hub.publish(contracts.ServerEvent{Type: "map_changed", MapId: &mapID})
+	hub.publish(contracts.ServerEvent{Type: "multiplayer_changed", MultiplayerStatus: &status})
+	hub.publish(contracts.ServerEvent{Type: "game_monitor_changed", GameMonitorStatus: &monitor})
+	hub.publish(contracts.ServerEvent{Type: "player_upsert", Player: &contracts.PlayerState{PlayerId: "player"}})
+	hub.publish(contracts.ServerEvent{Type: "annotations_changed", MapId: &mapID})
+	hub.mu.Unlock()
+
+	seen := map[string]bool{}
+	for range 5 {
+		select {
+		case packet := <-subscriber:
+			seen[packet.event] = true
+			if packet.event == "map_changed" {
+				var event contracts.ServerEvent
+				if err := json.Unmarshal(packet.data, &event); err != nil || event.MapId == nil || *event.MapId != mapID {
+					t.Fatalf("map event target = %v, want %q", event.MapId, mapID)
+				}
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("cast missed events, seen=%v", seen)
+		}
+	}
+	for _, event := range []string{"map_changed", "multiplayer_changed", "game_monitor_changed", "player_upsert", "annotations_changed"} {
+		if !seen[event] {
+			t.Fatalf("cast event %q missing, seen=%v", event, seen)
+		}
+	}
+}
+
+func TestOverlayViewChangesDoNotRefreshCast(t *testing.T) {
+	root := t.TempDir()
+	hub := &overlayHub{store: &mapStore{root: root, files: &VersionedFileStore{root: root}}, status: contracts.Status{ProtocolVersion: "1"}, players: map[string]contracts.PlayerState{}, clients: map[chan contracts.ServerEvent]bool{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	hub.mobile = newMobileManager(ctx, http.FS(fstest.MapFS{}), hub)
+	subscriber := make(chan mobilePacket, 1)
+	hub.mobile.mu.Lock()
+	hub.mobile.subscribers[subscriber] = struct{}{}
+	hub.mobile.mu.Unlock()
+
+	hub.mu.Lock()
+	hub.publish(contracts.ServerEvent{Type: "overlay_status", OverlayView: &contracts.OverlayView{MapId: "map", FloorId: "ground"}})
+	hub.mu.Unlock()
+
+	select {
+	case packet := <-subscriber:
+		t.Fatalf("overlay status reached cast as %q", packet.event)
+	default:
+	}
+}
+
 // TestCastSurfaceRejectsWrites locks the read-only cast contract: the LAN handler refuses every
 // non-GET method before the mux ever sees it, so a phone holding a valid cast token cannot write
 // map data, preferences or logs.
@@ -180,7 +246,7 @@ func TestCastSurfaceRejectsWrites(t *testing.T) {
 	mobile.token = "token"
 	mobile.mu.Unlock()
 
-	annotationPath := filepath.Join(root, "user", "modes", "pvp", "maps", "fixture.annotations.json")
+	annotationPath := filepath.Join(root, "user", "maps", "fixture.annotations.json")
 	if err := os.MkdirAll(filepath.Dir(annotationPath), 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -313,8 +313,6 @@
   color: #c9d2cb;
   font-size: var(--text-md);
   line-height: 1.6;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar) transparent;
 }
 
 .items-recognition-results {
@@ -322,8 +320,6 @@
   overflow: auto;
   border: 1px solid #303834;
   border-radius: var(--radius-sm);
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar) transparent;
 }
 .items-recognition-result {
   display: grid;
@@ -400,8 +396,6 @@
   gap: var(--space-3);
   overflow: auto;
   padding: var(--space-4);
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar) transparent;
 }
 /* The rail's own heading row, the same 32px line the results panel uses, so the three panels start
    their content at the same height. */
@@ -466,9 +460,6 @@
   scrollbar-width: none;
   overscroll-behavior-inline: contain;
 }
-.items-categories::-webkit-scrollbar {
-  display: none;
-}
 .items-categories button {
   flex: 0 0 auto;
   border-color: var(--border);
@@ -490,12 +481,6 @@
   border: 1px solid #303834;
   border-radius: var(--radius-md);
   background: rgba(18, 22, 20, 0.92);
-}
-/* The table scrolls constantly, so it gets the same quiet treatment as the panels instead of the
-   platform default bar. */
-.items-table-wrap {
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar) transparent;
 }
 .items-table {
   /* Matches the row grid below (96 + 240 + 190 + 172 + 268 + 4x16 gap): any narrower and the price
@@ -685,8 +670,6 @@
   min-width: 264px;
   max-height: var(--popover-available-height, 60vh);
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar) transparent;
   padding: 14px 16px;
   border: 0;
   border-radius: 6px;
@@ -944,9 +927,6 @@
   overflow-x: auto;
   scrollbar-width: none;
   overscroll-behavior-inline: contain;
-}
-.items-update-resources::-webkit-scrollbar {
-  display: none;
 }
 .items-update-resources li {
   display: inline-flex;

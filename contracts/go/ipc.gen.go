@@ -190,6 +190,7 @@ type PlayerState struct {
 	MapPosition   MapPoint           `json:"mapPosition"`
 	Resolution    LocationResolution `json:"resolution"`
 	Heading       float64            `json:"heading"`
+	WorldHeading  float64            `json:"worldHeading"`
 }
 
 type SharedAnnotation struct {
@@ -656,15 +657,16 @@ type MultiplayerInvite struct {
 }
 
 type MultiplayerStatus struct {
-	Enabled bool                 `json:"enabled"`
-	Role    *string              `json:"role,omitempty"`
-	Mode    *string              `json:"mode,omitempty"`
-	Invite  *MultiplayerInvite   `json:"invite,omitempty"`
-	Port    *int                 `json:"port,omitempty"`
-	Self    *MultiplayerMember   `json:"self,omitempty"`
-	Members *[]MultiplayerMember `json:"members,omitempty"`
-	Known   *[]MultiplayerMember `json:"known,omitempty"`
-	Error   *string              `json:"error,omitempty"`
+	Enabled         bool                 `json:"enabled"`
+	Role            *string              `json:"role,omitempty"`
+	Mode            *string              `json:"mode,omitempty"`
+	Invite          *MultiplayerInvite   `json:"invite,omitempty"`
+	Port            *int                 `json:"port,omitempty"`
+	Self            *MultiplayerMember   `json:"self,omitempty"`
+	Members         *[]MultiplayerMember `json:"members,omitempty"`
+	Known           *[]MultiplayerMember `json:"known,omitempty"`
+	ShowPlayerNames *bool                `json:"showPlayerNames,omitempty"`
+	Error           *string              `json:"error,omitempty"`
 }
 
 type MultiplayerSettings struct {
@@ -673,6 +675,7 @@ type MultiplayerSettings struct {
 	PlayerName       string  `json:"playerName"`
 	PlayerColor      string  `json:"playerColor"`
 	ShowMembersPanel *bool   `json:"showMembersPanel,omitempty"`
+	ShowPlayerNames  *bool   `json:"showPlayerNames,omitempty"`
 	LastMode         *string `json:"lastMode,omitempty"`
 	LastAddress      *string `json:"lastAddress,omitempty"`
 	LastPort         *string `json:"lastPort,omitempty"`
@@ -695,8 +698,7 @@ type MultiplayerKickRequest struct {
 
 type MultiplayerJoinRequest struct {
 	Mode       string  `json:"mode"`
-	Address    *string `json:"address,omitempty"`
-	Port       *string `json:"port,omitempty"`
+	Address    string  `json:"address"`
 	StunServer *string `json:"stunServer,omitempty"`
 	Key        string  `json:"key"`
 }
@@ -845,7 +847,7 @@ var RecognitionSettingsLimits = struct {
 	TemplateMaxScale:   NumericLimit{Min: 0.8, Max: 2.4, Step: 0.1, Precision: 1},
 	IconWindowRatio:    NumericLimit{Min: 0.8, Max: 2, Step: 0.1, Precision: 1},
 	Opacity:            NumericLimit{Min: 0, Max: 100, Step: 1, Precision: 0},
-	WindowWidth:        NumericLimit{Min: 320, Max: 900, Step: 8, Precision: 0},
+	WindowWidth:        NumericLimit{Min: 320, Max: 1600, Step: 8, Precision: 0},
 	WindowHeight:       NumericLimit{Min: 200, Max: 640, Step: 8, Precision: 0},
 	WindowLeft:         NumericLimit{Min: -100000, Max: 100000, Step: 1, Precision: 0},
 	WindowTop:          NumericLimit{Min: -100000, Max: 100000, Step: 1, Precision: 0},

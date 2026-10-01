@@ -24,6 +24,7 @@ import {
   commitAnnotations,
   ensureAnnotationSession,
   redoAnnotations,
+  resetAnnotationSession,
   setAnnotationSaveState,
   setCalibrationPreferencesDraft,
   submitMapPreferences,
@@ -295,6 +296,7 @@ export class Workspace {
     return store.getState().client.annotations.savingCalibratorPreferences;
   }
   private sequence = 0;
+  private pendingSelection = '';
 
   async initialize() {
     const sequence = ++this.sequence;
@@ -327,7 +329,15 @@ export class Workspace {
         calibratorPreferences.schemaVersion !== ContractSchemaVersion
       )
         throw new DataLoadError('errors.data_version', 'map');
-      const id = catalog.find((m) => m.id === preferences.selectedMap)?.id || catalog[0]?.id;
+      // A manual tab click can be ahead of the debounced preference PUT. Keep that local intent
+      // ahead of the last persisted selection when a reload overlaps the click.
+      const draftSelectedMap = store.getState().client.mapPreferencesDraft?.selectedMap;
+      const preferredMapId = [
+        this.pendingSelection,
+        draftSelectedMap,
+        preferences.selectedMap,
+      ].find((value) => value && catalog.some((map) => map.id === value));
+      const id = preferredMapId || catalog[0]?.id;
       const normalizedCalibratorPreferences = this.normalizeCalibratorPreferences(id || '');
       if (normalizedCalibratorPreferences !== calibratorPreferences)
         this.setCalibratorPreferencesDraft(normalizedCalibratorPreferences);
@@ -391,6 +401,7 @@ export class Workspace {
 
   async select(id: string, reload = false) {
     const sequence = ++this.sequence;
+    this.pendingSelection = id;
     store.dispatch(setWorkspaceState({ error: '', loading: true }));
     try {
       if (reload) {
@@ -429,9 +440,12 @@ export class Workspace {
       this.normalizePreference(preferences, id, this.sessions.get(id)!.data);
       this.setPreferencesDraft(preferences);
       store.dispatch(setWorkspaceState({ activeId: id }));
+      if (this.pendingSelection === id) this.pendingSelection = '';
     } catch (error) {
-      if (sequence === this.sequence)
+      if (sequence === this.sequence) {
+        if (this.pendingSelection === id) this.pendingSelection = '';
         store.dispatch(setWorkspaceState({ error: errorKeyOf(error, 'errors.request_failed') }));
+      }
     } finally {
       if (sequence === this.sequence) {
         store.dispatch(setWorkspaceState({ loading: false }));
@@ -574,6 +588,7 @@ export class Workspace {
       store.dispatch(setAnnotationSaveState({ id, changes: { pendingSync: true } }));
       return;
     }
+    const previousItems = s.items;
     try {
       const result = await store
         .dispatch(api.endpoints.getAnnotations.initiate(id, { forceRefetch: true }))
@@ -588,7 +603,9 @@ export class Workspace {
       }
       if (annotations.schemaVersion !== ContractSchemaVersion || !Array.isArray(annotations.items))
         return;
-      store.dispatch(clearAnnotationDraft(id));
+      if (JSON.stringify(previousItems) === JSON.stringify(annotations.items))
+        store.dispatch(clearAnnotationDraft(id));
+      else store.dispatch(resetAnnotationSession(id));
     } catch {
       // Keep the local state; the next remote change retries.
     }

@@ -7,6 +7,7 @@ import {
   commitAnnotations,
   pushNotice,
   redoAnnotations,
+  resetAnnotationSession,
   setAnnotationSaveState,
   setConflict,
   setItemsSettingsDraft,
@@ -88,6 +89,7 @@ const saveAnnotations = async (id: string, getState: () => RootState, dispatch: 
     const settled = getState().client.annotations.sessions[id];
     if (settled?.pendingSync && settled.savedRevision >= settled.editRevision) {
       dispatch(setAnnotationSaveState({ id, changes: { pendingSync: false } }));
+      const beforeRefresh = api.endpoints.getAnnotations.select(id)(getState()).data?.value.items;
       const refreshed = await dispatch(
         api.endpoints.getAnnotations.initiate(id, { forceRefetch: true }),
       ).unwrap();
@@ -98,7 +100,9 @@ const saveAnnotations = async (id: string, getState: () => RootState, dispatch: 
         refreshed.value.schemaVersion === ContractSchemaVersion &&
         Array.isArray(refreshed.value.items)
       ) {
-        dispatch(clearAnnotationDraft(id));
+        if (JSON.stringify(beforeRefresh) === JSON.stringify(refreshed.value.items))
+          dispatch(clearAnnotationDraft(id));
+        else dispatch(resetAnnotationSession(id));
       }
     }
   } catch (error) {

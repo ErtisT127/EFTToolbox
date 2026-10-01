@@ -10,6 +10,7 @@ type WirePos struct {
 	Y       float64 `json:"y"`
 	Z       float64 `json:"z"`
 	Heading float64 `json:"heading"`
+	Color   string  `json:"color,omitempty"`
 }
 type WireHello struct {
 	PeerId string `json:"peerId"`

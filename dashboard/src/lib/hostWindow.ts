@@ -48,7 +48,13 @@ export const openExternal = (url: string) => {
 // requests it starts itself (Alt+F4, the taskbar menu) and the tray's settings entry. It is a
 // server-sent event stream rather than an injected script, because WebView2 drops a script into a
 // page that is still busy rendering.
-const hostEventNames = ['host-state', 'window-state', 'close-request', 'open-settings'] as const;
+const hostEventNames = [
+  'host-state',
+  'window-state',
+  'close-request',
+  'open-settings',
+  'open-recognition',
+] as const;
 
 type HostEventName = (typeof hostEventNames)[number];
 

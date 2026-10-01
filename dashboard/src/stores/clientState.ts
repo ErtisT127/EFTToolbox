@@ -249,7 +249,17 @@ const clientState = createSlice({
       const session = (state.annotations.sessions[action.payload.id] ||= emptyAnnotationSession());
       Object.assign(session, action.payload.changes);
     },
+    // A successful local save clears only the transient draft so saved edits remain undoable.
     clearAnnotationDraft(state, action: PayloadAction<string>) {
+      const session = state.annotations.sessions[action.payload];
+      if (!session) return;
+      session.draft = undefined;
+      session.conflict = false;
+      session.error = '';
+      session.savedRevision = session.editRevision;
+    },
+    // Remote replacement or an explicit conflict choice invalidates old snapshots.
+    resetAnnotationSession(state, action: PayloadAction<string>) {
       const session = state.annotations.sessions[action.payload];
       if (!session) return;
       session.draft = undefined;
@@ -342,6 +352,7 @@ export const {
   submitAnnotations,
   setAnnotationSaveState,
   clearAnnotationDraft,
+  resetAnnotationSession,
   setOverlayState,
   setGameMonitorState,
   setMultiplayerState,

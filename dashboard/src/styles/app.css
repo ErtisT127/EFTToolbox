@@ -75,6 +75,41 @@
   box-sizing: border-box;
 }
 
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: var(--scrollbar);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+  background-clip: content-box;
+}
+
+.toolbar::-webkit-scrollbar,
+.map-tabs::-webkit-scrollbar,
+.recent-stickers::-webkit-scrollbar,
+.items-categories::-webkit-scrollbar,
+.items-update-resources::-webkit-scrollbar {
+  display: none;
+}
+
 body {
   margin: 0;
 }

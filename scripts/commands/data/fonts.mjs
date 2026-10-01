@@ -1,5 +1,5 @@
 // Prepare redistributable, identical static faces for the browser and native renderer.
-import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -129,46 +129,8 @@ await save(
   emojiLicense,
   hash(emojiBytes),
 );
-await rm(path.join(fonts, 'noto-color-emoji.woff2'), { force: true });
-try {
-  await save(
-    'display/fonts/noto-color-emoji.woff2',
-    Buffer.from(await wawoff2.compress(emojiSubset)),
-    emojiFontUrl,
-    emojiLicense,
-    hash(emojiBytes),
-  );
-} catch (error) {
-  console.warn(`Skipping WOFF2 conversion for CBDT emoji font: ${error.message}`);
-}
-await rm(path.join(assets, 'display', 'emoji'), { recursive: true, force: true });
-await rm(path.join(assets, 'licenses', 'twemoji-LICENSE-GRAPHICS'), { force: true });
+// Chromium rejects WOFF2-transformed CBDT/CBLC fonts; Overlay loads the original TTF directly.
 console.log('Prepared noto-color-emoji');
-// Obsolete generated files with no verified distribution provenance must not ship. The first
-// group predates the display/ namespace: their contents now live under display/fonts/, and the
-// verify walker rejects any font file the manifest does not list, so the stale copies go.
-for (const file of [
-  'bender-bold.woff2',
-  'fonts/bender-bold.ttf',
-  'fonts/NotoSansSC.ttf',
-  'barlow-condensed-700.woff2',
-  'fonts/barlow-condensed-700.ttf',
-  'noto-sans-sc-400.woff2',
-  'noto-sans-sc-700.woff2',
-  'noto-sans-700.woff2',
-  'barlow-condensed-400.woff2',
-  'barlow-condensed-500.woff2',
-  'barlow-condensed-600.woff2',
-  'jetbrains-mono-400.woff2',
-  'fonts/noto-sans-sc-400.ttf',
-  'fonts/noto-sans-sc-700.ttf',
-  'fonts/noto-sans-700.ttf',
-  'fonts/barlow-condensed-400.ttf',
-  'fonts/barlow-condensed-500.ttf',
-  'fonts/barlow-condensed-600.ttf',
-  'fonts/jetbrains-mono-400.ttf',
-])
-  await rm(path.join(assets, file), { force: true });
 await writeFile(
   path.join(assets, 'display-resources.json'),
   JSON.stringify(

@@ -190,6 +190,7 @@ public sealed record PlayerState {
   [JsonPropertyName("mapPosition")] public MapPoint MapPosition { get; init; } = new();
   [JsonPropertyName("resolution")] public LocationResolution Resolution { get; init; } = new();
   [JsonPropertyName("heading")] public double Heading { get; init; } = default;
+  [JsonPropertyName("worldHeading")] public double WorldHeading { get; init; } = default;
 }
 
 public sealed record SharedAnnotation {
@@ -664,6 +665,7 @@ public sealed record MultiplayerStatus {
   [JsonPropertyName("self")] public MultiplayerMember? Self { get; init; } = null;
   [JsonPropertyName("members")] public MultiplayerMember[]? Members { get; init; } = null;
   [JsonPropertyName("known")] public MultiplayerMember[]? Known { get; init; } = null;
+  [JsonPropertyName("showPlayerNames")] public bool? ShowPlayerNames { get; init; } = null;
   [JsonPropertyName("error")] public string? Error { get; init; } = null;
 }
 
@@ -673,6 +675,7 @@ public sealed record MultiplayerSettings {
   [JsonPropertyName("playerName")] public string PlayerName { get; init; } = "";
   [JsonPropertyName("playerColor")] public string PlayerColor { get; init; } = "";
   [JsonPropertyName("showMembersPanel")] public bool? ShowMembersPanel { get; init; } = null;
+  [JsonPropertyName("showPlayerNames")] public bool? ShowPlayerNames { get; init; } = null;
   [JsonPropertyName("lastMode")] public string? LastMode { get; init; } = null;
   [JsonPropertyName("lastAddress")] public string? LastAddress { get; init; } = null;
   [JsonPropertyName("lastPort")] public string? LastPort { get; init; } = null;
@@ -695,8 +698,7 @@ public sealed record MultiplayerKickRequest {
 
 public sealed record MultiplayerJoinRequest {
   [JsonPropertyName("mode")] public string Mode { get; init; } = "";
-  [JsonPropertyName("address")] public string? Address { get; init; } = null;
-  [JsonPropertyName("port")] public string? Port { get; init; } = null;
+  [JsonPropertyName("address")] public string Address { get; init; } = "";
   [JsonPropertyName("stunServer")] public string? StunServer { get; init; } = null;
   [JsonPropertyName("key")] public string Key { get; init; } = "";
 }
@@ -793,7 +795,7 @@ public static class RecognitionSettingsLimits {
   public static readonly NumericLimit TemplateMaxScale = new(0.8, 2.4, 0.1, 1);
   public static readonly NumericLimit IconWindowRatio = new(0.8, 2, 0.1, 1);
   public static readonly NumericLimit Opacity = new(0, 100, 1, 0);
-  public static readonly NumericLimit WindowWidth = new(320, 900, 8, 0);
+  public static readonly NumericLimit WindowWidth = new(320, 1600, 8, 0);
   public static readonly NumericLimit WindowHeight = new(200, 640, 8, 0);
   public static readonly NumericLimit WindowLeft = new(-100000, 100000, 1, 0);
   public static readonly NumericLimit WindowTop = new(-100000, 100000, 1, 0);

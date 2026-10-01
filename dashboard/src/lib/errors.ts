@@ -43,6 +43,18 @@ export function errorKeyOf(reason: unknown, fallback: string): string {
   return reason instanceof Error ? reason.message : fallback;
 }
 
+export function errorDetailOf(reason: unknown): string {
+  if (reason instanceof Error) return reason.message;
+  if (typeof reason === 'string') return reason;
+  try {
+    return JSON.stringify(reason) ?? String(reason);
+  } catch {
+    return typeof reason === 'object' && reason !== null
+      ? '[unserializable error]'
+      : String(reason);
+  }
+}
+
 export function isDashboardDevelopment(): boolean {
   return (
     typeof globalThis !== 'undefined' &&

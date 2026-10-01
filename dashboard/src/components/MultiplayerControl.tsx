@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react';
 import { isImeComposing, useImeComposition } from '../lib/ime';
 import {
   ArrowLeft,
@@ -36,6 +36,7 @@ import {
 } from '../stores/api';
 import { store as reduxStore } from '../stores/store';
 import { useRegisterConflictActions } from '../stores/conflictActions';
+import { errorDetailOf } from '../lib/errors';
 
 // Backend multiplayer error codes → errors.* copy; the {{port}} placeholder is
 // inferred over this key set.
@@ -66,6 +67,9 @@ const randomKey = () => {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 };
 
+const portInput = (value: string) => value.replace(/\D/g, '').slice(0, 5);
+const roomKeyInput = (value: string) => value.replace(/[^\x21-\x7e]/g, '').slice(0, 32);
+
 export function MultiplayerControl() {
   const { t } = useLocale();
   const mp = useMultiplayer();
@@ -78,12 +82,13 @@ export function MultiplayerControl() {
   const [port, setPort] = useState('');
   const [password, setPassword] = useState('');
   const [joinAddress, setJoinAddress] = useState('');
-  const [joinPort, setJoinPort] = useState('');
   const [joinPassword, setJoinPassword] = useState('');
   const [stunJoinAddress, setStunJoinAddress] = useState('');
   const [stunJoinServer, setStunJoinServer] = useState('');
   const [stunJoinPassword, setStunJoinPassword] = useState('');
   const [kickTarget, setKickTarget] = useState<MemberRow | null>(null);
+  const identitySave = useRef<Promise<void>>(Promise.resolve());
+  const nameSeeded = useRef(false);
   const closeButton = useRef<HTMLButtonElement>(null);
   const triggerButton = useRef<HTMLButtonElement>(null);
   const dialog = useRef<HTMLElement>(null);
@@ -100,16 +105,17 @@ export function MultiplayerControl() {
   // fills an unnamed profile with its own Chinese default, so the name equal to that default counts
   // as unset and is seeded in the interface language instead.
   useEffect(() => {
-    if (name) return;
+    if (nameSeeded.current || !mp.selfId || name) return;
     const id = mp.selfId.slice(0, 4);
     const backendDefault = i18n.t('multiplayer.defaultPlayerName', { id, lng: 'zh-CN' });
     if (mp.selfName && mp.selfName !== backendDefault) setName(mp.selfName);
     else if (id) setName(t('multiplayer.defaultPlayerName', { id }));
+    nameSeeded.current = true;
   }, [mp.selfName, mp.selfId, name, t]);
 
   useEffect(() => {
     if (interfacesQuery.isError)
-      reportThrottledFailure('multiplayer_interfaces_failed', String(interfacesQuery.error));
+      reportThrottledFailure('multiplayer_interfaces_failed', errorDetailOf(interfacesQuery.error));
   }, [interfacesQuery.error, interfacesQuery.isError]);
 
   useEffect(() => {
@@ -209,13 +215,28 @@ export function MultiplayerControl() {
     if (fieldId) dialog.current?.querySelector<HTMLElement>(`#${fieldId}`)?.focus();
   };
 
+  const queueIdentitySave = (changes: {
+    playerName?: string;
+    playerColor?: string;
+    showMembersPanel?: boolean;
+    showPlayerNames?: boolean;
+    stunListSource?: 'host' | 'ip';
+  }) => {
+    const task = identitySave.current
+      .catch(() => undefined)
+      .then(() => multiplayer.saveIdentity(changes));
+    identitySave.current = task;
+    return task;
+  };
+
   const saveIdentity = (changes: {
     playerName?: string;
     playerColor?: string;
     showMembersPanel?: boolean;
+    showPlayerNames?: boolean;
     stunListSource?: 'host' | 'ip';
   }) => {
-    void multiplayer.saveIdentity(changes).catch((failure) => {
+    void queueIdentitySave(changes).catch((failure) => {
       // A revision conflict is already surfaced by the conflict dialog; repeating it as a generic
       // "save failed" notice only adds noise, and because the next save retries immediately the
       // notice reads as unclosable.
@@ -230,7 +251,8 @@ export function MultiplayerControl() {
     setError(null);
     try {
       if (name.trim() && name.trim() !== mp.selfName)
-        await multiplayer.saveIdentity({ playerName: name.trim() });
+        await queueIdentitySave({ playerName: name.trim() });
+      await identitySave.current;
       await multiplayer.host({
         mode: 'custom',
         address: address.trim(),
@@ -250,7 +272,6 @@ export function MultiplayerControl() {
   const join = async (request: {
     mode: 'custom' | 'stun';
     address: string;
-    port: string;
     stunServer?: string;
     key: string;
   }) => {
@@ -259,7 +280,8 @@ export function MultiplayerControl() {
     setError(null);
     try {
       if (name.trim() && name.trim() !== mp.selfName)
-        await multiplayer.saveIdentity({ playerName: name.trim() });
+        await queueIdentitySave({ playerName: name.trim() });
+      await identitySave.current;
       await multiplayer.join(request);
       setView('info');
       notices.push(t('multiplayer.notices.joinedRoom'), undefined, 'success');
@@ -429,6 +451,8 @@ export function MultiplayerControl() {
                 status={status}
                 showMembersPanel={mp.showMembersPanel}
                 onShowMembersPanel={(value) => saveIdentity({ showMembersPanel: value })}
+                showPlayerNames={mp.showPlayerNames}
+                onShowPlayerNames={(value) => saveIdentity({ showPlayerNames: value })}
                 canKick={status.role === 'host'}
                 onKick={(row) => {
                   setKickTarget(row);
@@ -470,11 +494,14 @@ export function MultiplayerControl() {
                   </div>
                   <div className="mp-field">
                     <label htmlFor="mp-port">{t('multiplayer.port')}</label>
-                    <input
+                    <ClearableInput
                       id="mp-port"
                       value={port}
                       placeholder={t('multiplayer.portAutoHint')}
-                      onChange={(event) => setPort(event.target.value)}
+                      inputMode="numeric"
+                      maxLength={5}
+                      clearLabel={t('common.clear')}
+                      onChange={(value) => setPort(portInput(value))}
                     />
                   </div>
                 </div>
@@ -509,25 +536,15 @@ export function MultiplayerControl() {
             ) : view === 'join' ? (
               <>
                 {identity}
-                <div className="mp-field-row">
-                  <div className="mp-field">
-                    <label htmlFor="mp-join-address">{t('multiplayer.hostAddress')}</label>
-                    <input
-                      id="mp-join-address"
-                      value={joinAddress}
-                      onChange={(event) => setJoinAddress(event.target.value)}
-                    />
-                  </div>
-                  <div className="mp-field">
-                    <label htmlFor="mp-join-port">{t('multiplayer.port')}</label>
-                    <input
-                      id="mp-join-port"
-                      value={joinPort}
-                      placeholder={t('multiplayer.hostPortPlaceholder')}
-                      onChange={(event) => setJoinPort(event.target.value)}
-                    />
-                  </div>
-                </div>
+                <label htmlFor="mp-join-address">{t('multiplayer.hostAddress')}</label>
+                <ClearableInput
+                  id="mp-join-address"
+                  value={joinAddress}
+                  placeholder={t('multiplayer.hostAddressPlaceholder')}
+                  maxLength={200}
+                  clearLabel={t('common.clear')}
+                  onChange={setJoinAddress}
+                />
                 <label htmlFor="mp-join-password">{t('multiplayer.password')}</label>
                 <PasswordField
                   id="mp-join-password"
@@ -538,12 +555,11 @@ export function MultiplayerControl() {
                 <button
                   className="mp-primary"
                   type="button"
-                  disabled={!joinAddress.trim() || !joinPort.trim() || !joinPassword.trim()}
+                  disabled={!joinAddress.trim() || !joinPassword.trim()}
                   onClick={() =>
                     void join({
                       mode: 'custom',
                       address: joinAddress.trim(),
-                      port: joinPort.trim(),
                       key: joinPassword.trim(),
                     })
                   }
@@ -566,18 +582,22 @@ export function MultiplayerControl() {
               <>
                 {identity}
                 <label htmlFor="mp-stun-join-address">{t('multiplayer.hostPublicAddress')}</label>
-                <input
+                <ClearableInput
                   id="mp-stun-join-address"
                   value={stunJoinAddress}
                   placeholder={t('multiplayer.hostPublicAddressPlaceholder')}
-                  onChange={(event) => setStunJoinAddress(event.target.value)}
+                  maxLength={200}
+                  clearLabel={t('common.clear')}
+                  onChange={setStunJoinAddress}
                 />
                 <label htmlFor="mp-stun-join-server">{t('multiplayer.stunServer')}</label>
-                <input
+                <ClearableInput
                   id="mp-stun-join-server"
                   value={stunJoinServer}
                   placeholder={t('multiplayer.stunServerPlaceholder')}
-                  onChange={(event) => setStunJoinServer(event.target.value)}
+                  maxLength={200}
+                  clearLabel={t('common.clear')}
+                  onChange={setStunJoinServer}
                 />
                 <label htmlFor="mp-stun-join-password">{t('multiplayer.password')}</label>
                 <PasswordField
@@ -596,7 +616,6 @@ export function MultiplayerControl() {
                     void join({
                       mode: 'stun',
                       address: stunJoinAddress.trim(),
-                      port: '',
                       stunServer: stunJoinServer.trim(),
                       key: stunJoinPassword.trim(),
                     })
@@ -650,9 +669,23 @@ function IdentitySection({
   onSave: (changes: { playerName?: string; playerColor?: string }) => void;
 }) {
   const { t } = useLocale();
+  const [nameError, setNameError] = useState<string | null>(null);
+  const committedName = useRef(name);
+  useEffect(() => {
+    if (!committedName.current && name) committedName.current = name;
+  }, [name]);
   const saveName = (value: string) => {
     const trimmed = value.trim();
-    if (trimmed && trimmed !== selfName) onSave({ playerName: trimmed });
+    if (!trimmed) {
+      setNameError(t('multiplayer.nameRequired'));
+      return false;
+    }
+    setNameError(null);
+    if (trimmed !== selfName) {
+      committedName.current = trimmed;
+      onSave({ playerName: trimmed });
+    }
+    return true;
   };
   // The name only saves on blur, so a blur that lands while the candidate window is open waits for
   // the finished text instead of persisting the half-typed pinyin the field still shows.
@@ -660,26 +693,42 @@ function IdentitySection({
   const { composing, composerProps } = useImeComposition((value) => {
     if (deferredBlur.current === null) return;
     deferredBlur.current = null;
-    saveName(value);
+    if (!saveName(value)) {
+      onName(committedName.current);
+      setNameError(null);
+    }
   });
   return (
     <>
       <label htmlFor="mp-name">{t('multiplayer.name')}</label>
-      <input
+      <ClearableInput
         id="mp-name"
         value={name}
         maxLength={40}
         placeholder={t('multiplayer.namePlaceholder')}
+        clearLabel={t('common.clear')}
         {...composerProps}
-        onChange={(event) => onName(event.target.value)}
+        aria-invalid={nameError ? 'true' : undefined}
+        onChange={(value) => {
+          onName(value);
+          setNameError(value.trim() ? null : t('multiplayer.nameRequired'));
+        }}
         onBlur={(event) => {
           if (composing.current) {
             deferredBlur.current = event.currentTarget.value;
             return;
           }
-          saveName(event.currentTarget.value);
+          if (!saveName(event.currentTarget.value)) {
+            onName(committedName.current);
+            setNameError(null);
+          }
         }}
       />
+      {nameError && (
+        <small className="field-error" role="alert">
+          {nameError}
+        </small>
+      )}
       <label>{t('multiplayer.colorLabel')}</label>
       <ColorSwatches color={selfColor} onChange={(color) => onSave({ playerColor: color })} />
     </>
@@ -716,7 +765,13 @@ function ColorSwatches({ color, onChange }: { color: string; onChange: (color: s
         title={t('multiplayer.colorCustom')}
         className={`mp-color mp-color-custom ${customActive ? 'selected' : ''}`}
         style={customActive ? { background: color } : undefined}
-        onClick={() => picker.current?.showPicker?.()}
+        onClick={() => {
+          // WebView2 runtimes before the showPicker API still open a native color input via click.
+          const input = picker.current;
+          if (!input) return;
+          if (typeof input.showPicker === 'function') input.showPicker();
+          else input.click();
+        }}
       >
         {customActive ? <Check size={12} /> : <Plus size={12} />}
       </button>
@@ -749,8 +804,25 @@ function AddressField({
   const field = useRef<HTMLSpanElement>(null);
   return (
     <>
-      <span className="cast-address-field" ref={field}>
-        <input id={id} value={value} onChange={(event) => onChange(event.target.value)} />
+      <span className={`cast-address-field ${options.length ? 'has-options' : ''}`} ref={field}>
+        <input
+          id={id}
+          value={value}
+          maxLength={200}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        {value && (
+          <button
+            type="button"
+            className="mp-input-button"
+            aria-label={t('common.clear')}
+            title={t('common.clear')}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onChange('')}
+          >
+            <X size={14} />
+          </button>
+        )}
         {options.length > 0 && (
           <button
             className="cast-address-toggle"
@@ -800,6 +872,36 @@ function AddressField({
   );
 }
 
+function ClearableInput({
+  value,
+  onChange,
+  clearLabel,
+  className,
+  ...props
+}: Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> & {
+  value: string;
+  onChange: (value: string) => void;
+  clearLabel: string;
+}) {
+  return (
+    <span className={`mp-clearable-field${className ? ` ${className}` : ''}`}>
+      <input {...props} value={value} onChange={(event) => onChange(event.target.value)} />
+      {value && (
+        <button
+          type="button"
+          className="mp-input-button"
+          aria-label={clearLabel}
+          title={clearLabel}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => onChange('')}
+        >
+          <X size={14} />
+        </button>
+      )}
+    </span>
+  );
+}
+
 function PasswordField({
   id,
   value,
@@ -815,13 +917,21 @@ function PasswordField({
   generate?: boolean;
 }) {
   const { t } = useLocale();
+  const { composing, composerProps } = useImeComposition((next) => onChange(roomKeyInput(next)));
   return (
     <span className="mp-password-field">
       <input
         id={id}
+        type="text"
         value={value}
+        maxLength={32}
+        inputMode="text"
+        autoComplete="off"
         placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
+        {...composerProps}
+        onChange={(event) =>
+          onChange(composing.current ? event.target.value : roomKeyInput(event.target.value))
+        }
       />
       {value ? (
         <button
@@ -829,6 +939,7 @@ function PasswordField({
           className="mp-input-button"
           aria-label={t('multiplayer.clearPassword')}
           title={t('multiplayer.clearPassword')}
+          onMouseDown={(event) => event.preventDefault()}
           onClick={() => onChange('')}
         >
           <X size={14} />
@@ -854,6 +965,8 @@ function InfoPanel({
   status,
   showMembersPanel,
   onShowMembersPanel,
+  showPlayerNames,
+  onShowPlayerNames,
   canKick,
   onKick,
   onLeave,
@@ -861,6 +974,8 @@ function InfoPanel({
   status: MultiplayerStatus;
   showMembersPanel: boolean;
   onShowMembersPanel: (value: boolean) => void;
+  showPlayerNames: boolean;
+  onShowPlayerNames: (value: boolean) => void;
   canKick: boolean;
   onKick: (row: MemberRow) => void;
   onLeave: () => void;
@@ -968,6 +1083,14 @@ function InfoPanel({
           onChange={(event) => onShowMembersPanel(event.target.checked)}
         />
         <span>{t('multiplayer.showMembersPanel')}</span>
+      </label>
+      <label className="mp-check-row">
+        <input
+          type="checkbox"
+          checked={showPlayerNames}
+          onChange={(event) => onShowPlayerNames(event.target.checked)}
+        />
+        <span>{t('multiplayer.showPlayerNames')}</span>
       </label>
       <div className="mp-members-section">
         <span className="mp-members-title">{t('multiplayer.membersTitle')}</span>
@@ -1085,7 +1208,8 @@ function StunPanel({
   }, []);
 
   useEffect(() => {
-    if (stunError) reportThrottledFailure('multiplayer_stun_servers_failed', String(stunError));
+    if (stunError)
+      reportThrottledFailure('multiplayer_stun_servers_failed', errorDetailOf(stunError));
   }, [stunError]);
 
   // Switching to a list that does not contain the selected server clears the selection so the
@@ -1123,7 +1247,7 @@ function StunPanel({
           return next;
         });
       } catch (error) {
-        reportThrottledFailure('multiplayer_stun_probe_failed', String(error));
+        reportThrottledFailure('multiplayer_stun_probe_failed', errorDetailOf(error));
         setProbes((current) => {
           const next = new Map(current);
           for (const server of chunk) next.set(server, { state: 'done' });
@@ -1170,7 +1294,7 @@ function StunPanel({
       const value = await checkNatMutation().unwrap();
       setNat(value.kind);
     } catch (error) {
-      reportThrottledFailure('multiplayer_nat_check_failed', String(error));
+      reportThrottledFailure('multiplayer_nat_check_failed', errorDetailOf(error));
       setNat('unknown');
     } finally {
       setNatPending(false);
@@ -1300,11 +1424,13 @@ function StunPanel({
         </button>
       </div>
       {searchOpen && (
-        <input
+        <ClearableInput
           className="mp-search"
           value={query}
+          maxLength={200}
           placeholder={t('multiplayer.searchPlaceholder')}
-          onChange={(event) => setQuery(event.target.value)}
+          clearLabel={t('common.clear')}
+          onChange={setQuery}
           autoFocus
         />
       )}

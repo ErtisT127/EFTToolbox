@@ -15,7 +15,7 @@
   "nav": {
     "aria": "Main navigation",
     "map": "Live map",
-    "calibrator": "Map calibration",
+    "calibrator": "Floor calibration",
     "items": "Items",
     "settings": "Settings"
   },
@@ -66,9 +66,9 @@
           "confirm": "Clear local annotations from all maps? This cannot be undone."
         },
         "calibration": {
-          "title": "Map calibration",
+          "title": "Floor calibration",
           "description": "Restore calibration documents and calibrator page preferences to their empty defaults.",
-          "confirm": "Reset all map calibration documents and page preferences?"
+          "confirm": "Reset all floor calibration documents and page preferences?"
         },
         "marker-preferences": {
           "title": "Multiplayer marker visibility",
@@ -499,6 +499,7 @@
     "configTitle": "Multiplayer",
     "back": "Back",
     "name": "Player name",
+    "nameRequired": "Player name is required",
     "namePlaceholder": "Enter a name",
     "colorLabel": "Identity color",
     "colorSwatch": "Color {{color}}",
@@ -510,7 +511,8 @@
     "joinStunTitle": "Join via STUN",
     "infoTitle": "Room info",
     "localAddress": "Local IP address",
-    "hostAddress": "Host IP address",
+    "hostAddress": "Host address",
+    "hostAddressPlaceholder": "192.168.1.2:51240 or [IPv6]:51240",
     "hostPublicAddress": "Host IP address",
     "hostPublicAddressPlaceholder": "1.2.3.4:51240",
     "pickAddress": "Pick an IP address",
@@ -543,6 +545,7 @@
     "confirmYes": "Confirm",
     "cancel": "Cancel",
     "showMembersPanel": "Show multiplayer panel on map",
+    "showPlayerNames": "Show player names beside icons",
     "identitySaveFailed": "Failed to save your identity",
     "defaultPlayerName": "Player-{{id}}",
     "timeout": "Timeout",
@@ -551,9 +554,9 @@
     "stunTitle": "Play with STUN",
     "natCheck": "Detect NAT",
     "natChecking": "Detecting…",
-    "natCone": "Cone NAT; STUN play works normally.",
-    "natSymmetric": "Symmetric NAT; use the same LAN instead.",
-    "natUnknown": "Could not detect the network type.",
+    "natCone": "Cone NAT. STUN is supported.",
+    "natSymmetric": "Symmetric NAT. STUN may fail.",
+    "natUnknown": "Unknown NAT. Public UDP reachability is unverified.",
     "currentNode": "Locate current node",
     "probeAll": "Probe all",
     "sort": "Sort",

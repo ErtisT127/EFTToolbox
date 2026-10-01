@@ -11,6 +11,7 @@ public sealed record WirePos {
   [JsonPropertyName("y")] public double Y { get; init; } = 0;
   [JsonPropertyName("z")] public double Z { get; init; } = 0;
   [JsonPropertyName("heading")] public double Heading { get; init; } = 0;
+  [JsonPropertyName("color")] public string? Color { get; init; }
 }
 
 public sealed record WireHello {

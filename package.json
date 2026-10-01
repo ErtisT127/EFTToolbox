@@ -1,5 +1,6 @@
 {
   "name": "efttoolbox",
+  "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@11.3.0",
   "scripts": {
@@ -11,6 +12,7 @@
     "defaults:check": "node scripts/generate-defaults.mjs --check",
     "third-party": "node scripts/generate-third-party.mjs",
     "third-party:check": "node scripts/generate-third-party.mjs --check",
+    "changelog": "conventional-changelog -p angular -i CHANGELOG.md -s -r 0",
     "i18n:check": "node scripts/i18n-check.mjs",
     "build": "pnpm contracts && pnpm defaults && pnpm third-party && pnpm --filter @efttoolbox/dashboard build",
     "format": "prettier --write ."
@@ -19,6 +21,8 @@
     "@eslint/js": "10.0.1",
     "@mdi/js": "7.4.47",
     "@xmldom/xmldom": "^0.9.12",
+    "conventional-changelog": "^8.1.3",
+    "conventional-changelog-angular": "^7.0.0",
     "eslint": "10.10.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "^16.5.0",

@@ -18,6 +18,8 @@ import (
 	"github.com/ncruces/zenity"
 )
 
+var errAutomaticModeSuperseded = errors.New("automatic mode superseded")
+
 func defaultGameMonitorSettings() contracts.GameMonitorSettings {
 	value := defaults.UserSettings().GameMonitor
 	if home, err := os.UserHomeDir(); err == nil {
@@ -59,8 +61,20 @@ func (h *overlayHub) loadAppliedMap() string {
 	return ""
 }
 
-func (h *overlayHub) persistAppliedMap() error {
-	return h.store.save("game-monitor-state.json", gameMonitorState{SchemaVersion: contracts.ContractSchemaVersion, MapID: h.appliedMapID})
+func (h *overlayHub) persistAppliedMap(mapID string) error {
+	return h.store.save("game-monitor-state.json", gameMonitorState{SchemaVersion: contracts.ContractSchemaVersion, MapID: mapID})
+}
+
+// Map preferences are user-owned. Automatic detection never rewrites them, so a later manual
+// selection must always pass through unchanged.
+func (h *overlayHub) normalizeDetectedMapPreference(mapID string) string {
+	return mapID
+}
+
+// Mode settings are user-owned. Automatic mode changes publish current settings so the dashboard
+// can refresh its revision before the next manual selection.
+func (h *overlayHub) normalizeDetectedModePreference(value contracts.GameMonitorSettings) contracts.GameMonitorSettings {
+	return value
 }
 
 func (h *overlayHub) monitorConfig() gamewatch.Config {
@@ -75,9 +89,6 @@ func (h *overlayHub) startGameMonitor(ctx context.Context) {
 	repo, err := newModeRepository(h.store.root, settings.Mode)
 	if err == nil {
 		h.store.setRepository(repo)
-		if err := h.store.migrateLegacyModeFiles(settings.Mode); err != nil {
-			log.Printf("migrate legacy mode files: %v", err)
-		}
 	}
 	h.appliedMapID = h.loadAppliedMap()
 	h.monitorStatus = contracts.GameMonitorStatus{SchemaVersion: contracts.ContractSchemaVersion, Mode: settings.Mode, MapId: h.appliedMapID, ScreenshotWatching: settings.ScreenshotDirectory != "", LogWatching: settings.LogDirectory != ""}
@@ -132,9 +143,11 @@ func (h *overlayHub) acceptLog(event gamewatch.LogEvent) {
 			mode = string(event.Mode)
 		}
 		candidate := h.resolveLocationForMode(name, mode)
-		if _, err := h.store.loadFromMode(candidate, mode); err == nil {
-			h.detectedMapID, h.pendingMap = candidate, candidate
-		} else {
+		h.detectedMapID, h.pendingMap = candidate, candidate
+		if loaded, err := h.store.loadFromMode(candidate, mode); err != nil || len(loaded.Floors) == 0 {
+			if err == nil {
+				err = errors.New("map has no floors")
+			}
 			h.monitorDiagnostic("warn", "map_candidate_rejected", fmt.Sprintf("Map %q resolved to %q in mode %q: %v", name, candidate, mode, err))
 		}
 	}
@@ -165,6 +178,11 @@ func (h *overlayHub) resolveLocationForMode(name, mode string) string {
 		for _, candidate := range locationCandidates(name) {
 			if id := locations[candidate]; id != "" {
 				return id
+			}
+			for key, id := range locations {
+				if strings.EqualFold(key, candidate) && id != "" {
+					return id
+				}
 			}
 		}
 	}
@@ -219,6 +237,20 @@ func (h *overlayHub) selectedPlayerMap() (contracts.MapData, string, error) {
 			continue
 		}
 		if value, err := h.store.loadFromRepository(id, repo, "zh"); err == nil {
+			if applied != "" {
+				h.mu.Lock()
+				stillFallback := h.appliedMapID == applied && h.store.repository() == repo
+				if stillFallback {
+					h.appliedMapID = id
+					h.monitorStatus.MapId = id
+				}
+				status := h.monitorStatus
+				h.mu.Unlock()
+				if stillFallback {
+					_ = h.persistAppliedMap(id)
+					h.publish(contracts.ServerEvent{Type: "map_changed", MapId: &id, GameMonitorStatus: &status})
+				}
+			}
 			return value, repo.mode, nil
 		}
 	}
@@ -246,49 +278,103 @@ func (h *overlayHub) publishSelfPlayer(player contracts.PlayerState) {
 	h.publish(contracts.ServerEvent{Type: "player_upsert", Player: &player})
 }
 
-func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
-	m, mode, err := h.selectedPlayerMap()
+func (h *overlayHub) updateSelfIdentity(displayName, color string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for id, player := range h.players {
+		if !player.IsSelf {
+			continue
+		}
+		player.DisplayName = displayName
+		player.Color = color
+		h.players[id] = player
+		h.publish(contracts.ServerEvent{Type: "player_upsert", Player: &player})
+	}
+}
+
+func (h *overlayHub) updateRemoteIdentity(playerID, displayName, color string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	player, ok := h.players[playerID]
+	if !ok || player.IsSelf {
+		return
+	}
+	player.DisplayName = displayName
+	player.Color = color
+	h.players[playerID] = player
+	h.publish(contracts.ServerEvent{Type: "player_upsert", Player: &player})
+}
+
+// positionMap resolves the map for a position update. A detected map remains the
+// preferred target until it can be loaded successfully; failed loads fall back to
+// the caller's current map while preserving the target for the next update.
+func (h *overlayHub) positionMap(requested string, useDetected bool) (contracts.MapData, string, bool, error) {
 	h.mu.Lock()
 	pending := h.pendingMap
 	pendingMode := h.pendingMode
 	autoMap := h.monitorSettings.AutoMapSwitch
 	currentMode := h.monitorSettings.Mode
 	h.mu.Unlock()
-	if autoMap && pending != "" {
+
+	if useDetected && autoMap && pending != "" {
 		candidateMode := currentMode
 		if pendingMode != "" {
 			candidateMode = pendingMode
 		}
-		if candidate, loadErr := h.store.loadFromMode(pending, candidateMode); loadErr == nil {
-			m, err = candidate, nil
-			mode = candidateMode
+		if candidate, err := h.store.loadFromMode(pending, candidateMode); err == nil && len(candidate.Floors) > 0 {
+			return candidate, candidateMode, true, nil
+		} else {
+			if err == nil {
+				err = errors.New("map has no floors")
+			}
+			h.monitorDiagnostic("warn", "map_apply_failed", fmt.Sprintf("Map %q: %v", pending, err))
 		}
 	}
-	if err != nil || len(m.Floors) == 0 {
-		return errors.New("no active map")
+
+	if requested != "" {
+		repo := h.store.repository()
+		if repo == nil {
+			return contracts.MapData{}, "", false, errors.New("mode_repository_unavailable")
+		}
+		m, err := h.store.loadFromRepository(requested, repo, "zh")
+		if err != nil || len(m.Floors) == 0 {
+			if err == nil {
+				err = errors.New("map has no floors")
+			}
+			return contracts.MapData{}, "", false, err
+		}
+		return m, repo.mode, false, nil
 	}
-	player, err := h.projectScreenshotPlayer(m, mode, m.Id, value)
-	if err != nil {
-		return err
-	}
+	m, mode, err := h.selectedPlayerMap()
+	return m, mode, false, err
+}
+
+func (h *overlayHub) applyPositionState(mapID, mode string, targetApplied bool, player contracts.PlayerState) {
+	reprojectRemotes := false
 	h.publishSelfPlayer(player)
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	defer func() {
+		h.mu.Unlock()
+		if reprojectRemotes {
+			if h.multiplayer != nil {
+				h.multiplayer.resetAnnotationSendState()
+				h.multiplayer.resyncAnnotations()
+			}
+			go h.reprojectRemotePlayers()
+		}
+	}()
 	oldMap := h.appliedMapID
 	oldMode := h.monitorSettings.Mode
-	if autoMap && h.pendingMap != "" && m.Id == h.pendingMap {
-		h.appliedMapID = m.Id
-		h.detectedMapID = m.Id
-		h.pendingMap = ""
-		h.monitorStatus.MapId = m.Id
-		_ = h.persistAppliedMap()
-		h.monitorDiagnostic("info", "map_applied", fmt.Sprintf("Map %q", m.Id))
+	if targetApplied {
+		h.appliedMapID = mapID
+		h.detectedMapID = mapID
+		h.monitorStatus.MapId = mapID
+		if oldMap != mapID {
+			_ = h.persistAppliedMap(mapID)
+			h.monitorDiagnostic("info", "map_applied", fmt.Sprintf("Map %q", mapID))
+		}
 	}
-	if oldMap != h.appliedMapID {
-		id := h.appliedMapID
-		h.publish(contracts.ServerEvent{Type: "map_changed", MapId: &id, GameMonitorStatus: &h.monitorStatus})
-	}
-	if h.pendingMode != "" {
+	if h.pendingMode != "" && targetApplied {
 		h.monitorSettings.Mode = h.pendingMode
 		h.pendingMode = ""
 		h.monitorStatus.Mode = h.monitorSettings.Mode
@@ -303,20 +389,72 @@ func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
 			}
 		}
 		if oldMode != h.monitorSettings.Mode {
+			reprojectRemotes = true
+			h.monitorRevision++
+			revision := h.monitorRevision
 			mode := h.monitorSettings.Mode
-			go func() {
-				if _, _, _, err := h.UpdateUserSettings(func(settings *contracts.UserSettings) error {
+			go func(revision uint64, oldMode, mode string) {
+				h.mu.Lock()
+				stillCurrent := h.monitorRevision == revision && h.monitorSettings.Mode == mode
+				h.mu.Unlock()
+				if !stillCurrent {
+					return
+				}
+				current, expected, _, err := ReadVersioned(h.store.files, filepath.Join("user", "user-settings.json"), defaultUserSettings())
+				if err != nil || current.GameMonitor.Mode != oldMode {
+					return
+				}
+				h.mu.Lock()
+				stillCurrent = h.monitorRevision == revision && h.monitorSettings.Mode == mode
+				h.mu.Unlock()
+				if !stillCurrent {
+					return
+				}
+				updated, _, _, err := h.applyUserSettingsUpdate(expected, func(settings *contracts.UserSettings) error {
+					// A manual mode change that won the file update race owns the setting. Do not
+					// overwrite it with the older automatic transition.
+					if settings.GameMonitor.Mode != oldMode {
+						return errAutomaticModeSuperseded
+					}
 					settings.GameMonitor.Mode = mode
 					return nil
-				}); err != nil {
-					log.Printf("persist automatic game mode: %v", err)
+				}, nil, false, false)
+				if errors.Is(err, errAutomaticModeSuperseded) {
+					return
 				}
-			}()
+				if err != nil {
+					log.Printf("persist automatic game mode: %v", err)
+					return
+				}
+				h.mu.Lock()
+				if h.monitorRevision == revision && h.monitorSettings.Mode == mode {
+					status := h.monitorStatus
+					monitor := updated.GameMonitor
+					h.publish(contracts.ServerEvent{Type: "game_monitor_changed", GameMonitorStatus: &status, GameMonitorSettings: &monitor})
+				}
+				h.mu.Unlock()
+			}(revision, oldMode, mode)
 			h.monitorDiagnostic("info", "mode_applied", fmt.Sprintf("Mode %q", h.monitorSettings.Mode))
 			h.publish(contracts.ServerEvent{Type: "resources_changed"})
 			h.publish(contracts.ServerEvent{Type: "mode_applied", GameMonitorStatus: &h.monitorStatus})
 		}
 	}
+	if oldMap != h.appliedMapID {
+		id := h.appliedMapID
+		h.publish(contracts.ServerEvent{Type: "map_changed", MapId: &id, GameMonitorStatus: &h.monitorStatus})
+	}
+}
+
+func (h *overlayHub) acceptScreenshot(value gamewatch.Screenshot) error {
+	m, mode, targetApplied, err := h.positionMap("", true)
+	if err != nil || len(m.Floors) == 0 {
+		return errors.New("no active map")
+	}
+	player, err := h.projectScreenshotPlayer(m, mode, m.Id, value)
+	if err != nil {
+		return err
+	}
+	h.applyPositionState(m.Id, mode, targetApplied, player)
 	return nil
 }
 
@@ -343,22 +481,17 @@ func (h *overlayHub) registerGameMonitor(mux *http.ServeMux) {
 			apiError(w, http.StatusBadRequest, "screenshot_name_invalid")
 			return
 		}
-		repo := h.store.repository()
-		if repo == nil {
-			apiError(w, http.StatusInternalServerError, "mode_repository_unavailable")
-			return
-		}
-		m, err := h.store.loadFromRepository(value.MapId, repo, "zh")
+		m, mode, targetApplied, err := h.positionMap(value.MapId, false)
 		if err != nil || len(m.Floors) == 0 {
 			apiError(w, http.StatusBadRequest, "map_unknown")
 			return
 		}
-		player, err := h.projectScreenshotPlayer(m, repo.mode, value.MapId, position)
+		player, err := h.projectScreenshotPlayer(m, mode, m.Id, position)
 		if err != nil {
 			apiError(w, http.StatusBadRequest, "position_update_failed")
 			return
 		}
-		h.publishSelfPlayer(player)
+		h.applyPositionState(m.Id, mode, targetApplied, player)
 		jsonResponse(w, struct{}{})
 	})
 	mux.HandleFunc("GET /api/game-monitor/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -385,6 +518,7 @@ func (h *overlayHub) registerGameMonitor(mux *http.ServeMux) {
 			apiError(w, http.StatusBadRequest, "game_monitor_settings_invalid")
 			return
 		}
+		value = h.normalizeDetectedModePreference(value)
 		current, revision, etag, err := h.applyUserSettingsUpdate(expected, func(current *contracts.UserSettings) error {
 			current.GameMonitor = value
 			return nil

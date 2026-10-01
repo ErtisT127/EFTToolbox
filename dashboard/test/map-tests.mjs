@@ -5,10 +5,12 @@ import { DOMParser } from '@xmldom/xmldom';
 import { pixelToWorld, worldToPixel, segmentDistance } from '../src/pages/map/lib/geometry.ts';
 import { Workspace, selectableFloors } from '../src/stores/workspaceStore.ts';
 import {
+  clearAnnotationDraft,
   clientReducer,
   commitAnnotations,
   ensureAnnotationSession,
   redoAnnotations,
+  resetAnnotationSession,
   undoAnnotations,
 } from '../src/stores/clientState.ts';
 import { mapTimes, timePhase } from '../src/pages/map/lib/time.ts';
@@ -79,6 +81,26 @@ test('tile grid matches upstream world transform for rotated and nonuniform maps
       const [a, b, c, d] = tile.transform;
       assert.ok(Math.abs(a * p.x + b - expected[0]) < 1e-8, `${id}: tile x`);
       assert.ok(Math.abs(c * p.y + d - expected[1]) < 1e-8, `${id}: tile y`);
+    }
+  }
+});
+
+test('prepared map variants resolve to stable internal ids in every mode', async () => {
+  const rules = JSON.parse(await readFile(new URL('source/map-rules.json', root), 'utf8'));
+  const expected = new Map([
+    ['ground-zero', 'groundzero'],
+    ['factory', 'factory'],
+    ['the-lab', 'lab'],
+  ]);
+  for (const mode of ['pvp', 'pve', 'pvp-season']) {
+    const locations = JSON.parse(
+      await readFile(new URL(`modes/${mode}/locations.json`, root), 'utf8'),
+    );
+    for (const [ruleId, mapId] of expected) {
+      const rule = rules.find((entry) => entry.normalizedName === ruleId);
+      assert.ok(rule, `${ruleId}: upstream rule`);
+      for (const alias of rule.maps.flatMap((entry) => entry.altMaps || []))
+        assert.equal(locations[alias], mapId, `${mode}: ${alias}`);
     }
   }
 });
@@ -236,6 +258,22 @@ test('annotation drafts keep undo and redo history independently of server reque
   assert.equal(state.annotations.sessions[map.id].future.length, 0);
 });
 
+test('saving an annotation draft keeps local history while remote replacement resets it', async () => {
+  const map = await load('maps/factory_zh.json');
+  const value = { id: 'a' };
+  let state = clientReducer(undefined, ensureAnnotationSession(map.id));
+  state = clientReducer(state, commitAnnotations({ id: map.id, base: [], items: [value] }));
+  assert.equal(state.annotations.sessions[map.id].past.length, 1);
+
+  state = clientReducer(state, clearAnnotationDraft(map.id));
+  assert.equal(state.annotations.sessions[map.id].past.length, 1);
+  assert.equal(state.annotations.sessions[map.id].draft, undefined);
+
+  state = clientReducer(state, resetAnnotationSession(map.id));
+  assert.equal(state.annotations.sessions[map.id].past.length, 0);
+  assert.equal(state.annotations.sessions[map.id].future.length, 0);
+});
+
 test('a slow previous map response cannot replace the active map', async () => {
   const previous = globalThis.fetch,
     w = new Workspace();
@@ -284,6 +322,64 @@ test('a slow previous map response cannot replace the active map', async () => {
     assert.equal(w.sessions.has(first.id), false);
     await new Promise((resolve) => setTimeout(resolve, 550));
     await w.savePreferences();
+  } finally {
+    globalThis.fetch = previous;
+  }
+});
+
+test('a manual map selection wins over a concurrent workspace reload', async () => {
+  const previous = globalThis.fetch;
+  const w = new Workspace();
+  const first = await load('maps/groundzero_zh.json');
+  const second = await load('maps/factory_zh.json');
+  const summaries = [
+    catalog.find((item) => item.id === first.id),
+    catalog.find((item) => item.id === second.id),
+  ];
+  const pending = [];
+  let factoryRequests = 0;
+  const json = (value, versioned = false) =>
+    Promise.resolve(
+      new Response(JSON.stringify(value), {
+        headers: {
+          'Content-Type': 'application/json',
+          ...(versioned ? { ETag: '"rev"', 'X-Revision': 'rev' } : {}),
+        },
+      }),
+    );
+  globalThis.fetch = (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/api/maps?locale=zh-CN')) return json(summaries);
+    if (url.endsWith('/api/map-preferences'))
+      return json({ schemaVersion: 1, selectedMap: first.id, maps: [], stickerUsage: [] }, true);
+    if (url.endsWith('/api/stickers')) return json([]);
+    if (url.endsWith('/api/calibration-preferences'))
+      return json(
+        { schemaVersion: 1, sidebarCollapsed: false, collapsedMaps: [], collapsedFloors: [] },
+        true,
+      );
+    if (url.endsWith('/annotations')) {
+      if (url.includes(`/api/maps/${second.id}/`)) {
+        factoryRequests++;
+        if (factoryRequests <= 2) return new Promise((resolve) => pending.push(resolve));
+      }
+      return json({ schemaVersion: 1, items: [] }, true);
+    }
+    if (url.includes('/api/maps/'))
+      return json(url.includes(`/api/maps/${first.id}`) ? first : second);
+    return json({ schemaVersion: 1 }, true);
+  };
+  try {
+    await w.initialize();
+    assert.equal(w.activeId, first.id);
+    const selecting = w.select(second.id);
+    const reloading = w.initialize();
+    for (let i = 0; i < 10; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+      for (const resolve of pending.splice(0)) resolve(json({ schemaVersion: 1, items: [] }, true));
+    }
+    await Promise.all([selecting, reloading]);
+    assert.equal(w.activeId, second.id);
   } finally {
     globalThis.fetch = previous;
   }

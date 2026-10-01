@@ -36,7 +36,12 @@ export function ColorPicker({ color, onChange }: Props) {
           aria-label={t('map.toolSettings.customColor')}
           title={t('map.toolSettings.customColor')}
           style={customActive ? { backgroundColor: color } : undefined}
-          onClick={() => picker.current?.showPicker?.()}
+          onClick={() => {
+            const input = picker.current;
+            if (!input) return;
+            if (typeof input.showPicker === 'function') input.showPicker();
+            else input.click();
+          }}
         >
           {customActive ? <Check size={12} /> : <Plus size={12} />}
         </button>

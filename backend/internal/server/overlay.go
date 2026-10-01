@@ -28,21 +28,25 @@ import (
 )
 
 type overlayHub struct {
-	logWriter         *dailyLogWriter
-	mu                sync.Mutex
-	store             *mapStore
-	status            contracts.Status
-	players           map[string]contracts.PlayerState
-	clients           map[chan contracts.ServerEvent]bool
-	view              contracts.OverlayView
-	pipe              string
-	monitor           *gamewatch.Monitor
-	monitorSettings   contracts.GameMonitorSettings
-	monitorStatus     contracts.GameMonitorStatus
-	appliedMapID      string
-	detectedMapID     string
-	pendingMap        string
-	pendingMode       string
+	logWriter                *dailyLogWriter
+	mu                       sync.Mutex
+	store                    *mapStore
+	status                   contracts.Status
+	players                  map[string]contracts.PlayerState
+	clients                  map[chan contracts.ServerEvent]bool
+	view                     contracts.OverlayView
+	pipe                     string
+	monitor                  *gamewatch.Monitor
+	monitorSettings          contracts.GameMonitorSettings
+	monitorStatus            contracts.GameMonitorStatus
+	appliedMapID             string
+	detectedMapID            string
+	pendingMap               string
+	pendingMode              string
+	remoteProjectionRevision uint64
+	// monitorRevision invalidates a delayed automatic mode write when a user starts changing
+	// monitor settings.
+	monitorRevision   uint64
 	sessionGeneration uint64
 	browseMu          sync.Mutex
 	browseStateMu     sync.Mutex
@@ -388,10 +392,10 @@ func (h *overlayHub) preferencesChanged(value contracts.Preferences, mapID, oper
 		if _, err := h.store.loadFromMode(mapID, h.monitorSettings.Mode); err == nil {
 			h.appliedMapID = mapID
 			h.monitorStatus.MapId = mapID
-			_ = h.persistAppliedMap()
+			_ = h.persistAppliedMap(mapID)
 		}
 	}
-	e := contracts.ServerEvent{Type: "preferences_changed", MapId: &mapID, OperationId: &operationID, Preferences: &value}
+	e := contracts.ServerEvent{Type: "preferences_changed", MapId: &mapID, OperationId: &operationID, Preferences: &value, GameMonitorStatus: &h.monitorStatus}
 	h.publish(e)
 	if h.mobile != nil {
 		h.mobile.publishFilters(&value, mapID)
@@ -1246,7 +1250,7 @@ func (h *overlayHub) applyRemotePlayer(playerID, displayName, color, mapID strin
 	if err != nil {
 		player = contracts.PlayerState{
 			PlayerId: playerID, DisplayName: displayName, Color: color, IsSelf: false,
-			MapId: mapID, WorldPosition: world, Heading: heading,
+			MapId: mapID, WorldPosition: world, Heading: heading, WorldHeading: heading,
 			Resolution: contracts.LocationResolution{Status: "unresolved", Candidates: []string{}},
 		}
 	} else {
@@ -1266,6 +1270,47 @@ func (h *overlayHub) removeRemotePlayer(playerID string) {
 	}
 	delete(h.players, playerID)
 	h.publish(contracts.ServerEvent{Type: "player_remove", PlayerId: &playerID})
+}
+
+// Reproject remote world positions after the active data mode changes. The wire position stays
+// valid across modes, while the projected map point and floor belong to the local repository.
+func (h *overlayHub) reprojectRemotePlayers() {
+	h.mu.Lock()
+	h.remoteProjectionRevision++
+	revision := h.remoteProjectionRevision
+	players := make([]contracts.PlayerState, 0)
+	for _, player := range h.players {
+		if !player.IsSelf {
+			players = append(players, player)
+		}
+	}
+	h.mu.Unlock()
+	for _, old := range players {
+		next, err := h.projectPlayer(playerInput{
+			PlayerId: old.PlayerId, DisplayName: old.DisplayName, IsSelf: false,
+			MapId: old.MapId, WorldPosition: old.WorldPosition, Heading: old.WorldHeading,
+		})
+		h.mu.Lock()
+		current, exists := h.players[old.PlayerId]
+		if revision != h.remoteProjectionRevision || !exists || current.IsSelf ||
+			current.DisplayName != old.DisplayName || current.Color != old.Color || current.MapId != old.MapId ||
+			current.WorldPosition != old.WorldPosition || current.WorldHeading != old.WorldHeading {
+			h.mu.Unlock()
+			continue
+		}
+		if err != nil {
+			next = contracts.PlayerState{
+				PlayerId: old.PlayerId, DisplayName: old.DisplayName, Color: old.Color,
+				IsSelf: false, MapId: old.MapId, WorldPosition: old.WorldPosition, Heading: old.Heading, WorldHeading: old.WorldHeading,
+				Resolution: contracts.LocationResolution{Status: "unresolved", Candidates: []string{}},
+			}
+		} else {
+			next.Color = old.Color
+		}
+		h.players[old.PlayerId] = next
+		h.publish(contracts.ServerEvent{Type: "player_upsert", Player: &next})
+		h.mu.Unlock()
+	}
 }
 
 func operationID(r *http.Request) *string { id := r.Header.Get("X-Operation-ID"); return &id }
@@ -1316,7 +1361,7 @@ func (h *overlayHub) projectPlayerOnMode(m contracts.MapData, mode string, v pla
 			}
 		}
 	}
-	return contracts.PlayerState{PlayerId: v.PlayerId, DisplayName: v.DisplayName, Color: h.selfColor(), IsSelf: v.IsSelf, MapId: v.MapId, WorldPosition: v.WorldPosition, MapPosition: p, Resolution: resolution, Heading: heading}, nil
+	return contracts.PlayerState{PlayerId: v.PlayerId, DisplayName: v.DisplayName, Color: h.selfColor(), IsSelf: v.IsSelf, MapId: v.MapId, WorldPosition: v.WorldPosition, MapPosition: p, Resolution: resolution, Heading: heading, WorldHeading: v.Heading}, nil
 }
 
 // selfColor is the identity color every locally produced player state carries; the multiplayer
@@ -1339,7 +1384,7 @@ func (h *overlayHub) currentBasemap(m contracts.MapData, mode string) string {
 		return view.Basemap
 	}
 	var preferences contracts.Preferences
-	if mode != "" && readJSON(filepath.Join(h.store.root, "user", "modes", mode, "map-preferences.json"), &preferences) == nil {
+	if mode != "" && readJSON(filepath.Join(h.store.root, "user", "map-preferences.json"), &preferences) == nil {
 		normalizeMapPreferences(&preferences)
 		if preferences.SelectedMap == m.Id {
 			for _, preference := range preferences.Maps {

@@ -46,8 +46,6 @@
   place-items: center;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar) transparent;
   padding: max(var(--space-4), env(safe-area-inset-top))
     max(var(--space-4), env(safe-area-inset-right)) max(var(--space-4), env(safe-area-inset-bottom))
     max(var(--space-4), env(safe-area-inset-left));
@@ -67,8 +65,6 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar) transparent;
   padding: var(--space-5);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -200,8 +196,19 @@
   padding: 0;
 }
 
-/* Inline affordances inside inputs (password clear/generate) get a circular hover, never a
-   rectangle pressed against the input edge. */
+/* Inline affordances inside inputs get a circular hover, never a rectangle pressed against the
+   input edge. */
+.mp-clearable-field {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.mp-clearable-field input {
+  width: 100%;
+  padding-right: 30px;
+}
+
 .mp-password-field {
   position: relative;
   display: block;
@@ -230,6 +237,18 @@
 .mp-input-button:hover {
   background: var(--hover);
   color: var(--text);
+}
+
+.mp-clearable-field.mp-search input {
+  min-height: 30px !important;
+}
+
+.mp-dialog .cast-address-field.has-options input {
+  padding-right: 58px;
+}
+
+.mp-dialog .cast-address-field.has-options .mp-input-button {
+  right: 29px;
 }
 
 .mp-primary,
@@ -474,6 +493,7 @@
   padding: 0;
   flex: 0 0 auto;
   color: var(--muted);
+  line-height: 0;
   opacity: 0.8;
 }
 
@@ -489,6 +509,7 @@
   border-radius: 50%;
   background: transparent;
   color: var(--muted);
+  line-height: 0;
   opacity: 0.65;
 }
 
@@ -677,6 +698,11 @@
   font-size: var(--text-base);
   line-height: 1.5;
   cursor: pointer;
+  transition: color var(--duration-fast) ease-out;
+}
+
+.mp-check-row:hover {
+  color: var(--accent);
 }
 
 .mp-check-row input {
@@ -782,8 +808,6 @@
   padding: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar) transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--border);

@@ -19,7 +19,7 @@ internal sealed record SvgRegion(float X, float Y, float Width, float Height, in
     internal static SvgRegion Around(MapScene scene) {
         var a = scene.MapPoint(new(-scene.Width * 0.25f, -scene.Height * 0.25f));
         var size = new Vector2(scene.Width * 1.5f, scene.Height * 1.5f) / scene.Scale;
-        return new(a.X, a.Y, size.X, size.Y, (int)Math.Ceiling(scene.Width * 1.5), (int)Math.Ceiling(scene.Height * 1.5));
+        return new(a.X, a.Y, size.X, size.Y, (int)Math.Ceiling(scene.Width * 1.5f * scene.Dpi), (int)Math.Ceiling(scene.Height * 1.5f * scene.Dpi));
     }
 }
 

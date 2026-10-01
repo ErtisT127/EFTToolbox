@@ -55,8 +55,6 @@
 .settings-content {
   container-type: inline-size;
   overflow: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar) transparent;
   padding: var(--space-6);
 }
 .settings-content h1 {
@@ -173,7 +171,7 @@
   pointer-events: none;
   color: var(--muted);
 }
-.settings-content .number-stepper-control input {
+.settings-content .number-stepper-control input[type='number'] {
   width: 100%;
   border: 0;
   background: transparent;
@@ -659,8 +657,6 @@
   gap: var(--space-2) var(--space-4);
   max-height: 208px;
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar) transparent;
   font-size: var(--text-base);
 }
 /* The reward code gets the room its detail needs: this dialog is about one readable image. */

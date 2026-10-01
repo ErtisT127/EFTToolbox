@@ -211,13 +211,33 @@ func (s *mapStore) activeUpstream() string {
 }
 
 func (s *mapStore) userRoot() string {
-	if repo := s.repository(); repo != nil {
-		return filepath.Join(s.root, "user", "modes", repo.mode)
-	}
-	return filepath.Join(s.root, "user", "modes", "invalid")
+	return filepath.Join(s.root, "user")
 }
 
 func (s *mapStore) userPath(name string) string { return filepath.Join(s.userRoot(), name) }
+
+func (s *mapStore) annotationRoot() string { return filepath.Join(s.userRoot(), "maps") }
+
+func (s *mapStore) annotationRelativePath(mapID string) string {
+	return filepath.Join("user", "maps", mapID+".annotations.json")
+}
+
+func (s *mapStore) annotationPath(mapID string) string {
+	return filepath.Join(s.root, s.annotationRelativePath(mapID))
+}
+
+func (s *mapStore) annotationFiles() []string {
+	paths, _ := filepath.Glob(filepath.Join(s.annotationRoot(), "*.annotations.json"))
+	return paths
+}
+
+func annotationMapID(path string) string {
+	base := filepath.Base(path)
+	if !strings.HasSuffix(base, ".annotations.json") {
+		return ""
+	}
+	return strings.TrimSuffix(base, ".annotations.json")
+}
 
 func (s *mapStore) calibrationRoot() string {
 	return filepath.Join(s.root, "user", "calibration")
@@ -295,29 +315,11 @@ func (s *mapStore) resetCalibration() error {
 }
 
 func (s *mapStore) resetMapPreferences() error {
-	root := filepath.Join(s.root, "user", "modes")
-	modes, err := os.ReadDir(root)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := s.saveTo(s.userRoot(), "map-preferences.json", defaults.MapPreferences()); err != nil {
 		return err
 	}
-	modeNames := map[string]bool{}
-	for _, mode := range modes {
-		if !mode.IsDir() || !safeID.MatchString(mode.Name()) {
-			continue
-		}
-		modeNames[mode.Name()] = true
-	}
-	if s.repository() != nil {
-		modeNames[s.repository().mode] = true
-	}
-	for mode := range modeNames {
-		modeRoot := filepath.Join(root, mode)
-		if err := s.saveTo(modeRoot, "map-preferences.json", defaults.MapPreferences()); err != nil {
-			return err
-		}
-		if err := s.saveTo(modeRoot, "game-monitor-state.json", gameMonitorState{SchemaVersion: contracts.ContractSchemaVersion}); err != nil {
-			return err
-		}
+	if err := s.saveTo(s.userRoot(), "game-monitor-state.json", gameMonitorState{SchemaVersion: contracts.ContractSchemaVersion}); err != nil {
+		return err
 	}
 	if s.hub != nil {
 		s.hub.mu.Lock()
@@ -335,53 +337,8 @@ func (s *mapStore) resetMapPreferences() error {
 	return nil
 }
 
-func (s *mapStore) migrateLegacyModeFiles(mode string) error {
-	legacyRoot := filepath.Join(s.root, "user")
-	modeRoot := filepath.Join(legacyRoot, "modes", mode)
-	for _, file := range []struct {
-		name  string
-		valid func([]byte) bool
-	}{
-		{"map-preferences.json", func(data []byte) bool {
-			var value contracts.Preferences
-			return json.Unmarshal(data, &value) == nil && value.SchemaVersion == contracts.ContractSchemaVersion
-		}},
-		{"game-monitor-state.json", func(data []byte) bool {
-			var value gameMonitorState
-			return json.Unmarshal(data, &value) == nil && value.SchemaVersion == contracts.ContractSchemaVersion
-		}},
-	} {
-		legacyPath := filepath.Join(legacyRoot, file.name)
-		legacyData, err := os.ReadFile(legacyPath)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil || !file.valid(legacyData) {
-			continue
-		}
-		canonicalPath := filepath.Join(modeRoot, file.name)
-		if _, err := os.Stat(canonicalPath); errors.Is(err, os.ErrNotExist) {
-			if err := s.savePath(canonicalPath, json.RawMessage(legacyData)); err != nil {
-				return err
-			}
-		} else {
-			canonicalData, readErr := os.ReadFile(canonicalPath)
-			if readErr != nil || !file.valid(canonicalData) {
-				continue
-			}
-		}
-		if err := os.Remove(legacyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	}
-	return nil
-}
-
 func (s *mapStore) resetAnnotations() error {
-	paths, err := filepath.Glob(filepath.Join(s.root, "user", "modes", "*", "maps", "*.annotations.json"))
-	if err != nil {
-		return err
-	}
+	paths := s.annotationFiles()
 	if s.multiplayer != nil {
 		s.multiplayer.annoMu.Lock()
 		for id, timer := range s.multiplayer.annoTimers {
@@ -393,12 +350,11 @@ func (s *mapStore) resetAnnotations() error {
 		s.multiplayer.sentOnce = map[string]bool{}
 	}
 	for _, path := range paths {
-		base := filepath.Base(path)
-		mapID := strings.TrimSuffix(base, ".annotations.json")
+		mapID := annotationMapID(path)
 		if !safeID.MatchString(mapID) {
 			continue
 		}
-		if err := s.saveTo(filepath.Dir(path), base, contracts.Annotations{SchemaVersion: contracts.ContractSchemaVersion, Items: []contracts.Annotation{}}); err != nil {
+		if err := s.saveTo(filepath.Dir(path), mapID+".annotations.json", contracts.Annotations{SchemaVersion: contracts.ContractSchemaVersion, Items: []contracts.Annotation{}}); err != nil {
 			if s.multiplayer != nil {
 				s.multiplayer.annoMu.Unlock()
 			}
@@ -409,8 +365,7 @@ func (s *mapStore) resetAnnotations() error {
 		s.multiplayer.annoMu.Unlock()
 	}
 	for _, path := range paths {
-		base := filepath.Base(path)
-		mapID := strings.TrimSuffix(base, ".annotations.json")
+		mapID := annotationMapID(path)
 		if !safeID.MatchString(mapID) {
 			continue
 		}
@@ -622,10 +577,6 @@ func (s *mapStore) save(name string, value any) error {
 	return s.saveTo(filepath.Join(s.userRoot()), name, value)
 }
 
-func (s *mapStore) saveGlobal(name string, value any) error {
-	return s.saveTo(filepath.Join(s.root, "user"), name, value)
-}
-
 func (s *mapStore) saveTo(dir, name string, value any) error {
 	return s.savePath(filepath.Join(dir, name), value)
 }
@@ -723,7 +674,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			defer s.calibrationMu.Unlock()
 			err = s.resetCalibration()
 		case "marker-preferences":
-			err = s.saveGlobal(filepath.Base(filepath.Join("user", "marker-preferences.json")), defaults.MarkerPreferences())
+			err = s.save("marker-preferences.json", defaults.MarkerPreferences())
 		case "items-settings":
 			if s.items == nil {
 				err = errors.New("items unavailable")
@@ -860,7 +811,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			return
 		}
 		data := contracts.Annotations{SchemaVersion: contracts.ContractSchemaVersion, Items: []contracts.Annotation{}}
-		path := filepath.Join("user", "modes", repo.mode, "maps", m.Id+".annotations.json")
+		path := s.annotationRelativePath(m.Id)
 		var revision, etag string
 		data, revision, etag, err = ReadVersionedRepair(s.files, path, data, func(value *contracts.Annotations) error {
 			if !validAnnotations(*value, m) {
@@ -1029,7 +980,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 				apiError(w, http.StatusBadRequest, "annotations_invalid")
 				return
 			}
-			path := filepath.Join("user", "modes", repo.mode, "maps", m.Id+".annotations.json")
+			path := s.annotationRelativePath(m.Id)
 			revision, etag, updateErr := s.files.Update(path, expected, contracts.Annotations{SchemaVersion: contracts.ContractSchemaVersion, Items: []contracts.Annotation{}}, data, nil)
 			if errors.Is(updateErr, errRevisionConflict) {
 				versionedConflict(w, revision, etag)
@@ -1055,7 +1006,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 		}
 		data := defaults.MapPreferences()
 		var revision, etag string
-		data, revision, etag, err := ReadVersionedRepair(s.files, filepath.Join("user", "modes", repo.mode, "map-preferences.json"), data, func(value *contracts.Preferences) error {
+		data, revision, etag, err := ReadVersionedRepair(s.files, filepath.Join("user", "map-preferences.json"), data, func(value *contracts.Preferences) error {
 			normalizeMapPreferences(value)
 			return nil
 		})
@@ -1089,6 +1040,9 @@ func (s *mapStore) register(mux *http.ServeMux) {
 				return
 			}
 		}
+		if s.hub != nil {
+			data.SelectedMap = s.hub.normalizeDetectedMapPreference(data.SelectedMap)
+		}
 		for _, p := range data.Maps {
 			if !safeID.MatchString(p.MapId) || !finite(p.Zoom) || p.Zoom < -10 || p.Zoom > 10 || (len(p.Center) != 0 && len(p.Center) != 2) || len(p.HiddenCategories) > 1000 || len(p.CollapsedGroups) > 1000 || len(p.SelectedTasks) > 1000 {
 				apiError(w, http.StatusBadRequest, "preferences_invalid")
@@ -1101,7 +1055,7 @@ func (s *mapStore) register(mux *http.ServeMux) {
 				}
 			}
 		}
-		relative := filepath.Join("user", "modes", repo.mode, "map-preferences.json")
+		relative := filepath.Join("user", "map-preferences.json")
 		revision, etag, err := s.files.Update(relative, expected, defaults.MapPreferences(), data, nil)
 		if errors.Is(err, errRevisionConflict) {
 			versionedConflict(w, revision, etag)

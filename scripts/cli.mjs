@@ -25,7 +25,7 @@ Commands:
   data svgs          Download current map SVGs
   data items [mode]  Pull item images (cache-skip) and the item catalog (overwrite) for one or all modes
   data fonts         Prepare licensed static fonts and emoji (uv); --check verifies hashes
-  package            Build a portable package (--lite keeps required tiles, --debug includes symbols and source maps)
+  package            Build a portable package (--fast skips data, --lite keeps required tiles, --debug includes symbols and source maps)
   data prepare       Generate runtime map data
   data tiles         Prefetch map tiles (--all, --count)
   clean               Remove generated build outputs quickly

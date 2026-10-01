@@ -1,0 +1,13 @@
+AGENTS.md
+CLAUDE.md
+node_modules/
+build/
+logs/
+data/user/*
+!data/user/.gitkeep
+archive/
+.zcodeignore
+.tmp*
+
+# ImGui runtime window state
+imgui.ini

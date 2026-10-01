@@ -55,7 +55,7 @@ export function MemberList({
                 aria-label={t('multiplayer.hostBadge')}
                 title={t('multiplayer.hostBadge')}
               >
-                <Crown size={12} aria-hidden="true" />
+                <Crown size={13} aria-hidden="true" />
               </span>
             ) : (
               canKick && (

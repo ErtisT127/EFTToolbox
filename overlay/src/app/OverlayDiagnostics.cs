@@ -53,9 +53,9 @@ internal static class OverlayDiagnostics
     {
         Operation.FlushWarnings();
         Log("info", "stopped", "Native overlay stopped");
-        Stop.Cancel();
         Queue.Writer.TryComplete();
         try { Worker.Wait(500); } catch (AggregateException) { }
+        Stop.Cancel();
     }
 }
 
@@ -76,12 +76,12 @@ internal sealed class Operation(string source, string mapId, string floorId, str
     private OperationTiming timing = new();
     internal OperationTiming Timing { get { lock (timingGate) return timing; } }
     internal void UpdateTiming(Func<OperationTiming, OperationTiming> update) { lock (timingGate) timing = update(timing); }
-    internal void Resource(string path, double queue, double read, double decode, double upload)
+    internal void Resource(string path, double queue, double read, double parse, double raster, double upload)
     {
-        var total = queue + read + decode + upload;
+        var total = queue + read + parse + raster + upload;
         lock (timingGate)
         {
-            timing = timing with { QueueMs = timing.QueueMs + queue, ReadMs = timing.ReadMs + read, RasterMs = timing.RasterMs + decode, UploadMs = timing.UploadMs + upload, Count = timing.Count + 1, Resource = total > slowest ? path : timing.Resource };
+            timing = timing with { QueueMs = timing.QueueMs + queue, ReadMs = timing.ReadMs + read, ParseMs = timing.ParseMs + parse, RasterMs = timing.RasterMs + raster, UploadMs = timing.UploadMs + upload, Count = timing.Count + 1, Resource = total > slowest ? path : timing.Resource };
             slowest = Math.Max(slowest, total);
         }
     }
@@ -90,7 +90,7 @@ internal sealed class Operation(string source, string mapId, string floorId, str
         UpdateTiming(value => value with { TotalMs = Stopwatch.GetElapsedTime(Started).TotalMilliseconds });
         var snapshot = Timing;
         if (snapshot.TotalMs <= (loading ? 2000 : 100)) return;
-        var key = $"{Source}:{MapId}"; var now = Environment.TickCount64;
+        var key = $"{Source}:{MapId}:{FloorId}:{Basemap}:{Resolution}"; var now = Environment.TickCount64;
         LastWarning.TryGetValue(key, out var previous);
         if (previous.Time != 0 && now - previous.Time < 30000) {
             LastWarning[key] = (previous.Time, previous.Count + 1, snapshot.TotalMs > (previous.Worst?.Timing.TotalMs ?? 0) ? this : previous.Worst);

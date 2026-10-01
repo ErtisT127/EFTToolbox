@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { useLocale } from '../hooks/useLocale';
 import { isImeComposing } from '../lib/ime';
@@ -9,6 +10,7 @@ export function ConfirmDialog({
   message,
   confirmLabel,
   danger = false,
+  portalContainer,
   onConfirm,
   onCancel,
 }: {
@@ -17,6 +19,7 @@ export function ConfirmDialog({
   message: string;
   confirmLabel?: string;
   danger?: boolean;
+  portalContainer?: HTMLElement | null;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -36,7 +39,7 @@ export function ConfirmDialog({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [open, onCancel]);
   if (!open) return null;
-  return (
+  return createPortal(
     <div
       className="dialog-backdrop"
       onMouseDown={(event) => event.target === event.currentTarget && onCancel()}
@@ -65,6 +68,7 @@ export function ConfirmDialog({
           </button>
         </div>
       </section>
-    </div>
+    </div>,
+    portalContainer || document.body,
   );
 }

@@ -15,7 +15,7 @@
   "nav": {
     "aria": "主导航",
     "map": "实时地图",
-    "calibrator": "地图标定",
+    "calibrator": "楼层标定",
     "items": "物价查询",
     "settings": "系统设置"
   },
@@ -66,9 +66,9 @@
           "confirm": "将清除所有地图上的手动标注，且无法恢复。是否继续？"
         },
         "calibration": {
-          "title": "地图标定",
+          "title": "楼层标定",
           "description": "标定文档和标定器页面偏好恢复为空的默认结构。",
-          "confirm": "将重置所有地图标定文档和页面偏好。是否继续？"
+          "confirm": "将重置所有楼层标定文档和页面偏好。是否继续？"
         },
         "marker-preferences": {
           "title": "多人标记显示",
@@ -499,6 +499,7 @@
     "configTitle": "多人联机",
     "back": "返回",
     "name": "玩家名称",
+    "nameRequired": "玩家名称不能为空",
     "namePlaceholder": "输入名称",
     "colorLabel": "标识颜色",
     "colorSwatch": "颜色 {{color}}",
@@ -510,7 +511,8 @@
     "joinStunTitle": "通过 STUN 加入",
     "infoTitle": "房间信息",
     "localAddress": "本机 IP 地址",
-    "hostAddress": "主机 IP 地址",
+    "hostAddress": "主机地址",
+    "hostAddressPlaceholder": "192.168.1.2:51240 或 [IPv6]:51240",
     "hostPublicAddress": "主机 IP 地址",
     "hostPublicAddressPlaceholder": "1.2.3.4:51240",
     "pickAddress": "选择 IP 地址",
@@ -543,6 +545,7 @@
     "confirmYes": "确认",
     "cancel": "取消",
     "showMembersPanel": "在地图上显示多人面板",
+    "showPlayerNames": "在玩家图标旁显示名称",
     "identitySaveFailed": "身份信息保存失败",
     "defaultPlayerName": "玩家-{{id}}",
     "timeout": "超时",
@@ -551,9 +554,9 @@
     "stunTitle": "STUN 联机",
     "natCheck": "检测 NAT",
     "natChecking": "检测中…",
-    "natCone": "锥形 NAT，可以正常使用 STUN 联机。",
-    "natSymmetric": "对称 NAT，建议在同一局域网内联机。",
-    "natUnknown": "无法检测当前网络类型。",
+    "natCone": "锥形 NAT。支持 STUN 联机。",
+    "natSymmetric": "对称 NAT。STUN 联机可能失败。",
+    "natUnknown": "未知 NAT。无法确认公网 UDP 入站可达性。",
     "currentNode": "定位当前节点",
     "probeAll": "全部测速",
     "sort": "排序",

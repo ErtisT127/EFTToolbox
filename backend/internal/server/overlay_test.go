@@ -318,4 +318,10 @@ func TestBootstrapCarriesOwnerListPath(t *testing.T) {
 	if want := filepath.Join(root, "user", "marker-preferences.json"); bootstrap.MarkerPreferencesFile != want {
 		t.Fatalf("marker preferences file: %q want %q", bootstrap.MarkerPreferencesFile, want)
 	}
+	if want := filepath.Join(root, "user", "map-preferences.json"); bootstrap.PreferencesFile != want {
+		t.Fatalf("map preferences file: %q want %q", bootstrap.PreferencesFile, want)
+	}
+	if want := filepath.Join(root, "user", "maps"); bootstrap.AnnotationsDirectory != want {
+		t.Fatalf("annotations directory: %q want %q", bootstrap.AnnotationsDirectory, want)
+	}
 }

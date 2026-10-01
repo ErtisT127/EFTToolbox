@@ -7,7 +7,7 @@ import { notices } from '../../stores/noticeStore';
 
 // Quick preview on the map page: fed by the /ws push (zero polling) and the same row mapper as the
 // room info page.
-export function MembersPanel() {
+export function MembersPanel({ portalContainer }: { portalContainer?: HTMLElement | null }) {
   const { t } = useLocale();
   const mp = useMultiplayer();
   const [kickTarget, setKickTarget] = useState<MemberRow | null>(null);
@@ -46,6 +46,7 @@ export function MembersPanel() {
         message={t('multiplayer.confirmKick', { name: kickTarget?.name || '' })}
         confirmLabel={t('multiplayer.kick')}
         danger
+        portalContainer={portalContainer}
         onConfirm={() => void confirmKick()}
         onCancel={() => {
           if (!pending) setKickTarget(null);

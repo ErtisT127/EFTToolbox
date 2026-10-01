@@ -1,6 +1,7 @@
 using OpenCvSharp;
 using PaddleOCRSharp;
 using EFTToolbox.Contracts;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace EFTToolbox.Overlay;
@@ -11,10 +12,12 @@ internal sealed record OcrBlock(string Text, float Score, double X, double Y, do
 
 internal sealed class RecognitionEngine : IDisposable
 {
+    private readonly record struct WarmupProfile(bool Enabled, int Width, int Height, int Upscale);
     private PaddleOCREngine? ocr;
     private readonly object warmupGate = new();
     private CancellationTokenSource? warmupStop;
     private Task? warmupTask;
+    private WarmupProfile? warmupProfile;
     private static readonly object NativeConsoleLock = new();
     private const int StdOutputHandle = -11, StdErrorHandle = -12, GenericWrite = 0x40000000, OpenExisting = 3;
     private static readonly nint InvalidHandle = new(-1);
@@ -24,37 +27,66 @@ internal sealed class RecognitionEngine : IDisposable
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern nint CreateFile(string name, int access, int share, nint security, int creation, int flags, nint template);
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(nint handle);
 
-    internal void ConfigureWarmup(bool enabled)
+    internal void ConfigureWarmup(RecognitionSettings settings)
     {
         lock (warmupGate)
         {
-            if (!enabled)
+            var profile = new WarmupProfile(
+                settings.OcrWarmup,
+                settings.CaptureWidth,
+                settings.CaptureHeight,
+                Math.Clamp(settings.OcrUpscale, 1, 3));
+            if (warmupProfile == profile) return;
+            warmupProfile = profile;
+            var previousTask = warmupTask;
+            warmupStop?.Cancel();
+            if (!settings.OcrWarmup)
             {
-                warmupStop?.Cancel();
+                warmupStop = null;
                 return;
             }
-            if (warmupTask is { IsCompleted: false }) return;
-            warmupStop?.Dispose();
             warmupStop = new CancellationTokenSource();
             var token = warmupStop.Token;
-            warmupTask = Task.Run(() => Warmup(token), token);
+            warmupTask = Task.Run(() => WarmupAfter(previousTask, token, settings), token);
         }
     }
 
-    private void Warmup(CancellationToken token)
+    private async Task WarmupAfter(Task? previousTask, CancellationToken token, RecognitionSettings settings)
     {
+        if (previousTask is not null)
+        {
+            try { await previousTask.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+        }
+        token.ThrowIfCancellationRequested();
+        Warmup(token, settings);
+    }
+
+    private void Warmup(CancellationToken token, RecognitionSettings settings)
+    {
+        var elapsed = Stopwatch.StartNew();
+        var upscale = Math.Clamp(settings.OcrUpscale, 1, 3);
+        OverlayDiagnostics.Log("info", "ocr_warmup_started",
+            $"width={settings.CaptureWidth} height={settings.CaptureHeight} upscale={upscale}");
         try
         {
             token.ThrowIfCancellationRequested();
-            using var image = new Mat(1, 1, MatType.CV_8UC3, Scalar.Black);
+            using var source = new Mat(settings.CaptureHeight, settings.CaptureWidth, MatType.CV_8UC3, Scalar.Black);
+            using var image = new Mat();
+            if (upscale > 1) Cv2.Resize(source, image, new Size(source.Width * upscale, source.Height * upscale), 0, 0, InterpolationFlags.Cubic);
+            else source.CopyTo(image);
             Cv2.ImEncode(".png", image, out var encoded);
             token.ThrowIfCancellationRequested();
-            _ = Detect(encoded);
+            _ = Detect(encoded, warmup: true);
+            OverlayDiagnostics.Log("info", "ocr_warmup_completed", $"elapsedMs={elapsed.ElapsedMilliseconds}");
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException)
+        {
+            OverlayDiagnostics.Log("info", "ocr_warmup_cancelled", $"elapsedMs={elapsed.ElapsedMilliseconds}");
+        }
         catch (Exception exception)
         {
-            OverlayDiagnostics.Log("warn", "ocr_warmup_failed", exception.Message);
+            OverlayDiagnostics.Log("warn", "ocr_warmup_failed", $"elapsedMs={elapsed.ElapsedMilliseconds} error={exception.Message}");
         }
     }
 
@@ -63,6 +95,7 @@ internal sealed class RecognitionEngine : IDisposable
     /// against, and disposes it when the run ends.</summary>
     internal IReadOnlyList<OcrBlock> Scan(byte[] imageBytes, RecognitionSettings settings, CancellationToken token, out Mat? image, out string error)
     {
+        var elapsed = Stopwatch.StartNew();
         image = null;
         try
         {
@@ -75,8 +108,8 @@ internal sealed class RecognitionEngine : IDisposable
             if (token.IsCancellationRequested) { capture.Dispose(); error = "cancelled"; return []; }
             // One input path for the engine: the enlarged image travels back through an encoder.
             Cv2.ImEncode(".png", capture, out var encoded);
-            var result = Detect(encoded);
-            var blocks = new List<OcrBlock>();
+            var result = Detect(encoded, warmup: false);
+            var uniqueBlocks = new Dictionary<string, OcrBlock>(StringComparer.Ordinal);
             foreach (var block in result?.TextBlocks ?? [])
             {
                 if (block.Score < settings.OcrConfidence) continue;
@@ -87,10 +120,16 @@ internal sealed class RecognitionEngine : IDisposable
                 var minY = points.Min(point => (double)point.Y);
                 var maxX = points.Max(point => (double)point.X);
                 var maxY = points.Max(point => (double)point.Y);
-                blocks.Add(new OcrBlock(text, block.Score, minX, minY, Math.Max(1, maxX - minX), Math.Max(1, maxY - minY)));
+                var value = new OcrBlock(text, block.Score, minX, minY, Math.Max(1, maxX - minX), Math.Max(1, maxY - minY));
+                var key = string.Concat(text.Where(char.IsLetterOrDigit)).ToUpperInvariant();
+                if (!uniqueBlocks.TryGetValue(key, out var previous) || value.Score > previous.Score)
+                    uniqueBlocks[key] = value;
             }
+            var blocks = uniqueBlocks.Values.ToList();
             image = capture;
             error = blocks.Count == 0 ? "ocr_empty" : "";
+            OverlayDiagnostics.Log("info", "ocr_scan_completed",
+                $"width={capture.Width} height={capture.Height} upscale={upscale} blocks={blocks.Count} elapsedMs={elapsed.ElapsedMilliseconds}");
             return blocks;
         }
         catch (Exception exception)
@@ -105,12 +144,14 @@ internal sealed class RecognitionEngine : IDisposable
         }
     }
 
-    private OCRResult? Detect(byte[] bytes)
+    private OCRResult? Detect(byte[] bytes, bool warmup)
     {
         // The engine writes to the process console, which an overlay has no use for; hiding it keeps
         // the launcher's terminal clean without dropping the text itself.
+        var waiting = Stopwatch.StartNew();
         lock (NativeConsoleLock)
         {
+            var lockWait = waiting.ElapsedMilliseconds;
             var output = GetStdHandle(StdOutputHandle);
             var error = GetStdHandle(StdErrorHandle);
             var nul = CreateFile("NUL", GenericWrite, 3, 0, OpenExisting, 0, 0);
@@ -121,8 +162,15 @@ internal sealed class RecognitionEngine : IDisposable
                     Console.Out.Flush(); Console.Error.Flush();
                     SetStdHandle(StdOutputHandle, nul); SetStdHandle(StdErrorHandle, nul);
                 }
+                var initialization = Stopwatch.StartNew();
+                var initialized = ocr is null;
                 ocr ??= new PaddleOCREngine();
-                return ocr.DetectText(bytes);
+                var initializeMs = initialized ? initialization.ElapsedMilliseconds : 0;
+                var detection = Stopwatch.StartNew();
+                var result = ocr.DetectText(bytes);
+                OverlayDiagnostics.Log("info", "ocr_detect_timing",
+                    $"warmup={warmup} lockWaitMs={lockWait} engineInitMs={initializeMs} detectMs={detection.ElapsedMilliseconds} bytes={bytes.Length}");
+                return result;
             }
             finally
             {

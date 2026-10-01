@@ -195,7 +195,6 @@
   max-height: calc(100dvh - 190px);
   overflow: auto;
   padding: var(--space-3) var(--space-4);
-  scrollbar-width: thin;
   scrollbar-gutter: stable both-edges;
 }
 .check-row {
@@ -337,6 +336,26 @@
   filter: drop-shadow(0 0 1px var(--bg)) drop-shadow(0 0 1px var(--bg));
   transform-origin: 50% 50%;
 }
+.player-marker-wrap {
+  position: relative;
+  width: 28px;
+  height: 28px;
+}
+.player-name {
+  position: absolute;
+  left: 32px;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: 180px;
+  color: var(--text);
+  font-size: var(--text-xs);
+  line-height: 1.2;
+  white-space: nowrap;
+  text-shadow:
+    0 1px 3px var(--bg),
+    0 0 2px var(--bg);
+  pointer-events: none;
+}
 /* Pinned to the bottom of the anchor box so the emoji still sits on the map point, but free to
    grow upward: that way a label joins the same box instead of hanging outside it, and the two can
    be framed as one annotation rather than as two separate pieces. */
@@ -430,7 +449,6 @@ summary {
 .tool-options {
   width: 202px;
   overflow: auto;
-  scrollbar-width: thin;
   scrollbar-gutter: stable both-edges;
 }
 .tool-options {
@@ -642,7 +660,6 @@ output {
   padding: var(--space-4);
   border-right: 1px solid var(--border);
   overflow-y: auto;
-  scrollbar-width: thin;
 }
 .sticker-rail-item {
   display: flex;
@@ -684,7 +701,6 @@ output {
   min-width: 0;
   overflow-y: auto;
   padding: var(--space-4);
-  scrollbar-width: thin;
   scrollbar-gutter: stable both-edges;
 }
 .sticker-grid {
@@ -763,8 +779,6 @@ output {
   max-height: 200px;
   resize: vertical;
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar) transparent;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
   font: inherit;

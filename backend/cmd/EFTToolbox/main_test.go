@@ -69,6 +69,7 @@ func TestDevServerProcess(t *testing.T) {
 	if assets == "" {
 		return
 	}
+	version = "0.0.0-dev"
 	flag.CommandLine = flag.NewFlagSet("EFTToolbox", flag.ExitOnError)
 	port := os.Getenv("EFT_TEST_PORT")
 	if port == "" {

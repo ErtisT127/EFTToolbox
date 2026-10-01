@@ -2,6 +2,7 @@ import { Check, ChevronDown, Copy, Smartphone, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useEffect, useRef, useState } from 'react';
 import { isImeComposing } from '../lib/ime';
+import { errorDetailOf } from '../lib/errors';
 import { useLocale } from '../hooks/useLocale';
 import { notices } from '../stores/noticeStore';
 import { reportThrottledFailure } from '../stores/workspaceStore';
@@ -56,8 +57,9 @@ export function CastControl() {
     setAddress((current) => current || interfaceData.addresses[0] || '');
   }, [interfaceData]);
   useEffect(() => {
-    if (statusError) reportThrottledFailure('cast_status_poll_failed', String(statusError));
-    if (interfacesError) reportThrottledFailure('cast_interfaces_failed', String(interfacesError));
+    if (statusError) reportThrottledFailure('cast_status_poll_failed', errorDetailOf(statusError));
+    if (interfacesError)
+      reportThrottledFailure('cast_interfaces_failed', errorDetailOf(interfacesError));
   }, [statusError, interfacesError]);
 
   useEffect(() => () => window.clearTimeout(copyTimer.current), []);

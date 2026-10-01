@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { api } from './api';
 import { store } from './store';
 import { reportClientLog } from './workspaceStore';
+import { errorDetailOf } from '../lib/errors';
 
 /**
  * Where the update check stands. A check runs once when the app starts (unless the user turned the
@@ -73,7 +74,7 @@ class UpdateStore {
       });
     } catch (reason: unknown) {
       this.changed({ phase: 'failed' });
-      reportClientLog('update_check_failed', 'Update check failed', String(reason));
+      reportClientLog('update_check_failed', 'Update check failed', errorDetailOf(reason));
     } finally {
       this.running = false;
       this.changed({ checking: false });

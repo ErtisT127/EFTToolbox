@@ -64,7 +64,7 @@ internal sealed class TileLayerRenderer : IDisposable
         var contentManifest = Volatile.Read(ref manifest);
         foreach (var tile in layers)
         {
-            var z = Math.Clamp((int)Math.Round(scene.Zoom), tile.MinZoom, tile.MaxZoom);
+            var z = Math.Clamp((int)Math.Ceiling(scene.Zoom + Math.Log2(scene.Dpi)), tile.MinZoom, tile.MaxZoom);
             var topLeft = scene.MapPoint(Vector2.Zero); var bottomRight = scene.MapPoint(new(scene.Width, scene.Height));
             var indices = Indices(tile, topLeft, bottomRight, z).ToArray();
             // Keep the viewport and its prefetch ring resident together, including both floors.
@@ -124,7 +124,7 @@ internal sealed class TileLayerRenderer : IDisposable
         var timer = System.Diagnostics.Stopwatch.StartNew();
         while (timer.Elapsed.TotalMilliseconds < 4 && ready.TryDequeue(out var value)) if (value.Generation == generation) {
             var upload = System.Diagnostics.Stopwatch.StartNew(); cache.Put(value.Key, value.Image);
-            value.Operation?.Resource(value.Resource, value.Queue, value.Read, value.Decode, upload.Elapsed.TotalMilliseconds);
+            value.Operation?.Resource(value.Resource, value.Queue, value.Read, 0, value.Decode, upload.Elapsed.TotalMilliseconds);
         }
         if (!ready.IsEmpty) wake();
     }

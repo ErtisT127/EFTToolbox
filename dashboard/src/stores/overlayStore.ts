@@ -17,7 +17,7 @@ import { gameMonitor } from './gameMonitorStore';
 import { multiplayer } from './multiplayerStore';
 import { notices } from './noticeStore';
 import { api, isRevisionConflict } from './api';
-import { errorKeyOf } from '../lib/errors';
+import { errorDetailOf, errorKeyOf } from '../lib/errors';
 import { store, type RootState } from './store';
 import { setOverlayState } from './clientState';
 
@@ -149,7 +149,7 @@ class OverlayStore {
         reportClientLog(
           'recognition_clear_failed',
           'Recognition result could not be cleared',
-          String(reason),
+          errorDetailOf(reason),
         ),
       );
   }
@@ -216,13 +216,13 @@ class OverlayStore {
                       reportClientLog(
                         'recognition_settings_load_failed',
                         'Recognition settings could not be read',
-                        String(error),
+                        errorDetailOf(error),
                       ),
                     );
                 }
               : undefined,
           );
-          reportClientLog('recognition_settings_save_failed', message, String(reason));
+          reportClientLog('recognition_settings_save_failed', message, errorDetailOf(reason));
         }
       }
     } finally {
@@ -282,7 +282,7 @@ class OverlayStore {
         reportClientLog(
           'recognition_settings_load_failed',
           'Recognition settings could not be read',
-          String(e),
+          errorDetailOf(e),
         );
       }
     }
@@ -399,6 +399,8 @@ class OverlayStore {
           if (e.type === 'resources_changed') {
             store.dispatch(api.util.invalidateTags(['Maps', 'Items', 'Preferences']));
           }
+          if (e.type === 'preferences_changed')
+            store.dispatch(api.util.invalidateTags(['Preferences']));
           if (e.type === 'items_changed') store.dispatch(api.util.invalidateTags(['Items']));
           if (e.type === 'annotations_changed' && e.mapId)
             store.dispatch(api.util.invalidateTags([{ type: 'Annotations', id: e.mapId }]));
@@ -411,15 +413,16 @@ class OverlayStore {
             );
           if (e.overlaySettings || e.recognitionSettings || e.gameMonitorSettings)
             store.dispatch(api.util.invalidateTags(['Settings']));
-          if (e.multiplayerStatus) store.dispatch(api.util.invalidateTags(['Multiplayer']));
           gameMonitor.handleEvent(e);
           if (e.multiplayerStatus) multiplayer.handleStatus(e.multiplayerStatus);
           this.connectedOnce = true;
           this.connected = true;
           clearTimeout(stale);
           stale = setTimeout(reconnect, 7000);
-          if (e.type === 'snapshot')
+          if (e.type === 'snapshot') {
             this.players = new Map((e.players || []).map((p) => [p.playerId, p]));
+            if (workspace.activeId) void workspace.refetchAnnotations(workspace.activeId);
+          }
           if (e.type === 'calibration_changed' && e.mapId) {
             this.calibrationMapId = e.mapId;
             this.calibrationEpoch++;
@@ -457,7 +460,7 @@ class OverlayStore {
           if (e.overlayView) this.view = e.overlayView;
           this.changed();
         } catch (e) {
-          reportClientLog('websocket_invalid', 'Overlay state failed', String(e));
+          reportClientLog('websocket_invalid', 'Overlay state failed', errorDetailOf(e));
           reconnect();
         }
       };

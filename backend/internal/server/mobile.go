@@ -396,20 +396,14 @@ func (m *mobileManager) publish(event contracts.ServerEvent) {
 	if name == "preferences_changed" {
 		name = "map_changed"
 	}
-	if name == "overlay_status" {
-		name = "map_changed"
-	}
 	// multiplayer_changed carries the roster the shared owner-visibility rule needs; resources_changed
 	// means the mode or the data root moved, so the cast has to reload what it mirrors.
-	if name != "snapshot" && name != "map_changed" && name != "player_upsert" && name != "player_remove" && name != "annotation_upsert" && name != "annotation_remove" && name != "annotations_changed" && name != "multiplayer_changed" && name != "resources_changed" && name != "session_end" {
+	if name != "snapshot" && name != "map_changed" && name != "player_upsert" && name != "player_remove" && name != "annotation_upsert" && name != "annotation_remove" && name != "annotations_changed" && name != "multiplayer_changed" && name != "resources_changed" && name != "game_monitor_changed" && name != "session_end" {
 		return
 	}
 	names := []string{name}
 	if event.Type == "preferences_changed" {
 		names = append(names, "floor_changed", "basemap_changed", "center_changed")
-	}
-	if event.Type == "overlay_status" {
-		names = append(names, "center_changed")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

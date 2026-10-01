@@ -11,13 +11,16 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"syscall"
 	"time"
 
 	"efttoolbox/backend/internal/server"
 )
 
-var version = "0.1.0"
+var version string
+
+var versionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+(-dev)?$`)
 
 // Startup failures happen before any UI exists, so they are written to the log pipeline and echoed
 // on the launcher's terminal — one line, then exit.
@@ -32,6 +35,9 @@ func fatal(message string, err error) {
 }
 
 func main() {
+	if !versionPattern.MatchString(version) {
+		fatal("invalid or missing build version", nil)
+	}
 	setProcessDPIAwareness()
 	exe, err := os.Executable()
 	if err != nil {

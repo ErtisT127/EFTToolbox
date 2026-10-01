@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -665,7 +666,7 @@ func TestHostJoinLoopbackIPv6(t *testing.T) {
 	if host, _, err := net.SplitHostPort(status.Invite.Host); err != nil || host != "::1" {
 		t.Fatalf("invite host must be bracketed IPv6: %q", status.Invite.Host)
 	}
-	guestStatus, failure := guestManager.join(contracts.MultiplayerJoinRequest{Mode: multiplayerModeCustom, Address: stringPtr("::1"), Port: stringPtr(strconv.Itoa(*status.Port)), Key: "testkey0000000002"})
+	guestStatus, failure := guestManager.join(contracts.MultiplayerJoinRequest{Mode: multiplayerModeCustom, Address: net.JoinHostPort("::1", strconv.Itoa(*status.Port)), Key: "testkey0000000002"})
 	if failure != nil {
 		t.Skipf("IPv6 loopback ICE unavailable: %+v", failure)
 	}
@@ -677,6 +678,124 @@ func TestHostJoinLoopbackIPv6(t *testing.T) {
 		members := hostManager.status().Members
 		return members != nil && len(*members) == 1 && (*members)[0].PeerId == guestID
 	})
+}
+
+// TestHostJoinStunEndpoint exercises the structured STUN invite through the public join path.
+// In particular, join splits the invite into host and port before dial must put them back
+// together for the UDP signaling socket.
+func TestHostJoinStunEndpoint(t *testing.T) {
+	_, _, _, hostManager := multiplayerFixtureWithID(t, "eeeeeeeeeeeeeeee")
+	_, _, _, guestManager := multiplayerFixtureWithID(t, "ffffffffffffffff")
+	stunServer := fakeStunServer(t, func(from *net.UDPAddr) *net.UDPAddr { return from })
+
+	status, failure := hostManager.host(contracts.MultiplayerHostRequest{
+		Mode:       multiplayerModeStun,
+		StunServer: stringPtr(stunServer),
+		Key:        stringPtr("testkey0000000003"),
+	})
+	if failure != nil {
+		t.Skipf("STUN host unavailable: %+v", failure)
+	}
+	if status.Invite == nil || status.Invite.StunServer == nil {
+		t.Fatal("STUN host did not return a complete invite")
+	}
+
+	guestStatus, failure := guestManager.join(contracts.MultiplayerJoinRequest{
+		Mode:       multiplayerModeStun,
+		Address:    status.Invite.Host,
+		StunServer: status.Invite.StunServer,
+		Key:        status.Invite.Key,
+	})
+	if failure != nil {
+		if failure.code == "multiplayer_share_invalid" {
+			t.Fatalf("STUN join lost the invite port: %+v", failure)
+		}
+		t.Skipf("STUN ICE unavailable: %+v", failure)
+	}
+	if !guestStatus.Enabled {
+		t.Fatal("guest status not enabled after STUN join")
+	}
+}
+
+func TestParseJoinEndpoint(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		host  string
+		port  string
+		ok    bool
+	}{
+		{name: "ipv4", input: "127.0.0.1:1234", host: "127.0.0.1", port: "1234", ok: true},
+		{name: "ipv6", input: "[::1]:1234", host: "::1", port: "1234", ok: true},
+		{name: "bare ipv6", input: "::1:1234"},
+		{name: "missing port", input: "127.0.0.1"},
+		{name: "zero port", input: "127.0.0.1:0"},
+		{name: "port overflow", input: "127.0.0.1:65536"},
+		{name: "hostname", input: "localhost:1234"},
+		{name: "link-local", input: "[fe80::1]:1234"},
+		{name: "zone", input: "[fe80::1%12]:1234"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			host, port, ok := parseJoinEndpoint(test.input)
+			if ok != test.ok || host != test.host || port != test.port {
+				t.Fatalf("parseJoinEndpoint(%q) = (%q, %q, %v), want (%q, %q, %v)", test.input, host, port, ok, test.host, test.port, test.ok)
+			}
+		})
+	}
+}
+
+func fakeRFC5780Server(t *testing.T, changeSource, includeOther bool) string {
+	t.Helper()
+	primary, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alternate, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 2)})
+	if err != nil {
+		_ = primary.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = primary.Close()
+		_ = alternate.Close()
+	})
+	go func() {
+		buffer := make([]byte, 1500)
+		for {
+			n, from, err := primary.ReadFromUDP(buffer)
+			if err != nil {
+				return
+			}
+			message := &stun.Message{Raw: append([]byte(nil), buffer[:n]...)}
+			if message.Decode() != nil || message.Type != stun.BindingRequest {
+				continue
+			}
+			response := &stun.Message{TransactionID: message.TransactionID}
+			if err := stun.BindingSuccess.AddTo(response); err != nil {
+				continue
+			}
+			if err := (stun.XORMappedAddress{IP: from.IP, Port: from.Port}).AddTo(response); err != nil {
+				continue
+			}
+			if includeOther {
+				other := alternate.LocalAddr().(*net.UDPAddr)
+				otherAddress := stun.OtherAddress{IP: other.IP, Port: other.Port}
+				if err := otherAddress.AddTo(response); err != nil {
+					continue
+				}
+			}
+			response.Encode()
+			writer := primary
+			if changeSource {
+				if value, err := message.Get(stun.AttrChangeRequest); err == nil && bytes.Equal(value, []byte{0, 0, 0, 6}) {
+					writer = alternate
+				}
+			}
+			_, _ = writer.WriteToUDP(response.Raw, from)
+		}
+	}()
+	return primary.LocalAddr().String()
 }
 
 func fakeStunServer(t *testing.T, mapped func(from *net.UDPAddr) *net.UDPAddr) string {
@@ -744,6 +863,23 @@ func TestNatCheck(t *testing.T) {
 	}
 }
 
+func TestNATFilteringRequiresRFC5780ChangedSource(t *testing.T) {
+	working := fakeRFC5780Server(t, true, true)
+	if endpointIndependent, supported := probeNATFilteringServer(working, time.Now().Add(time.Second)); !endpointIndependent || !supported {
+		t.Fatalf("RFC 5780 server was not accepted: endpointIndependent=%t supported=%t", endpointIndependent, supported)
+	}
+
+	ignored := fakeRFC5780Server(t, false, true)
+	if endpointIndependent, supported := probeNATFilteringServer(ignored, time.Now().Add(time.Second)); endpointIndependent || !supported {
+		t.Fatalf("server ignoring CHANGE-REQUEST was accepted: endpointIndependent=%t supported=%t", endpointIndependent, supported)
+	}
+
+	unsupported := fakeRFC5780Server(t, true, false)
+	if endpointIndependent, supported := probeNATFilteringServer(unsupported, time.Now().Add(time.Second)); endpointIndependent || supported {
+		t.Fatalf("server without OTHER-ADDRESS was accepted: endpointIndependent=%t supported=%t", endpointIndependent, supported)
+	}
+}
+
 func TestRoomCapacityAtHello(t *testing.T) {
 	_, _, hub, manager := multiplayerFixture(t)
 	_ = hub
@@ -768,14 +904,29 @@ func TestRoomCapacityAtHello(t *testing.T) {
 // TestHostJoinLoopbackSync covers the core cross-machine behavior on loopback: roster exchange,
 // position relay, annotation merge, and the leave/rejoin marker lifecycle rules.
 func TestHostJoinLoopbackSync(t *testing.T) {
-	_, hostHandler, hostHub, hostManager := multiplayerFixtureWithID(t, "aaaaaaaaaaaaaaaa")
-	_, guestHandler, guestHub, guestManager := multiplayerFixtureWithID(t, "bbbbbbbbbbbbbbbb")
+	hostRoot, hostHandler, hostHub, hostManager := multiplayerFixtureWithID(t, "aaaaaaaaaaaaaaaa")
+	guestRoot, guestHandler, guestHub, guestManager := multiplayerFixtureWithID(t, "bbbbbbbbbbbbbbbb")
+	for _, root := range []string{hostRoot, guestRoot} {
+		path := filepath.Join(root, "upstream", "modes", "pvp", "maps", "fixture_zh.json")
+		var data contracts.MapData
+		if err := readJSON(path, &data); err != nil {
+			t.Fatal(err)
+		}
+		data.Projection.Rotation = 37
+		encoded, err := json.Marshal(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, encoded, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	status, failure := hostManager.host(contracts.MultiplayerHostRequest{Mode: multiplayerModeCustom, Address: stringPtr("127.0.0.1"), Port: "0", Key: stringPtr("testkey0000000000")})
 	if failure != nil {
 		t.Fatalf("host: %+v", failure)
 	}
-	guestStatus, failure := guestManager.join(contracts.MultiplayerJoinRequest{Mode: multiplayerModeCustom, Address: stringPtr("127.0.0.1"), Port: stringPtr(strconv.Itoa(*status.Port)), Key: "testkey0000000000"})
+	guestStatus, failure := guestManager.join(contracts.MultiplayerJoinRequest{Mode: multiplayerModeCustom, Address: net.JoinHostPort("127.0.0.1", strconv.Itoa(*status.Port)), Key: "testkey0000000000"})
 	if failure != nil {
 		t.Fatalf("join: %+v", failure)
 	}
@@ -791,8 +942,15 @@ func TestHostJoinLoopbackSync(t *testing.T) {
 
 	// Position: the host's self player is relayed and projected on the guest with the guest's
 	// own calibration (map fixture exists on both sides).
+	self, err := hostHub.projectPlayer(playerInput{
+		PlayerId: "self", DisplayName: "房主", IsSelf: true, MapId: "fixture",
+		WorldPosition: contracts.WorldPosition{X: 10, Y: 20, Z: 3}, Heading: 90,
+	})
+	if err != nil {
+		t.Fatalf("project host player: %v", err)
+	}
+	self.Color = "#d4a24e"
 	hostHub.mu.Lock()
-	self := contracts.PlayerState{PlayerId: "self", DisplayName: "房主", Color: "#d4a24e", IsSelf: true, MapId: "fixture", WorldPosition: contracts.WorldPosition{X: 10, Y: 20, Z: 3}, MapPosition: contracts.MapPoint{X: 1, Y: 2}, Resolution: contracts.LocationResolution{Status: "skipped", Candidates: []string{}}, Heading: 90}
 	hostHub.players["self"] = self
 	hostHub.mu.Unlock()
 	hostHub.publish(contracts.ServerEvent{Type: "player_upsert", Player: &self})
@@ -800,7 +958,8 @@ func TestHostJoinLoopbackSync(t *testing.T) {
 		guestHub.mu.Lock()
 		defer guestHub.mu.Unlock()
 		player, ok := guestHub.players[hostID]
-		return ok && player.WorldPosition.X == 10 && player.IsSelf == false && player.Color == "#d4a24e"
+		return ok && player.WorldPosition.X == 10 && player.IsSelf == false && player.Color == "#d4a24e" &&
+			player.WorldHeading == self.WorldHeading && math.Abs(player.Heading-self.Heading) < 0.001
 	})
 
 	// Annotation: the guest draws a marker; the host's file gains it under the guest's owner id.
@@ -826,7 +985,7 @@ func TestHostJoinLoopbackSync(t *testing.T) {
 	}
 
 	// Same-player rejoin: the guest re-pushes its full document and is visible again.
-	if _, failure := guestManager.join(contracts.MultiplayerJoinRequest{Mode: multiplayerModeCustom, Address: stringPtr("127.0.0.1"), Port: stringPtr(strconv.Itoa(*status.Port)), Key: "testkey0000000000"}); failure != nil {
+	if _, failure := guestManager.join(contracts.MultiplayerJoinRequest{Mode: multiplayerModeCustom, Address: net.JoinHostPort("127.0.0.1", strconv.Itoa(*status.Port)), Key: "testkey0000000000"}); failure != nil {
 		t.Fatalf("rejoin: %+v", failure)
 	}
 	waitFor(t, 5*time.Second, func() bool {
@@ -904,6 +1063,20 @@ func TestMultiplayerDataResetRestoresDefaultsAndRotatesIdentity(t *testing.T) {
 	}
 }
 
+func TestMultiplayerSettingsPutUsesInMemoryFallbackOnFirstSave(t *testing.T) {
+	_, handler, _, manager := multiplayerFixture(t)
+	settings := manager.currentSettings()
+	settings.PlayerName = "First save"
+
+	response := localCall(handler, http.MethodPut, "/api/multiplayer/settings", settings)
+	if response.Code != http.StatusOK {
+		t.Fatalf("first multiplayer settings save failed: %d %s", response.Code, response.Body.String())
+	}
+	if got := manager.currentSettings().PlayerName; got != settings.PlayerName {
+		t.Fatalf("settings name = %q, want %q", got, settings.PlayerName)
+	}
+}
+
 func TestMultiplayerDataResetIsRejectedInRoom(t *testing.T) {
 	_, handler, _, manager := multiplayerFixture(t)
 	oldID := manager.selfID()
@@ -934,24 +1107,19 @@ func TestResetAnnotationsClearsMultiplayerCache(t *testing.T) {
 	}
 }
 
-func TestMapPreferenceResetClearsAppliedMapInEveryMode(t *testing.T) {
+func TestMapPreferenceResetClearsAppliedMap(t *testing.T) {
 	_, store, _ := mapStoreFixture(t)
-	pveRoot := filepath.Join(store.root, "user", "modes", "pve")
-	for _, modeRoot := range []string{store.userRoot(), pveRoot} {
-		if err := os.MkdirAll(modeRoot, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := store.saveTo(modeRoot, "game-monitor-state.json", gameMonitorState{SchemaVersion: 1, MapID: "fixture"}); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.MkdirAll(store.userRoot(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.saveTo(store.userRoot(), "game-monitor-state.json", gameMonitorState{SchemaVersion: 1, MapID: "fixture"}); err != nil {
+		t.Fatal(err)
 	}
 	if err := store.resetMapPreferences(); err != nil {
 		t.Fatal(err)
 	}
-	for _, modeRoot := range []string{store.userRoot(), pveRoot} {
-		var state gameMonitorState
-		if err := readJSON(filepath.Join(modeRoot, "game-monitor-state.json"), &state); err != nil || state.MapID != "" {
-			t.Fatalf("applied map survived reset in %s: %+v %v", modeRoot, state, err)
-		}
+	var state gameMonitorState
+	if err := readJSON(filepath.Join(store.userRoot(), "game-monitor-state.json"), &state); err != nil || state.MapID != "" {
+		t.Fatalf("applied map survived reset: %+v %v", state, err)
 	}
 }

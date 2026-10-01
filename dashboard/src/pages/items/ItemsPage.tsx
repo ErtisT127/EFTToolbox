@@ -37,7 +37,7 @@ import { RecognitionTuningFields } from '../../components/RecognitionTuningField
 import { useLocale, type LocaleKey, type Translate } from '../../hooks/useLocale';
 import { notices } from '../../stores/noticeStore';
 import { reportClientLog } from '../../stores/workspaceStore';
-import { DataLoadError, errorKeyOf } from '../../lib/errors';
+import { DataLoadError, errorDetailOf, errorKeyOf } from '../../lib/errors';
 import {
   api,
   useGetItemsQuery,
@@ -102,7 +102,13 @@ const emptyStatus: ItemsUpdateStatus = {
   errorDetail: '',
 };
 
-export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
+export function ItemsPage({
+  openRecognitionRequest = 0,
+  onOpenSettings,
+}: {
+  openRecognitionRequest?: number;
+  onOpenSettings: () => void;
+}) {
   const { t, locale } = useLocale();
   const catalogQuery = useGetItemsQuery(locale);
   const settingsQuery = useGetItemsSettingsQuery();
@@ -153,12 +159,15 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const recognitionPending = overlay.recognitionPending;
   // The subpage slides over the catalogue and slides back out before it unmounts, so the exit is a
   // transition and the table is the surface behind it the whole way.
-  const openRecognitionPage = () => {
+  const openRecognitionPage = useCallback(() => {
     if (recognitionLeaveTimer.current) clearTimeout(recognitionLeaveTimer.current);
     recognitionLeaveTimer.current = null;
     setRecognitionLeaving(false);
     setRecognitionPage(true);
-  };
+  }, []);
+  useEffect(() => {
+    if (openRecognitionRequest > 0) openRecognitionPage();
+  }, [openRecognitionRequest, openRecognitionPage]);
   const closeRecognitionPage = () => {
     if (!recognitionPage || recognitionLeaving) return;
     setRecognitionLeaving(true);
@@ -340,7 +349,7 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
           }
           const message = t(recognitionErrorKey(reason) as LocaleKey);
           notices.push(message);
-          reportClientLog('recognition_request_failed', message, String(reason));
+          reportClientLog('recognition_request_failed', message, errorDetailOf(reason));
         });
     };
     reader.onerror = () => {
@@ -350,7 +359,7 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
       reportClientLog(
         'recognition_import_failed',
         message,
-        reader.error ? String(reader.error) : '',
+        reader.error ? errorDetailOf(reader.error) : '',
       );
     };
     reader.readAsDataURL(file);

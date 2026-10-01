@@ -43,7 +43,6 @@
   height: 100%;
   overflow: auto;
   padding: var(--space-4) var(--space-3);
-  scrollbar-width: thin;
   scrollbar-gutter: stable;
 }
 
@@ -368,7 +367,6 @@
   overflow-x: hidden;
   overflow-y: auto;
   padding: var(--space-3) var(--space-4);
-  scrollbar-width: thin;
   scrollbar-gutter: stable;
 }
 

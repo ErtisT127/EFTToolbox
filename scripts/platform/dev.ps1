@@ -41,7 +41,7 @@ try {
         Write-Host 'Backend unchanged; using cached executable.'
     } else {
         Write-Host 'Building Go backend (the first build can take longer)'
-        & go build -o build/EFTToolbox.exe ./backend/cmd/EFTToolbox
+        & go build -ldflags '-X=main.version=0.0.0-dev' -o build/EFTToolbox.exe ./backend/cmd/EFTToolbox
         if ($LASTEXITCODE -ne 0) { throw 'Backend build failed' }
         & node scripts/cli.mjs cache save backend
         if ($LASTEXITCODE -ne 0) { throw 'Backend cache save failed' }

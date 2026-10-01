@@ -197,6 +197,13 @@ func (h *overlayHub) UpdateUserSettings(update func(*contracts.UserSettings) err
 }
 
 func (h *overlayHub) updateUserSettings(expected string, update func(*contracts.UserSettings) error, requireExpected, repair bool, operationID *string, overlayChanged, monitorChanged bool) (contracts.UserSettings, string, string, error) {
+	if monitorChanged {
+		// Record the user's intent before the versioned file mutation so a pending automatic mode
+		// write can yield even if it has not reached the file yet.
+		h.mu.Lock()
+		h.monitorRevision++
+		h.mu.Unlock()
+	}
 	fallback := defaultUserSettings()
 	var repo *modeRepository
 	var languageChanged bool
@@ -233,6 +240,7 @@ func (h *overlayHub) updateUserSettings(expected string, update func(*contracts.
 		return fallback, revision, etag, err
 	}
 	value := *raw.(*contracts.UserSettings)
+	modeChanged := false
 	h.mu.Lock()
 	mobile := h.mobile
 	oldMode := h.monitorSettings.Mode
@@ -259,6 +267,7 @@ func (h *overlayHub) updateUserSettings(expected string, update func(*contracts.
 	}
 	if monitorChanged {
 		if oldMode != value.GameMonitor.Mode {
+			modeChanged = true
 			for id, player := range h.players {
 				if player.IsSelf {
 					delete(h.players, id)
@@ -269,6 +278,13 @@ func (h *overlayHub) updateUserSettings(expected string, update func(*contracts.
 		h.publish(contracts.ServerEvent{Type: "game_monitor_changed", GameMonitorStatus: &h.monitorStatus, GameMonitorSettings: &value.GameMonitor, OperationId: operationID})
 	}
 	h.mu.Unlock()
+	if modeChanged {
+		if h.multiplayer != nil {
+			h.multiplayer.resetAnnotationSendState()
+			h.multiplayer.resyncAnnotations()
+		}
+		go h.reprojectRemotePlayers()
+	}
 	// The phone follows the interface language; it only learns about it through the cast stream.
 	if languageChanged && mobile != nil {
 		mobile.publishSnapshot()

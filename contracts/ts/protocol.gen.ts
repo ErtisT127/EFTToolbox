@@ -8,6 +8,7 @@ export interface WirePos {
   y: number;
   z: number;
   heading: number;
+  color?: string;
 }
 
 export interface WireHello {

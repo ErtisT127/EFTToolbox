@@ -34,7 +34,9 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 	store.calibrationReset = hub.invalidateCalibrationIndexes
 	items := newItemsManager(ctx, store, hub)
 	store.items = items
-	store.modeChanged = items.cancelUpdate
+	store.modeChanged = func() {
+		items.cancelUpdate()
+	}
 	if logWriter != nil {
 		hub.logWriter = logWriter
 		hub.pipe = startOverlayLogPipe(ctx, logWriter)

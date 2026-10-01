@@ -99,6 +99,7 @@ function eventData(event: MessageEvent<string>): ServerEvent {
 // only flicker. The full-screen overlay gates the first paint, so it must never outlive a load:
 // without the watchdog a stalled progress source would strand the cast on "loading resources".
 const TILE_BUSY_DELAY = 500;
+const LOAD_NOTICE_DELAY = 500;
 const READY_WATCHDOG = 8000;
 
 export function CastApp() {
@@ -124,13 +125,17 @@ export function CastApp() {
   );
   const desiredRef = useRef({ id: '', epoch: -1 });
   const settingsRef = useRef<OverlaySettings | undefined>(undefined);
+  const monitorModeRef = useRef('');
   const terminalRef = useRef(false);
+  const hiddenRef = useRef(false);
   const gestureRef = useRef(false);
   const pendingRef = useRef<(() => void) | null>(null);
   const reconnectTimerRef = useRef<number | undefined>(undefined);
   const epochRef = useRef(0);
   const readyRef = useRef(false);
   const readyTimerRef = useRef<number | undefined>(undefined);
+  const loadNoticeTimerRef = useRef<number | undefined>(undefined);
+  const loadNoticeShownRef = useRef(false);
   const busyTimerRef = useRef<number | undefined>(undefined);
   const layersButtonRef = useRef<HTMLButtonElement>(null);
   const castRootRef = useRef<HTMLElement>(null);
@@ -170,6 +175,7 @@ export function CastApp() {
     () => () => {
       window.clearTimeout(readyTimerRef.current);
       window.clearTimeout(busyTimerRef.current);
+      window.clearTimeout(loadNoticeTimerRef.current);
     },
     [],
   );
@@ -183,23 +189,38 @@ export function CastApp() {
     readyRef.current = true;
     window.clearTimeout(readyTimerRef.current);
     readyTimerRef.current = undefined;
+    window.clearTimeout(loadNoticeTimerRef.current);
+    loadNoticeTimerRef.current = undefined;
     setStage(100, 'cast.ready');
   }, [setStage]);
 
   // Every load generation starts back at the full-screen overlay; the ready flag only suppresses the
   // tile activity that keeps arriving after the map has already painted.
   const beginLoad = useCallback(
-    (epoch: number) => {
+    (epoch: number, immediate = false) => {
       readyRef.current = false;
+      loadNoticeShownRef.current = immediate;
       window.clearTimeout(readyTimerRef.current);
+      window.clearTimeout(loadNoticeTimerRef.current);
+      loadNoticeTimerRef.current = undefined;
       readyTimerRef.current = window.setTimeout(() => {
         if (epoch === epochRef.current && modelRef.current) markReady();
       }, READY_WATCHDOG);
+      if (immediate) setStage(25, 'cast.loadingMap');
+      else {
+        loadNoticeTimerRef.current = window.setTimeout(() => {
+          loadNoticeTimerRef.current = undefined;
+          if (epoch === epochRef.current && !readyRef.current) {
+            loadNoticeShownRef.current = true;
+            setStage(25, 'cast.loadingMap');
+          }
+        }, LOAD_NOTICE_DELAY);
+      }
       window.clearTimeout(busyTimerRef.current);
       busyTimerRef.current = undefined;
       setTileBusy(false);
     },
-    [markReady],
+    [markReady, setStage],
   );
 
   const onTileBusy = useCallback((busy: boolean) => {
@@ -234,8 +255,7 @@ export function CastApp() {
       if (inflight && inflight.id === mapId && inflight.epoch === epoch && !force)
         return inflight.promise;
       const promise = (async () => {
-        beginLoad(epoch);
-        setStage(25, 'cast.loadingMap');
+        beginLoad(epoch, !modelRef.current);
         const [data, annotations, stickers] = await Promise.all([
           store
             .dispatch(
@@ -253,10 +273,12 @@ export function CastApp() {
             .unwrap(),
         ]);
         if (epoch !== epochRef.current) return undefined;
+        window.clearTimeout(loadNoticeTimerRef.current);
+        loadNoticeTimerRef.current = undefined;
         // A newer request for another map owns the view now, so this stale load must not apply.
         if (desiredRef.current.epoch === epoch && desiredRef.current.id !== mapId) return undefined;
         const value: Annotations = annotations.value;
-        setStage(38, 'cast.loadingMap');
+        if (loadNoticeShownRef.current) setStage(38, 'cast.loadingMap');
         const next: Model = {
           data,
           preference: preferenceFor(data, preferences, mapId),
@@ -323,9 +345,9 @@ export function CastApp() {
     [loadModel],
   );
 
-  const reloadAnnotations = useCallback(async () => {
+  const reloadAnnotations = useCallback(async (mapId?: string) => {
     const current = modelRef.current;
-    if (!current) return;
+    if (!current || (mapId && current.data.id !== mapId)) return;
     const epoch = epochRef.current;
     const request = ++annotationRequestRef.current;
     const next = await store
@@ -353,6 +375,7 @@ export function CastApp() {
         setLoadError('');
         setStage(18, 'cast.waitingSnapshot');
         settingsRef.current = value.overlaySettings;
+        monitorModeRef.current = value.gameMonitorStatus?.mode || '';
         setMarkerPreferences(value.markerPreferences);
         setOwnerId(value.ownerId || '');
         setMultiplayerStatus(value.multiplayerStatus);
@@ -401,6 +424,10 @@ export function CastApp() {
         setMultiplayerStatus(value.multiplayerStatus);
         return;
       }
+      if (value.type === 'game_monitor_changed') {
+        if (value.gameMonitorStatus?.mode) monitorModeRef.current = value.gameMonitorStatus.mode;
+        return;
+      }
       if (value.type === 'resources_changed') {
         // The mode or the data root moved: everything the cast mirrors has to be re-read, and any
         // load already in flight belongs to the previous repository.
@@ -429,20 +456,62 @@ export function CastApp() {
         return;
       }
       if (value.type === 'annotations_changed') {
-        await reloadAnnotations();
+        const mapId = value.mapId;
+        if (mapId && mapId !== modelRef.current?.data.id && mapId !== desiredRef.current.id) return;
+        const loading = loadRef.current;
+        if (mapId && loading?.id === mapId) await loading.promise;
+        await reloadAnnotations(mapId);
+        return;
+      }
+      if (value.type === 'map_changed') {
+        // Automatic map changes update the monitor state, not the dashboard's selected-map
+        // preference file. The event's mapId is therefore authoritative for the cast target.
+        // A position update can repeat the current map id; the player_upsert already updates the
+        // moving marker, so rebuilding the same map would only flash the loading surface.
+        const modeChanged =
+          !!value.gameMonitorStatus?.mode &&
+          !!monitorModeRef.current &&
+          value.gameMonitorStatus.mode !== monitorModeRef.current;
+        if (
+          value.mapId &&
+          !value.preferences &&
+          !modeChanged &&
+          modelRef.current?.data.id === value.mapId
+        )
+          return;
+        if (value.gameMonitorStatus?.mode) monitorModeRef.current = value.gameMonitorStatus.mode;
+        const epoch = ++epochRef.current;
+        annotationRequestRef.current++;
+        let preferences: Preferences;
+        if (value.preferences) {
+          preferences = {
+            ...value.preferences,
+            selectedMap: value.mapId || value.preferences.selectedMap,
+          };
+        } else {
+          const result = await store
+            .dispatch(api.endpoints.getMapPreferences.initiate(undefined, { forceRefetch: true }))
+            .unwrap();
+          preferences = { ...result.value, selectedMap: value.mapId || result.value.selectedMap };
+        }
+        const targetMapId = preferences.selectedMap;
+        const reload = !modelRef.current || modelRef.current.data.id !== targetMapId;
+        await applyPreferences(preferences, playersRef.current, epoch, reload);
         return;
       }
       if (
-        value.type === 'map_changed' ||
         value.type === 'floor_changed' ||
         value.type === 'basemap_changed' ||
         value.type === 'center_changed'
       ) {
         if (value.preferences) await applyPreferences(value.preferences);
         else {
+          const epoch = epochRef.current;
+          const source = eventSourceRef.current;
           const result = await store
             .dispatch(api.endpoints.getMapPreferences.initiate(undefined, { forceRefetch: true }))
             .unwrap();
+          if (epoch !== epochRef.current || source !== eventSourceRef.current) return;
           await applyPreferences(result.value);
         }
         return;
@@ -458,13 +527,17 @@ export function CastApp() {
 
   const connect = useCallback(() => {
     const token = new URLSearchParams(location.search).get('token');
-    if (!token || document.visibilityState !== 'visible' || terminalRef.current) return;
+    if (!token || terminalRef.current) return;
     eventSourceRef.current?.close();
     setStage(5, 'cast.connecting');
     const source = new EventSource(`/cast/events?token=${encodeURIComponent(token)}`);
     eventSourceRef.current = source;
-    source.onopen = () => setStage(12, 'cast.waitingSnapshot');
+    source.onopen = () => {
+      if (eventSourceRef.current !== source) return;
+      setStage(12, 'cast.waitingSnapshot');
+    };
     source.onerror = () => {
+      if (eventSourceRef.current !== source) return;
       if (!terminalRef.current) setStage(8, 'cast.reconnecting');
     };
     for (const name of [
@@ -476,6 +549,7 @@ export function CastApp() {
       'filters_changed',
       'marker_preferences_changed',
       'multiplayer_changed',
+      'game_monitor_changed',
       'resources_changed',
       'player_upsert',
       'player_remove',
@@ -484,6 +558,7 @@ export function CastApp() {
       'session_expired',
     ]) {
       source.addEventListener(name, (event) => {
+        if (eventSourceRef.current !== source) return;
         void handle(event as MessageEvent<string>).catch((error: unknown) => {
           if (!terminalRef.current) {
             setLoadError(error instanceof Error ? error.message : 'errors.request_failed');
@@ -496,16 +571,26 @@ export function CastApp() {
   useEffect(() => {
     connect();
     const onVisibility = () => {
+      // WebView2 may freeze this renderer while hidden. Keep EventSource alive while it is hidden;
+      // on return, reconnect once so the backend snapshot repairs any events the frozen renderer
+      // could not process.
       if (document.visibilityState === 'hidden') {
-        eventSourceRef.current?.close();
-        eventSourceRef.current = null;
+        hiddenRef.current = true;
         return;
       }
+      if (!hiddenRef.current) return;
+      hiddenRef.current = false;
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = window.setTimeout(connect, 500);
     };
     const onOnline = () => {
-      if (document.visibilityState === 'visible') connect();
+      if (document.visibilityState !== 'visible') return;
+      if (eventSourceRef.current && eventSourceRef.current.readyState !== EventSource.CLOSED)
+        return;
+      eventSourceRef.current = null;
+      connect();
     };
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('online', onOnline);
@@ -597,6 +682,7 @@ export function CastApp() {
             ownerId=""
             readOnly
             playerFollow={false}
+            showPlayerNames={multiplayerStatus?.showPlayerNames ?? false}
             onCommit={() => {}}
             onView={() => {}}
             onUndo={() => {}}
@@ -619,7 +705,8 @@ export function CastApp() {
               }
               // Tile batches keep reporting while the phone pans; once the map has painted they must
               // not re-open the full-screen overlay, which is what made every gesture flash.
-              if (!readyRef.current) setStage(Math.max(42, value), 'cast.loadingResources');
+              if (!readyRef.current && loadNoticeShownRef.current)
+                setStage(Math.max(42, value), 'cast.loadingResources');
             }}
             onTileBusy={onTileBusy}
           />

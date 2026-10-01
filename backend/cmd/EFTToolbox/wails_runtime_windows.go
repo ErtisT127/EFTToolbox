@@ -238,6 +238,12 @@ func runDesktop(exeDir, assets, dataRoot string, port int, overlayExe string) er
 	// The dashboard swaps its maximize button for a restore button from these.
 	runtime.window.OnWindowEvent(events.Common.WindowMaximise, func(*application.WindowEvent) { runtime.emitWindowState(true) })
 	runtime.window.OnWindowEvent(events.Common.WindowUnMaximise, func(*application.WindowEvent) { runtime.emitWindowState(false) })
+	// Keep the dashboard's connection lifecycle aligned with every native visibility transition,
+	// including taskbar minimize/restore (which does not pass through the tray helpers).
+	runtime.window.OnWindowEvent(events.Common.WindowMinimise, func(*application.WindowEvent) { runtime.emitHostState(true) })
+	runtime.window.OnWindowEvent(events.Common.WindowRestore, func(*application.WindowEvent) { runtime.emitHostState(false) })
+	runtime.window.OnWindowEvent(events.Common.WindowHide, func(*application.WindowEvent) { runtime.emitHostState(true) })
+	runtime.window.OnWindowEvent(events.Common.WindowShow, func(*application.WindowEvent) { runtime.emitHostState(false) })
 	runtime.app.OnShutdown(func() {
 		runtime.stop()
 	})
@@ -275,6 +281,7 @@ func (r *desktopRuntime) applyTrayMenu() {
 	menu := r.app.Menu.New()
 	menu.Add(contracts.MessageText(language, windowKey)).OnClick(func(*application.Context) { r.toggleWindow() })
 	menu.Add(contracts.MessageText(language, minimapKey)).OnClick(func(*application.Context) { r.toggleMinimap() })
+	menu.Add(contracts.MessageText(language, "recognition.title")).OnClick(func(*application.Context) { r.openRecognition() })
 	menu.AddSeparator()
 	menu.Add(contracts.MessageText(language, "host.traySettings")).OnClick(func(*application.Context) { r.openSettings() })
 	menu.AddSeparator()
@@ -292,12 +299,16 @@ func (r *desktopRuntime) openSettings() {
 	r.events.broadcast("open-settings", struct{}{})
 }
 
+func (r *desktopRuntime) openRecognition() {
+	r.showWindow()
+	r.events.broadcast("open-recognition", struct{}{})
+}
+
 // toggleWindow hides the window to the tray or brings it back, the same two states the close dialog's
 // tray answer produces.
 func (r *desktopRuntime) toggleWindow() {
 	if r.window.IsVisible() {
 		r.window.Hide()
-		r.emitHostState(true)
 		return
 	}
 	r.showWindow()
@@ -618,7 +629,6 @@ func (r *desktopRuntime) applyClose(action string) {
 	}
 	if action == "tray" {
 		r.window.Hide()
-		r.emitHostState(true)
 	}
 }
 
@@ -640,7 +650,6 @@ func (r *desktopRuntime) revealMainWindow(withSize bool) {
 		}
 	}
 	r.window.Show().Focus()
-	r.emitHostState(false)
 	r.emitWindowState(r.window.IsMaximised())
 }
 

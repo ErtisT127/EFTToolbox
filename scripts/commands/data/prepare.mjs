@@ -938,6 +938,7 @@ for (const [id, meta] of Object.entries(baseline)) {
   locations[id] = id;
   if (meta.ruleMap) locations[meta.ruleMap] = id;
   if (meta.nameId) locations[meta.nameId] = id;
+  for (const alias of meta.rule.altMaps || []) locations[alias] = id;
   if (meta.scenePath) {
     locations[meta.scenePath] = id;
     locations[path.basename(meta.scenePath, path.extname(meta.scenePath))] = id;

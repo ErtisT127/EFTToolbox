@@ -450,7 +450,8 @@
         "worldPosition",
         "mapPosition",
         "resolution",
-        "heading"
+        "heading",
+        "worldHeading"
       ],
       "properties": {
         "playerId": {
@@ -478,6 +479,9 @@
           "$ref": "#/$defs/LocationResolution"
         },
         "heading": {
+          "type": "number"
+        },
+        "worldHeading": {
           "type": "number"
         }
       }
@@ -1382,7 +1386,7 @@
           "type": "integer",
           "description": "Width of the recognition panel, a tall strip rather than a wide bar.",
           "minimum": 320,
-          "maximum": 900,
+          "maximum": 1600,
           "x-step": 8,
           "x-precision": 0
         },
@@ -2042,6 +2046,7 @@
         "self": { "$ref": "#/$defs/MultiplayerMember" },
         "members": { "type": "array", "items": { "$ref": "#/$defs/MultiplayerMember" } },
         "known": { "type": "array", "items": { "$ref": "#/$defs/MultiplayerMember" } },
+        "showPlayerNames": { "type": "boolean" },
         "error": { "type": "string" }
       }
     },
@@ -2052,13 +2057,14 @@
       "properties": {
         "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
         "playerId": { "type": "string" },
-        "playerName": { "type": "string" },
-        "playerColor": { "type": "string" },
+        "playerName": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "playerColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
         "showMembersPanel": { "type": "boolean" },
+        "showPlayerNames": { "type": "boolean" },
         "lastMode": { "type": "string", "enum": ["custom", "stun"] },
         "lastAddress": { "type": "string" },
         "lastPort": { "type": "string" },
-        "lastKey": { "type": "string" },
+        "lastKey": { "type": "string", "maxLength": 32, "pattern": "^[!-~]*$" },
         "lastStun": { "type": "string" },
         "stunListSource": { "type": "string", "enum": ["host", "ip"] }
       }
@@ -2071,7 +2077,7 @@
         "mode": { "type": "string", "enum": ["custom", "stun"] },
         "address": { "type": "string" },
         "port": { "type": "string" },
-        "key": { "type": "string" },
+        "key": { "type": "string", "maxLength": 32, "pattern": "^[!-~]*$" },
         "stunServer": { "type": "string" }
       }
     },
@@ -2086,13 +2092,12 @@
     "MultiplayerJoinRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "key"],
+      "required": ["mode", "address", "key"],
       "properties": {
         "mode": { "type": "string", "enum": ["custom", "stun"] },
         "address": { "type": "string" },
-        "port": { "type": "string" },
         "stunServer": { "type": "string" },
-        "key": { "type": "string" }
+        "key": { "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[!-~]+$" }
       }
     },
     "StunServerList": {

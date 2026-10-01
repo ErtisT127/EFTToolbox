@@ -16,6 +16,7 @@ import { api, isRevisionConflict } from './api';
 import { store, type RootState } from './store';
 import { clearConflict, setConflict, setMultiplayerState } from './clientState';
 import { nextMarkerPreferences } from '../pages/map/lib/visibility';
+import { errorDetailOf } from '../lib/errors';
 
 // Carries the backend's error code plus its optional detail token (e.g. the occupied port) so the
 // panel can render the concrete failure reason the backend chose.
@@ -50,6 +51,7 @@ class MultiplayerStore {
     store.dispatch(setMultiplayerState({ markerDraft: value }));
   }
   private settingsSaveQueue = Promise.resolve();
+  private settingsSync: Promise<unknown> = Promise.resolve();
   private settingsEditRevision = 0;
   get status() {
     return api.endpoints.getMultiplayerStatus.select()(store.getState()).data || { enabled: false };
@@ -73,6 +75,9 @@ class MultiplayerStore {
   get showMembersPanel() {
     return this.settings?.showMembersPanel ?? true;
   }
+  get showPlayerNames() {
+    return this.settings?.showPlayerNames ?? false;
+  }
 
   get stunListSource(): 'host' | 'ip' {
     return this.settings?.stunListSource ?? 'host';
@@ -95,6 +100,20 @@ class MultiplayerStore {
   changed() {
     this.version++;
     this.listeners.forEach((listener) => listener());
+  }
+
+  private refreshSettings() {
+    this.settingsSync = this.settingsSync
+      .catch(() => undefined)
+      .then(() =>
+        store
+          .dispatch(
+            api.endpoints.getMultiplayerSettings.initiate(undefined, { forceRefetch: true }),
+          )
+          .unwrap(),
+      )
+      .catch(() => undefined);
+    return this.settingsSync;
   }
 
   /** The room state itself arrives over /ws; this only seeds identity, status and marker prefs. */
@@ -132,6 +151,18 @@ class MultiplayerStore {
   handleStatus(status: MultiplayerStatus) {
     const previous = this.status;
     void store.dispatch(api.util.upsertQueryData('getMultiplayerStatus', undefined, status));
+    // Keep the versioned settings snapshot stable while an identity edit is in flight. A status
+    // push contains the new self color/name before the PUT response clears the draft; refetching
+    // here races the queued save and turns a local edit into a false revision conflict.
+    const draft = this.settingsDraft;
+    const settings = api.endpoints.getMultiplayerSettings.select()(store.getState()).data?.value;
+    const self = status.self;
+    if (
+      !draft &&
+      (!settings ||
+        (self && (settings.playerName !== self.name || settings.playerColor !== self.color)))
+    )
+      void this.refreshSettings();
     this.notifyRoomEvents(previous, status);
     this.changed();
   }
@@ -188,6 +219,7 @@ class MultiplayerStore {
     try {
       const status = await store.dispatch(api.endpoints.hostMultiplayer.initiate(request)).unwrap();
       void store.dispatch(api.util.upsertQueryData('getMultiplayerStatus', undefined, status));
+      await this.refreshSettings();
       return status;
     } catch (error) {
       throw multiplayerError(error);
@@ -198,6 +230,7 @@ class MultiplayerStore {
     try {
       const status = await store.dispatch(api.endpoints.joinMultiplayer.initiate(request)).unwrap();
       void store.dispatch(api.util.upsertQueryData('getMultiplayerStatus', undefined, status));
+      await this.refreshSettings();
       return status;
     } catch (error) {
       throw multiplayerError(error);
@@ -238,11 +271,12 @@ class MultiplayerStore {
     changes: Partial<
       Pick<
         MultiplayerSettings,
-        'playerName' | 'playerColor' | 'showMembersPanel' | 'stunListSource'
+        'playerName' | 'playerColor' | 'showMembersPanel' | 'showPlayerNames' | 'stunListSource'
       >
     >,
     explicit = false,
   ) {
+    await this.settingsSync;
     if (!this.settings) return;
     this.settingsDraft = { ...this.settings, ...changes };
     if (
@@ -309,6 +343,7 @@ class MultiplayerStore {
         playerName: draft.playerName,
         playerColor: draft.playerColor,
         showMembersPanel: draft.showMembersPanel,
+        showPlayerNames: draft.showPlayerNames,
         stunListSource: draft.stunListSource,
       },
       true,
@@ -374,7 +409,11 @@ class MultiplayerStore {
         store.dispatch(setConflict({ key: 'marker-preferences', resource: 'markerPreferences' }));
         store.dispatch(api.util.invalidateTags(['Preferences']));
       } else
-        reportClientLog('http_request_failed', 'marker preferences save failed', String(error));
+        reportClientLog(
+          'http_request_failed',
+          'marker preferences save failed',
+          errorDetailOf(error),
+        );
     } finally {
       this.markerSaving = false;
       this.changed();

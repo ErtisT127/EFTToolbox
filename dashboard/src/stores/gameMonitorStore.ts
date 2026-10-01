@@ -62,6 +62,7 @@ class GameMonitorStore {
     store.dispatch(setGameMonitorState({ browsing: value }));
   }
   private saveQueue = Promise.resolve();
+  private settingsSync: Promise<unknown> = Promise.resolve();
   private editRevision = 0;
   private version = 0;
   private listeners = new Set<() => void>();
@@ -100,6 +101,10 @@ class GameMonitorStore {
   }
 
   async update(changes: Partial<GameMonitorSettings>, explicit = false) {
+    // Automatic mode changes are persisted by the backend and invalidate this query. Wait for the
+    // authoritative revision before sending a manual edit, otherwise the first click can race the
+    // refresh and be rejected as a stale write.
+    await this.settingsSync;
     const current = this.settings;
     if (!current) return;
     const next = { ...current, ...changes };
@@ -203,20 +208,37 @@ class GameMonitorStore {
   handleEvent(event: ServerEvent) {
     if (event.gameMonitorSettings) {
       store.dispatch(api.util.invalidateTags(['Settings']));
+      this.settingsSync = this.settingsSync
+        .catch(() => undefined)
+        .then(() =>
+          store
+            .dispatch(
+              api.endpoints.getGameMonitorSettings.initiate(undefined, { forceRefetch: true }),
+            )
+            .unwrap(),
+        )
+        .catch(() => undefined)
+        .then(() => this.changed());
     }
     const incomingStatus = event.gameMonitorStatus;
     const previousMap = this.status?.mapId;
+    const previousMode = this.status?.mode;
     if (incomingStatus)
       void store.dispatch(
         api.util.upsertQueryData('getGameMonitorStatus', undefined, incomingStatus),
       );
     if (
-      event.type === 'map_changed' &&
       incomingStatus?.mapId &&
-      incomingStatus.mapId !== previousMap
+      (event.type === 'map_changed' ||
+        (event.type === 'snapshot' &&
+          (incomingStatus.mapId !== previousMap || incomingStatus.mode !== previousMode)))
     )
       this.mapRevision++;
-    if (event.type === 'resources_changed') this.resourceRevision++;
+    if (
+      event.type === 'resources_changed' ||
+      (event.type === 'snapshot' && incomingStatus?.mode && incomingStatus.mode !== previousMode)
+    )
+      this.resourceRevision++;
     this.changed();
   }
 }

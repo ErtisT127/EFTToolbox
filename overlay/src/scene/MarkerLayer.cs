@@ -19,16 +19,27 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
     private readonly MapTextRasterizer textRasterizer = new();
     private string assetRoot = "";
     private int generation, catalogGeneration;
+    private int catalogPending;
+    internal bool Loading
+    {
+        get
+        {
+            if (Volatile.Read(ref catalogPending) != 0 || !ready.IsEmpty || !catalogs.IsEmpty) return true;
+            lock (requested) return requested.Count != 0;
+        }
+    }
     internal void CancelPending() { Interlocked.Increment(ref generation); lock (requested) { requested.Clear(); failed.Clear(); } ready.Clear(); }
     internal void SetAssets(string root, string stickersFile)
     {
         assetRoot = root; CancelPending(); stickers = new();
         var version = ++catalogGeneration;
+        Interlocked.Increment(ref catalogPending);
         _ = Task.Run(() => {
             try {
                 var entries = File.Exists(stickersFile) ? (OverlayStateClient.Read<Sticker[]>(stickersFile) ?? []).ToDictionary(s => s.Id) : new();
                 catalogs.Enqueue((version, entries)); wake();
             } catch (Exception e) { OverlayDiagnostics.Log("warn", "sticker_catalog_failed", e.Message); }
+            finally { Interlocked.Decrement(ref catalogPending); }
         });
     }
     internal void Upload(TextureCache images, TextureCache texts)
@@ -84,14 +95,15 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
         var map = scene.Map!; var dpi = scene.Dpi;
         var categories = map.Categories.ToDictionary(c => c.Id); var hidden = scene.Preference.HiddenCategories.ToHashSet(); var tasks = scene.Preference.SelectedTasks.ToHashSet();
         bool InView(Vector2 p, Vector2 half) => p.X + half.X >= 0 && p.Y + half.Y >= 0 && p.X - half.X < scene.Width && p.Y - half.Y < scene.Height;
-        void Text(string text, string role, float size, float width, string color, Vector2 anchor, float opacity = 1, float rotation = 0, bool bottom = false)
+        void Text(string text, string role, float size, float width, string color, Vector2 anchor, float opacity = 1, float rotation = 0, bool bottom = false, bool leftAlign = false)
         {
             if (text == "") return;
-            var request = new MapText(text, role, size, width, color, dpi);
+            var request = new MapText(text, role, size, width, color, dpi, LeftAlign: leftAlign);
             var key = $"{generation}:text:{JsonSerializer.Serialize(request)}";
             if (texts.Get(key) is not { } texture) { Request(key, true, root => textRasterizer.Rasterize(root, request), operation); return; }
             var half = texts.Size(key) / 2;
             var p = bottom ? anchor - new Vector2(0, half.Y - 4 * dpi) : anchor;
+            if (leftAlign) p += new Vector2(half.X, 0);
             var angle = rotation * MathF.PI / 180;
             var extent = new Vector2(MathF.Abs(MathF.Cos(angle)) * half.X + MathF.Abs(MathF.Sin(angle)) * half.Y, MathF.Abs(MathF.Sin(angle)) * half.X + MathF.Abs(MathF.Cos(angle)) * half.Y);
             if (!InView(p, extent)) return;
@@ -181,6 +193,8 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
             for (var i = 0; i < PlayerArrow.Length; i++) draw.PathLineTo(point(PlayerArrow[i].X, PlayerArrow[i].Y));
             draw.PathFillConvex(color);
             draw.PathStroke(Color("#0A0A0A", opacity), ImDrawFlags.Closed, 1.5f * dpi);
+            if (scene.ShowPlayerNames && player.DisplayName != "")
+                Text(player.DisplayName, "annotation", 12, 0, MapDisplay.LabelColor, p + new Vector2(20 * dpi, 0), opacity, leftAlign: true);
         }
     }
     public void Dispose()

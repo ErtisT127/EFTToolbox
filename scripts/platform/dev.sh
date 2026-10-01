@@ -45,7 +45,7 @@ if [ "$rebuild" != true ] && node scripts/cli.mjs cache check backend; then
   echo 'Backend unchanged; using cached executable.'
 else
   echo 'Building Go backend (the first build can take longer)'
-  go build -v -o build/EFTToolbox.exe ./backend/cmd/EFTToolbox
+  go build -v -ldflags '-X=main.version=0.0.0-dev' -o build/EFTToolbox.exe ./backend/cmd/EFTToolbox
   node scripts/cli.mjs cache save backend
 fi
 

@@ -20,7 +20,7 @@ const zhCN = {
   "nav": {
     "aria": "主导航",
     "map": "实时地图",
-    "calibrator": "地图标定",
+    "calibrator": "楼层标定",
     "items": "物价查询",
     "settings": "系统设置"
   },
@@ -71,9 +71,9 @@ const zhCN = {
           "confirm": "将清除所有地图上的手动标注，且无法恢复。是否继续？"
         },
         "calibration": {
-          "title": "地图标定",
+          "title": "楼层标定",
           "description": "标定文档和标定器页面偏好恢复为空的默认结构。",
-          "confirm": "将重置所有地图标定文档和页面偏好。是否继续？"
+          "confirm": "将重置所有楼层标定文档和页面偏好。是否继续？"
         },
         "marker-preferences": {
           "title": "多人标记显示",
@@ -504,6 +504,7 @@ const zhCN = {
     "configTitle": "多人联机",
     "back": "返回",
     "name": "玩家名称",
+    "nameRequired": "玩家名称不能为空",
     "namePlaceholder": "输入名称",
     "colorLabel": "标识颜色",
     "colorSwatch": "颜色 {{color}}",
@@ -515,7 +516,8 @@ const zhCN = {
     "joinStunTitle": "通过 STUN 加入",
     "infoTitle": "房间信息",
     "localAddress": "本机 IP 地址",
-    "hostAddress": "主机 IP 地址",
+    "hostAddress": "主机地址",
+    "hostAddressPlaceholder": "192.168.1.2:51240 或 [IPv6]:51240",
     "hostPublicAddress": "主机 IP 地址",
     "hostPublicAddressPlaceholder": "1.2.3.4:51240",
     "pickAddress": "选择 IP 地址",
@@ -548,6 +550,7 @@ const zhCN = {
     "confirmYes": "确认",
     "cancel": "取消",
     "showMembersPanel": "在地图上显示多人面板",
+    "showPlayerNames": "在玩家图标旁显示名称",
     "identitySaveFailed": "身份信息保存失败",
     "defaultPlayerName": "玩家-{{id}}",
     "timeout": "超时",
@@ -556,9 +559,9 @@ const zhCN = {
     "stunTitle": "STUN 联机",
     "natCheck": "检测 NAT",
     "natChecking": "检测中…",
-    "natCone": "锥形 NAT，可以正常使用 STUN 联机。",
-    "natSymmetric": "对称 NAT，建议在同一局域网内联机。",
-    "natUnknown": "无法检测当前网络类型。",
+    "natCone": "锥形 NAT。支持 STUN 联机。",
+    "natSymmetric": "对称 NAT。STUN 联机可能失败。",
+    "natUnknown": "未知 NAT。无法确认公网 UDP 入站可达性。",
     "currentNode": "定位当前节点",
     "probeAll": "全部测速",
     "sort": "排序",
@@ -818,7 +821,7 @@ const enUS = {
   "nav": {
     "aria": "Main navigation",
     "map": "Live map",
-    "calibrator": "Map calibration",
+    "calibrator": "Floor calibration",
     "items": "Items",
     "settings": "Settings"
   },
@@ -869,9 +872,9 @@ const enUS = {
           "confirm": "Clear local annotations from all maps? This cannot be undone."
         },
         "calibration": {
-          "title": "Map calibration",
+          "title": "Floor calibration",
           "description": "Restore calibration documents and calibrator page preferences to their empty defaults.",
-          "confirm": "Reset all map calibration documents and page preferences?"
+          "confirm": "Reset all floor calibration documents and page preferences?"
         },
         "marker-preferences": {
           "title": "Multiplayer marker visibility",
@@ -1302,6 +1305,7 @@ const enUS = {
     "configTitle": "Multiplayer",
     "back": "Back",
     "name": "Player name",
+    "nameRequired": "Player name is required",
     "namePlaceholder": "Enter a name",
     "colorLabel": "Identity color",
     "colorSwatch": "Color {{color}}",
@@ -1313,7 +1317,8 @@ const enUS = {
     "joinStunTitle": "Join via STUN",
     "infoTitle": "Room info",
     "localAddress": "Local IP address",
-    "hostAddress": "Host IP address",
+    "hostAddress": "Host address",
+    "hostAddressPlaceholder": "192.168.1.2:51240 or [IPv6]:51240",
     "hostPublicAddress": "Host IP address",
     "hostPublicAddressPlaceholder": "1.2.3.4:51240",
     "pickAddress": "Pick an IP address",
@@ -1346,6 +1351,7 @@ const enUS = {
     "confirmYes": "Confirm",
     "cancel": "Cancel",
     "showMembersPanel": "Show multiplayer panel on map",
+    "showPlayerNames": "Show player names beside icons",
     "identitySaveFailed": "Failed to save your identity",
     "defaultPlayerName": "Player-{{id}}",
     "timeout": "Timeout",
@@ -1354,9 +1360,9 @@ const enUS = {
     "stunTitle": "Play with STUN",
     "natCheck": "Detect NAT",
     "natChecking": "Detecting…",
-    "natCone": "Cone NAT; STUN play works normally.",
-    "natSymmetric": "Symmetric NAT; use the same LAN instead.",
-    "natUnknown": "Could not detect the network type.",
+    "natCone": "Cone NAT. STUN is supported.",
+    "natSymmetric": "Symmetric NAT. STUN may fail.",
+    "natUnknown": "Unknown NAT. Public UDP reachability is unverified.",
     "currentNode": "Locate current node",
     "probeAll": "Probe all",
     "sort": "Sort",

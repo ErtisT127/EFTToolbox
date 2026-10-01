@@ -13,7 +13,8 @@
         "x": { "type": "number", "finite": true },
         "y": { "type": "number", "finite": true },
         "z": { "type": "number", "finite": true },
-        "heading": { "type": "number", "finite": true }
+        "heading": { "type": "number", "finite": true },
+        "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
       }
     },
     "WireHello": {
