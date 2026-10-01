@@ -42,6 +42,42 @@ internal static class Native
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct Luid { internal uint LowPart; internal int HighPart; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct DisplayConfigPathSourceInfo { internal Luid AdapterId; internal uint Id, ModeInfoIdx, StatusFlags; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct DisplayConfigRational { internal uint Numerator, Denominator; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct DisplayConfigPathTargetInfo
+    {
+        internal Luid AdapterId;
+        internal uint Id, ModeInfoIdx, OutputTechnology, Rotation, Scaling;
+        internal DisplayConfigRational RefreshRate;
+        internal uint ScanLineOrdering;
+        [MarshalAs(UnmanagedType.Bool)] internal bool TargetAvailable;
+        internal uint StatusFlags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct DisplayConfigPathInfo { internal DisplayConfigPathSourceInfo SourceInfo; internal DisplayConfigPathTargetInfo TargetInfo; internal uint Flags; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct DisplayConfigDeviceInfoHeader { internal uint Type, Size; internal Luid AdapterId; internal uint Id; }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct DisplayConfigSourceDeviceName
+    {
+        internal DisplayConfigDeviceInfoHeader Header;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] internal string ViewGdiDeviceName;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct DisplayConfigSdrWhiteLevel { internal DisplayConfigDeviceInfoHeader Header; internal uint SdrWhiteLevel; }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct Message
     {
         internal nint Hwnd;
@@ -100,6 +136,10 @@ internal static class Native
     [DllImport("user32", SetLastError = true)] internal static extern nint SetWindowLongPtr(nint hwnd, int index, nint value);
     [DllImport("user32")] internal static extern bool GetWindowRect(nint hwnd, out Rect rect);
     [DllImport("user32")] internal static extern nint MonitorFromRect(ref Rect rect, uint flags);
+    [DllImport("user32", SetLastError = true)] internal static extern int GetDisplayConfigBufferSizes(uint flags, out uint pathCount, out uint modeCount);
+    [DllImport("user32", SetLastError = true)] internal static extern int QueryDisplayConfig(uint flags, ref uint pathCount, [Out] DisplayConfigPathInfo[] paths, ref uint modeCount, nint modes, nint topologyId);
+    [DllImport("user32", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern int DisplayConfigGetDeviceInfo(ref DisplayConfigSourceDeviceName request);
+    [DllImport("user32", SetLastError = true)] internal static extern int DisplayConfigGetDeviceInfo(ref DisplayConfigSdrWhiteLevel request);
     [DllImport("user32")] internal static extern nint SetCapture(nint hwnd);
     [DllImport("user32")] internal static extern bool ReleaseCapture();
     [DllImport("user32")] internal static extern bool GetCursorPos(out CursorPoint point);

@@ -116,7 +116,7 @@ export const defaults = {
     schemaVersion: ContractSchemaVersion,
     playerId: '',
     playerName: '',
-    playerColor: '#d4a24e',
+    playerColor: '#E0B84C',
     stunListSource: 'host',
   },
   defaultGroups: ['extracts', 'landmarks'],

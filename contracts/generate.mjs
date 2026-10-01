@@ -339,7 +339,8 @@ func MessageText(language, key string) string {
 }
 `;
 const protocolGoType = (field) => {
-  if (field.$ref) return field.$ref.split('/').pop();
+  if (field.$ref)
+    return field.$ref.endsWith('/SignalError') ? 'SignalErrorCode' : field.$ref.split('/').pop();
   if (field.type === 'array') return `[]${protocolGoType(field.items)}`;
   if (field.type === 'number') return 'float64';
   if (field.type === 'integer') return 'int64';
@@ -347,7 +348,8 @@ const protocolGoType = (field) => {
   throw new Error(`Unsupported protocol field: ${JSON.stringify(field)}`);
 };
 const protocolTsType = (field) => {
-  if (field.$ref) return field.$ref.split('/').pop();
+  if (field.$ref)
+    return field.$ref.endsWith('/SignalError') ? 'SignalErrorCode' : field.$ref.split('/').pop();
   if (field.type === 'array') return `Array<${protocolTsType(field.items)}>`;
   if (field.type === 'number' || field.type === 'integer') return 'number';
   if (field.type === 'string') return field.enum?.map(JSON.stringify).join(' | ') || 'string';
@@ -369,7 +371,9 @@ for (const [name, definition] of Object.entries(peerSchema.$defs)) {
     const optional = !definition.required.includes(key);
     const goType = protocolGoType(field);
     const csType = field.$ref
-      ? field.$ref.split('/').pop()
+      ? field.$ref.endsWith('/SignalError')
+        ? 'SignalErrorCode'
+        : field.$ref.split('/').pop()
       : field.type === 'array'
         ? `${protocolGoType(field).replace(/^\[\]/, '')}[]`
         : { string: 'string', number: 'double', integer: 'long' }[field.type];
@@ -385,7 +389,7 @@ for (const [name, definition] of Object.entries(peerSchema.$defs)) {
             : ' = ""';
     protocolGo += `  ${fieldName} ${goType} \`json:"${key}${optional ? ',omitempty' : ''}"\`\n`;
     protocolTs += `  ${key}${optional ? '?' : ''}: ${protocolTsType(field)};\n`;
-    protocolCs += `  [JsonPropertyName("${key}")] public ${csType}${optional ? '?' : ''} ${fieldName} { get; init; }${initial};\n`;
+    protocolCs += `  [JsonPropertyName("${key}")] public ${csType}${optional ? '?' : ''} ${fieldName} { get; init; }${initial}${initial ? ';' : ''}\n`;
   }
   protocolGo += '}\n';
   protocolTs += '}\n';
@@ -408,9 +412,11 @@ for (const [name, definition] of Object.entries(signalSchema.$defs)) {
   protocolCs += `\npublic sealed record ${name} {\n`;
   for (const [key, field] of Object.entries(definition.properties)) {
     const fieldName = key[0].toUpperCase() + key.slice(1);
-    const optional = !definition.required.includes(key);
+    const optional = !definition.required?.includes(key);
     const csType = field.$ref
-      ? field.$ref.split('/').pop()
+      ? field.$ref.endsWith('/SignalError')
+        ? 'SignalErrorCode'
+        : field.$ref.split('/').pop()
       : field.type === 'array'
         ? `${protocolGoType(field).replace(/^\[\]/, '')}[]`
         : { string: 'string', number: 'double', integer: 'long' }[field.type];
@@ -425,18 +431,12 @@ for (const [name, definition] of Object.entries(signalSchema.$defs)) {
             : ' = ""';
     protocolGo += `  ${fieldName} ${protocolGoType(field)} \`json:"${key}${optional ? ',omitempty' : ''}"\`\n`;
     protocolTs += `  ${key}${optional ? '?' : ''}: ${protocolTsType(field)};\n`;
-    protocolCs += `  [JsonPropertyName("${key}")] public ${csType}${optional ? '?' : ''} ${fieldName} { get; init; }${initial};\n`;
+    protocolCs += `  [JsonPropertyName("${key}")] public ${csType}${optional ? '?' : ''} ${fieldName} { get; init; }${initial}${initial ? ';' : ''}\n`;
   }
   protocolGo += '}\n';
   protocolTs += '}\n';
   protocolCs += '}\n';
 }
-protocolGo +=
-  '\ntype SignalResponse struct {\n  Answer string `json:"answer,omitempty"`\n  Error string `json:"error,omitempty"`\n  Detail string `json:"detail,omitempty"`\n}\n';
-protocolTs +=
-  '\nexport interface SignalResponse { answer?: string; error?: SignalErrorCode; detail?: string; }\n';
-protocolCs +=
-  '\npublic sealed record SignalResponse {\n  [JsonPropertyName("answer")] public string? Answer { get; init; }\n  [JsonPropertyName("error")] public string? Error { get; init; }\n  [JsonPropertyName("detail")] public string? Detail { get; init; }\n}\n';
 const signalErrors = signalSchema.$defs.SignalError.enum;
 protocolGo += `\ntype SignalErrorCode string\n\nconst (\n${signalErrors
   .map(
@@ -448,10 +448,10 @@ protocolGo += `\ntype SignalErrorCode string\n\nconst (\n${signalErrors
   )
   .join('\n')}\n)\n`;
 protocolTs += `\nexport type SignalErrorCode = ${signalErrors.map(JSON.stringify).join(' | ')};\n`;
-protocolCs += `\npublic enum SignalErrorCode {\n${signalErrors
+protocolCs += `\n[JsonConverter(typeof(JsonStringEnumConverter<SignalErrorCode>))]\npublic enum SignalErrorCode {\n${signalErrors
   .map(
     (value) =>
-      `  ${value
+      `  [JsonStringEnumMemberName(${JSON.stringify(value)})]\n  ${value
         .split('_')
         .map((part) => part[0].toUpperCase() + part.slice(1))
         .join('')}`,

@@ -41,10 +41,23 @@ export const WireTypeAnnotations = "annotations" as const;
 export const WireTypeError = "error" as const;
 
 export interface SignalRequest {
-  key: string;
+  nonce: string;
+  payload: string;
+}
+
+export interface SignalResponse {
+  nonce: string;
+  payload: string;
+}
+
+export interface SignalPayloadRequest {
   offer: string;
 }
 
-export interface SignalResponse { answer?: string; error?: SignalErrorCode; detail?: string; }
+export interface SignalPayloadResponse {
+  answer?: string;
+  error?: SignalErrorCode;
+  detail?: string;
+}
 
 export type SignalErrorCode = "multiplayer_signal_invalid" | "multiplayer_key_invalid" | "multiplayer_room_full" | "multiplayer_share_invalid" | "multiplayer_connection_failed" | "multiplayer_signaling_timeout" | "multiplayer_stun_failed";

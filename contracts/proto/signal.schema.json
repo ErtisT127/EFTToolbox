@@ -6,10 +6,20 @@
     "SignalRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["key", "offer"],
+      "required": ["nonce", "payload"],
       "properties": {
-        "key": { "type": "string", "maxLength": 256 },
-        "offer": { "type": "string", "minLength": 1, "maxLength": 1048576 }
+        "nonce": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "minLength": 16,
+          "maxLength": 16
+        },
+        "payload": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "minLength": 1,
+          "maxLength": 2097152
+        }
       }
     },
     "SignalError": {
@@ -25,24 +35,40 @@
       ]
     },
     "SignalResponse": {
-      "oneOf": [
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["answer"],
-          "properties": { "answer": { "type": "string", "minLength": 1, "maxLength": 1048576 } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nonce", "payload"],
+      "properties": {
+        "nonce": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "minLength": 16,
+          "maxLength": 16
         },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["error"],
-          "properties": {
-            "answer": { "type": "string", "maxLength": 1048576 },
-            "error": { "$ref": "#/$defs/SignalError" },
-            "detail": { "type": "string", "maxLength": 4096 }
-          }
+        "payload": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "minLength": 1,
+          "maxLength": 2097152
         }
-      ]
+      }
+    },
+    "SignalPayloadRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offer"],
+      "properties": {
+        "offer": { "type": "string", "minLength": 1, "maxLength": 1048576 }
+      }
+    },
+    "SignalPayloadResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "answer": { "type": "string", "minLength": 1, "maxLength": 1048576 },
+        "error": { "$ref": "#/$defs/SignalError" },
+        "detail": { "type": "string", "maxLength": 4096 }
+      }
     }
   }
 }

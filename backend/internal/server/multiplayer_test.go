@@ -20,6 +20,7 @@ import (
 	contracts "efttoolbox/contracts"
 
 	"github.com/pion/stun/v4"
+	"github.com/pion/webrtc/v4"
 )
 
 // multiplayerFixture assembles the same wiring as New() for one machine without touching the
@@ -177,66 +178,76 @@ func TestSignalRequestValidation(t *testing.T) {
 	newListener := func(capacity bool, accept func(string) (string, *apiFailure)) *signalListener {
 		return &signalListener{key: "roomkey123", capacity: func() bool { return capacity }, accept: accept}
 	}
-	call := func(s *signalListener, body string) *httptest.ResponseRecorder {
+	call := func(s *signalListener, envelope any) *httptest.ResponseRecorder {
 		response := httptest.NewRecorder()
-		request := httptest.NewRequest(http.MethodPost, "/signal", strings.NewReader(body))
+		body, _ := json.Marshal(envelope)
+		request := httptest.NewRequest(http.MethodPost, "/signal", bytes.NewReader(body))
 		s.handleSignal(response, request)
 		return response
 	}
-	decode := func(t *testing.T, response *httptest.ResponseRecorder) signalResponse {
+	decode := func(t *testing.T, response *httptest.ResponseRecorder, key string) contracts.SignalPayloadResponse {
 		t.Helper()
-		var body signalResponse
-		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		var envelope signalResponse
+		if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
 			t.Fatalf("signal response body: %s", response.Body.String())
 		}
-		return body
+		var payload contracts.SignalPayloadResponse
+		if err := openSignal(key, envelope.Nonce, envelope.Payload, &payload); err != nil {
+			t.Fatalf("open signal response: %v", err)
+		}
+		return payload
 	}
 
 	accepting := newListener(true, func(offer string) (string, *apiFailure) { return "answer:" + offer, nil })
-	response := call(accepting, `{"offer":"offer-sdp","key":"roomkey123"}`)
+	request, _ := sealSignal("roomkey123", contracts.SignalPayloadRequest{Offer: "offer-sdp"})
+	response := call(accepting, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("valid signal rejected: %d %s", response.Code, response.Body.String())
 	}
-	if body := decode(t, response); body.Answer != "answer:offer-sdp" {
+	if body := decode(t, response, "roomkey123"); body.Answer != "answer:offer-sdp" {
 		t.Fatalf("signal answer mismatch: %+v", body)
 	}
 
-	for _, tc := range []struct {
-		name string
-		body string
-		code int
-		want string
-	}{
-		{"broken json", `{"offer"`, http.StatusBadRequest, string(contracts.SignalErrorMultiplayerSignalInvalid)},
-		{"missing offer", `{"key":"roomkey123"}`, http.StatusBadRequest, string(contracts.SignalErrorMultiplayerSignalInvalid)},
-		{"wrong key", `{"offer":"offer-sdp","key":"badkey"}`, http.StatusForbidden, string(contracts.SignalErrorMultiplayerKeyInvalid)},
-	} {
-		response := call(accepting, tc.body)
-		if response.Code != tc.code {
-			t.Fatalf("%s: status %d, want %d", tc.name, response.Code, tc.code)
-		}
-		if body := decode(t, response); body.Error != tc.want {
-			t.Fatalf("%s: error %q, want %q", tc.name, body.Error, tc.want)
-		}
+	response = call(accepting, map[string]string{"nonce": "bad", "payload": "bad"})
+	if response.Code != http.StatusBadRequest || decode(t, response, "roomkey123").Error != contracts.SignalErrorMultiplayerSignalInvalid {
+		t.Fatalf("malformed envelope response: %d %s", response.Code, response.Body.String())
+	}
+	missingOffer, _ := sealSignal("roomkey123", contracts.SignalPayloadRequest{})
+	response = call(accepting, missingOffer)
+	if response.Code != http.StatusBadRequest || decode(t, response, "roomkey123").Error != contracts.SignalErrorMultiplayerSignalInvalid {
+		t.Fatalf("missing offer response: %d %s", response.Code, response.Body.String())
+	}
+	wrongKey, _ := sealSignal("badkey", contracts.SignalPayloadRequest{Offer: "offer-sdp"})
+	response = call(accepting, wrongKey)
+	var wrongKeyReply signalResponse
+	if json.Unmarshal(response.Body.Bytes(), &wrongKeyReply) != nil || response.Code != http.StatusForbidden {
+		t.Fatalf("wrong key response: %d %s", response.Code, response.Body.String())
+	}
+	var invalidKey contracts.SignalPayloadResponse
+	if err := openSignal("badkey", wrongKeyReply.Nonce, wrongKeyReply.Payload, &invalidKey); err == nil {
+		t.Fatal("wrong-key caller decrypted host response")
+	}
+	if body := decode(t, response, "roomkey123"); body.Error != contracts.SignalErrorMultiplayerKeyInvalid {
+		t.Fatalf("wrong-key error: %+v", body)
 	}
 
 	full := newListener(false, func(string) (string, *apiFailure) { return "", nil })
-	response = call(full, `{"offer":"offer-sdp","key":"roomkey123"}`)
+	response = call(full, request)
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("full room: status %d, want 503", response.Code)
 	}
-	if body := decode(t, response); body.Error != string(contracts.SignalErrorMultiplayerRoomFull) {
+	if body := decode(t, response, "roomkey123"); body.Error != contracts.SignalErrorMultiplayerRoomFull {
 		t.Fatalf("full room: error %q", body.Error)
 	}
 
 	failing := newListener(true, func(string) (string, *apiFailure) {
 		return "", failDetail(http.StatusForbidden, "multiplayer_key_invalid", "detail-x")
 	})
-	response = call(failing, `{"offer":"offer-sdp","key":"roomkey123"}`)
+	response = call(failing, request)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("accept failure: status %d, want 403", response.Code)
 	}
-	if body := decode(t, response); body.Error != string(contracts.SignalErrorMultiplayerKeyInvalid) || body.Detail != "detail-x" {
+	if body := decode(t, response, "roomkey123"); body.Error != contracts.SignalErrorMultiplayerKeyInvalid || body.Detail != "detail-x" {
 		t.Fatalf("accept failure: %+v", body)
 	}
 }
@@ -244,25 +255,27 @@ func TestSignalRequestValidation(t *testing.T) {
 // TestStunSignalValidation covers the STUN-mode UDP signaler, which consumes the same
 // signalRequest schema over datagrams and replies with the same signalResponse codes.
 func TestStunSignalValidation(t *testing.T) {
-	listenerConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if err != nil {
-		t.Fatal(err)
+	stunServer := fakeStunServer(t, func(from *net.UDPAddr) *net.UDPAddr { return from })
+	signaler, mapped, failure := bindStunSignaling(stunServer)
+	if failure != nil {
+		t.Fatalf("bind stun signaler: %+v", failure)
 	}
 	var accepted atomic.Bool
-	listener := newStunListener(listenerConn, "roomkey123", func() bool { return true }, func(offer string) (string, *apiFailure) {
+	listener := newStunListener(signaler, "roomkey123", func() bool { return true }, func(offer string) (string, *apiFailure) {
 		accepted.Store(true)
 		return "answer:" + offer, nil
 	})
 	t.Cleanup(listener.close)
 
-	client, err := net.DialUDP("udp", nil, listenerConn.LocalAddr().(*net.UDPAddr))
+	client, err := net.DialUDP("udp", nil, mapped)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	exchange := func(t *testing.T, payload string) string {
+	exchange := func(t *testing.T, envelope signalRequest) contracts.SignalPayloadResponse {
 		t.Helper()
-		if _, err := client.Write([]byte(payload)); err != nil {
+		body, _ := json.Marshal(envelope)
+		if _, err := client.Write(body); err != nil {
 			t.Fatal(err)
 		}
 		buffer := make([]byte, 4096)
@@ -273,37 +286,173 @@ func TestStunSignalValidation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("no datagram reply: %v", err)
 		}
-		return string(buffer[:n])
-	}
-	var decode struct {
-		Answer string `json:"answer"`
-		Error  string `json:"error"`
+		var response signalResponse
+		if err := json.Unmarshal(buffer[:n], &response); err != nil {
+			t.Fatalf("invalid response envelope: %s", buffer[:n])
+		}
+		var payload contracts.SignalPayloadResponse
+		if err := openSignal("roomkey123", response.Nonce, response.Payload, &payload); err != nil {
+			t.Fatalf("cannot open response: %v", err)
+		}
+		return payload
 	}
 
-	// Broken JSON is dropped silently, so the next valid exchange must still succeed.
-	if _, err := client.Write([]byte(`{"offer"`)); err != nil {
+	if payload := exchange(t, signalRequest{Nonce: "bad", Payload: "bad"}); payload.Error != contracts.SignalErrorMultiplayerSignalInvalid {
+		t.Fatalf("malformed envelope response: %+v", payload)
+	}
+	request, _ := sealSignal("roomkey123", contracts.SignalPayloadRequest{Offer: "offer-sdp"})
+	if payload := exchange(t, request); payload.Answer != "answer:offer-sdp" || !accepted.Load() {
+		t.Fatalf("valid stun signal: %+v", payload)
+	}
+	wrongKey, _ := sealSignal("badkey", contracts.SignalPayloadRequest{Offer: "offer-sdp"})
+	body, _ := json.Marshal(wrongKey)
+	if _, err := client.Write(body); err != nil {
 		t.Fatal(err)
 	}
-	if reply := exchange(t, `{"offer":"offer-sdp","key":"roomkey123"}`); json.Unmarshal([]byte(reply), &decode) != nil || decode.Answer != "answer:offer-sdp" || !accepted.Load() {
-		t.Fatalf("valid stun signal: %s", reply)
+	buffer := make([]byte, 4096)
+	if err := client.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
 	}
-
-	if reply := exchange(t, `{"offer":"offer-sdp","key":"badkey"}`); json.Unmarshal([]byte(reply), &decode) != nil || decode.Error != string(contracts.SignalErrorMultiplayerKeyInvalid) {
-		t.Fatalf("stun wrong key: %s", reply)
+	n, err := client.Read(buffer)
+	if err != nil {
+		t.Fatalf("no wrong-key reply: %v", err)
+	}
+	var response signalResponse
+	if err := json.Unmarshal(buffer[:n], &response); err != nil {
+		t.Fatalf("invalid wrong-key response: %s", buffer[:n])
+	}
+	var invalidKey contracts.SignalPayloadResponse
+	if err := openSignal("badkey", response.Nonce, response.Payload, &invalidKey); err == nil {
+		t.Fatal("wrong-key caller decrypted response")
+	}
+	if _, failure := signalStun(mapped.String(), "badkey", "offer-sdp"); failure == nil || failure.code != "multiplayer_key_invalid" {
+		t.Fatalf("wrong-key join failure: %+v", failure)
+	}
+	if _, failure := signalStun(mapped.String(), "roomkey123", strings.Repeat("x", 50<<10)); failure == nil || failure.code != "multiplayer_signal_invalid" {
+		t.Fatalf("oversized STUN offer failure: %+v", failure)
 	}
 }
 
-// TestStunListenerOutlivesProbeDeadline locks the fix for the stale read deadline: the STUN
-// probe bounds its exchange with a 3s deadline on the signaling socket, and the listener that
-// reuses the same socket must read without it, or the room stops answering joins after 3s.
+func TestStunKeepaliveRefreshesMapping(t *testing.T) {
+	oldInterval := stunKeepaliveInterval
+	stunKeepaliveInterval = 20 * time.Millisecond
+	defer func() { stunKeepaliveInterval = oldInterval }()
+	requests := make(chan struct{}, 8)
+	stunServer := fakeStunServerObserved(t, "udp", net.IPv4(127, 0, 0, 1), func(from *net.UDPAddr) *net.UDPAddr { return from }, func() {
+		requests <- struct{}{}
+	})
+	signaler, _, failure := bindStunSignaling(stunServer)
+	if failure != nil {
+		t.Fatalf("bind stun signaler: %+v", failure)
+	}
+	select {
+	case <-requests: // initial mapping probe
+	case <-time.After(time.Second):
+		t.Fatal("initial BindingRequest was not received")
+	}
+	listener := newStunListener(signaler, "roomkey123", func() bool { return true }, func(string) (string, *apiFailure) { return "", nil })
+	for range 2 {
+		select {
+		case <-requests:
+		case <-time.After(time.Second):
+			listener.close()
+			t.Fatal("keepalive BindingRequest was not received")
+		}
+	}
+	closed := make(chan struct{})
+	go func() { listener.close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("stun signaler close blocked")
+	}
+}
+
+func TestJoiningPeerTimeout(t *testing.T) {
+	oldTimeout := joinTimeout
+	joinTimeout = 100 * time.Millisecond
+	defer func() { joinTimeout = oldTimeout }()
+	_, _, _, manager := multiplayerFixture(t)
+	manager.mu.Lock()
+	manager.role = multiplayerRoleHost
+	manager.mode = multiplayerModeCustom
+	manager.mu.Unlock()
+	guest, err := manager.newPeerConnection(multiplayerModeCustom, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = guest.Close() }()
+	ordered := true
+	if _, err := guest.CreateDataChannel("ctl", &webrtc.DataChannelInit{Ordered: &ordered}); err != nil {
+		t.Fatal(err)
+	}
+	unordered := false
+	if _, err := guest.CreateDataChannel("pos", &webrtc.DataChannelInit{Ordered: &unordered}); err != nil {
+		t.Fatal(err)
+	}
+	offer, err := guest.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gathered := webrtc.GatheringCompletePromise(guest)
+	if err := guest.SetLocalDescription(offer); err != nil {
+		t.Fatal(err)
+	}
+	<-gathered
+	if _, failure := manager.acceptGuest(guest.LocalDescription().SDP); failure != nil {
+		t.Fatalf("accept offer: %+v", failure)
+	}
+	waitFor(t, time.Second, func() bool {
+		manager.mu.Lock()
+		defer manager.mu.Unlock()
+		return len(manager.joining) == 0
+	})
+}
+
+func TestJoiningPeerTimeoutRejectsLateHello(t *testing.T) {
+	_, _, _, manager := multiplayerFixture(t)
+	manager.mu.Lock()
+	manager.role = multiplayerRoleHost
+	peer := &multiplayerPeer{id: "0123456789abcdef"}
+	manager.joining[peer] = true
+	manager.mu.Unlock()
+
+	manager.dropPeerIf("", "join_timeout", peer)
+	manager.handleHello(peer, mustJSON(wireHello{PeerId: peer.id, Name: "late", Color: "#123456"}))
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if len(manager.peers) != 0 || len(manager.joining) != 0 {
+		t.Fatalf("late hello restored timed-out peer: peers=%d joining=%d", len(manager.peers), len(manager.joining))
+	}
+}
+
+func TestPeerRoundTripTimeUsesSelectedCandidatePair(t *testing.T) {
+	report := webrtc.StatsReport{
+		"pair": webrtc.ICECandidatePairStats{
+			State:                webrtc.StatsICECandidatePairStateSucceeded,
+			Nominated:            true,
+			CurrentRoundTripTime: 0.127,
+		},
+	}
+	rtt, ok := peerRoundTripTime(report)
+	if !ok || rtt != 127*time.Millisecond {
+		t.Fatalf("peer RTT = %v, %v; want 127ms", rtt, ok)
+	}
+	if _, ok := peerRoundTripTime(webrtc.StatsReport{"transport": webrtc.TransportStats{}}); ok {
+		t.Fatal("missing selected candidate pair returned an RTT")
+	}
+}
+
+// TestStunListenerOutlivesProbeDeadline confirms the signaling path remains live after the
+// initial mapping probe has completed on the shared UDP socket.
 func TestStunListenerOutlivesProbeDeadline(t *testing.T) {
 	stunServer := fakeStunServer(t, func(from *net.UDPAddr) *net.UDPAddr { return from })
-	conn, mapped, failure := bindStunSignaling(stunServer)
+	signaler, mapped, failure := bindStunSignaling(stunServer)
 	if failure != nil {
 		t.Fatalf("bind stun signaling: %+v", failure)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
-	listener := newStunListener(conn, "roomkey123", func() bool { return true }, func(offer string) (string, *apiFailure) {
+	listener := newStunListener(signaler, "roomkey123", func() bool { return true }, func(offer string) (string, *apiFailure) {
 		return "answer:" + offer, nil
 	})
 	t.Cleanup(listener.close)
@@ -314,7 +463,9 @@ func TestStunListenerOutlivesProbeDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	if _, err := client.Write([]byte(`{"offer":"offer-sdp","key":"roomkey123"}`)); err != nil {
+	request, _ := sealSignal("roomkey123", contracts.SignalPayloadRequest{Offer: "offer-sdp"})
+	body, _ := json.Marshal(request)
+	if _, err := client.Write(body); err != nil {
 		t.Fatal(err)
 	}
 	buffer := make([]byte, 4096)
@@ -325,10 +476,9 @@ func TestStunListenerOutlivesProbeDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no stun signal reply after probe deadline: %v", err)
 	}
-	var decode struct {
-		Answer string `json:"answer"`
-	}
-	if json.Unmarshal(buffer[:n], &decode) != nil || decode.Answer != "answer:offer-sdp" {
+	var response signalResponse
+	var decode contracts.SignalPayloadResponse
+	if json.Unmarshal(buffer[:n], &response) != nil || openSignal("roomkey123", response.Nonce, response.Payload, &decode) != nil || decode.Answer != "answer:offer-sdp" {
 		t.Fatalf("unexpected stun signal reply: %s", buffer[:n])
 	}
 }
@@ -477,15 +627,14 @@ func TestHeartbeatWindow(t *testing.T) {
 // address, the mapping comes back as ::1, and signalStun reaches the listener on the same family.
 func TestStunSignalingIPv6(t *testing.T) {
 	stunServer := fakeStunServerOn(t, "udp6", net.ParseIP("::1"), func(from *net.UDPAddr) *net.UDPAddr { return from })
-	conn, mapped, failure := bindStunSignaling(stunServer)
+	signaler, mapped, failure := bindStunSignaling(stunServer)
 	if failure != nil {
 		t.Skipf("IPv6 loopback STUN unavailable: %+v", failure)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
 	if mapped.IP.To4() != nil {
 		t.Fatalf("STUN mapping is not IPv6: %v", mapped)
 	}
-	listener := newStunListener(conn, "roomkey123", func() bool { return true }, func(offer string) (string, *apiFailure) {
+	listener := newStunListener(signaler, "roomkey123", func() bool { return true }, func(offer string) (string, *apiFailure) {
 		return "answer:" + offer, nil
 	})
 	t.Cleanup(listener.close)
@@ -532,10 +681,15 @@ func TestHostJoinLoopbackIPv6(t *testing.T) {
 
 func fakeStunServer(t *testing.T, mapped func(from *net.UDPAddr) *net.UDPAddr) string {
 	t.Helper()
-	return fakeStunServerOn(t, "udp", net.IPv4(127, 0, 0, 1), mapped)
+	return fakeStunServerObserved(t, "udp", net.IPv4(127, 0, 0, 1), mapped, nil)
 }
 
 func fakeStunServerOn(t *testing.T, network string, ip net.IP, mapped func(from *net.UDPAddr) *net.UDPAddr) string {
+	t.Helper()
+	return fakeStunServerObserved(t, network, ip, mapped, nil)
+}
+
+func fakeStunServerObserved(t *testing.T, network string, ip net.IP, mapped func(from *net.UDPAddr) *net.UDPAddr, onRequest func()) string {
 	t.Helper()
 	conn, err := net.ListenUDP(network, &net.UDPAddr{IP: ip})
 	if err != nil {
@@ -552,6 +706,9 @@ func fakeStunServerOn(t *testing.T, network string, ip net.IP, mapped func(from 
 			message := &stun.Message{Raw: append([]byte(nil), buffer[:n]...)}
 			if message.Decode() != nil || message.Type != stun.BindingRequest {
 				continue
+			}
+			if onRequest != nil {
+				onRequest()
 			}
 			source := mapped(from)
 			// Echo the request's transaction id: the probe matches on it.

@@ -34,6 +34,8 @@ export type ToolOptions = {
   textSize: number;
   eraserSize: number;
 };
+const BRUSH_SAMPLE_DISTANCE = 4;
+const BRUSH_FILTER_ALPHA = 0.65;
 type Props = {
   data: MapData;
   preference: MapPreference;
@@ -252,6 +254,7 @@ export function MapCanvas(props: Props) {
       pointerId: number;
       last: L.Point;
       accepted: L.Point;
+      filtered: L.Point;
     };
     let gesture: Gesture | null = null;
     let brushFrame = 0;
@@ -278,6 +281,23 @@ export function MapCanvas(props: Props) {
       brushFrame = 0;
       brushPreview = null;
     }
+    const appendBrushSample = (g: Gesture, sample: PointerEvent) => {
+      const position = eventPixel(sample);
+      // Keep only meaningful screen movement; this also caps render work for coalesced input.
+      g.filtered = L.point(
+        g.filtered.x + (position.x - g.filtered.x) * BRUSH_FILTER_ALPHA,
+        g.filtered.y + (position.y - g.filtered.y) * BRUSH_FILTER_ALPHA,
+      );
+      if (g.accepted.distanceTo(g.filtered) >= BRUSH_SAMPLE_DISTANCE) {
+        g.points.push(toPoint(g.filtered));
+        g.accepted = g.filtered;
+      }
+    };
+    const appendBrushSamples = (g: Gesture, event: PointerEvent) => {
+      const samples = event.getCoalescedEvents?.();
+      if (samples?.length) for (const sample of samples) appendBrushSample(g, sample);
+      appendBrushSample(g, event);
+    };
     let builtinClick = false;
     const readOnlyTooltip = L.tooltip({ direction: 'top', offset: [0, -12] });
     let pinnedAnnotationId: string | null = null;
@@ -367,6 +387,7 @@ export function MapCanvas(props: Props) {
         pointerId: event.pointerId,
         last: pixel,
         accepted: pixel,
+        filtered: pixel,
       };
       if (
         gesture.builtin === null ||
@@ -394,14 +415,7 @@ export function MapCanvas(props: Props) {
         host.classList.add('panning');
       if (g.kind === 'pan') map.panBy(g.last.subtract(pixel), { animate: false });
       if (g.kind === 'brush') {
-        const samples = event.getCoalescedEvents?.();
-        for (const sample of samples?.length ? samples : [event]) {
-          const position = eventPixel(sample);
-          if (g.accepted.distanceTo(position) >= 2) {
-            g.points.push(toPoint(position));
-            g.accepted = position;
-          }
-        }
+        appendBrushSamples(g, event);
         if (!brushFrame)
           brushFrame = requestAnimationFrame(() => {
             brushFrame = 0;
@@ -409,6 +423,7 @@ export function MapCanvas(props: Props) {
             brushPreview ??= L.polyline([], {
               color: current.current.options.color,
               weight: current.current.options.width,
+              smoothFactor: 1,
               interactive: false,
             }).addTo(preview);
             brushPreview.setLatLngs(g.points.map(latLng));
@@ -438,8 +453,12 @@ export function MapCanvas(props: Props) {
       const g = gesture;
       if (!g) return;
       if (!cancel && g.kind === 'brush') {
-        const endpoint = eventPixel(event);
-        if (g.accepted.distanceTo(endpoint) > 0) g.points.push(toPoint(endpoint));
+        appendBrushSamples(g, event);
+        const endpointPixel = eventPixel(event);
+        const endpoint = toPoint(endpointPixel);
+        if (g.points.length === 1) {
+          if (g.start.distanceTo(endpointPixel) > 0) g.points.push(endpoint);
+        } else g.points[g.points.length - 1] = endpoint;
       }
       clearBrush();
       cancelDragPaint();

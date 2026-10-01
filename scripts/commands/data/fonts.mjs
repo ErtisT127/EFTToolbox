@@ -16,12 +16,13 @@ if (process.argv.includes('--check')) {
   process.exit(0);
 }
 const fonts = path.join(assets, 'display', 'fonts');
-const emoji = path.join(assets, 'display', 'emoji');
 const licenses = path.join(assets, 'licenses');
 const cache = path.join(root, 'build/tools/font-sources');
-await Promise.all([fonts, emoji, licenses, cache].map((dir) => mkdir(dir, { recursive: true })));
+await Promise.all([fonts, licenses, cache].map((dir) => mkdir(dir, { recursive: true })));
 const revision = 'f2bd09badbc763d8757951d52deec29da27e85fb';
 const base = `https://raw.githubusercontent.com/google/fonts/${revision}/ofl/`;
+const notoEmojiRevision = '1ffdd21391dd1f25c081fa93a9dea0c7c029442b';
+const notoEmojiBase = `https://raw.githubusercontent.com/googlefonts/noto-emoji/${notoEmojiRevision}/`;
 const records = [];
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 async function source(url) {
@@ -90,23 +91,59 @@ for (const [family, filename, name, weights] of [
     console.log(`Prepared ${file}`);
   }
 }
-const twemoji = 'https://raw.githubusercontent.com/twitter/twemoji/v14.0.2/';
-await save(
-  'licenses/twemoji-LICENSE-GRAPHICS',
-  await source(twemoji + 'LICENSE-GRAPHICS'),
-  twemoji + 'LICENSE-GRAPHICS',
-  'CC-BY 4.0',
-);
 const display = JSON.parse(await readFile(path.join(root, 'contracts/map-display.json'), 'utf8'));
-for (const code of new Set(Object.values(display.emoji))) {
-  const url = twemoji + `assets/72x72/${code}.png`;
+const emojiFontUrl = notoEmojiBase + '2D/fonts/NotoColorEmoji_WindowsCompatible.ttf';
+const emojiLicenseUrl = notoEmojiBase + '2D/fonts/LICENSE';
+const emojiLicense = 'licenses/noto-emoji-OFL.txt';
+await save(emojiLicense, await source(emojiLicenseUrl), emojiLicenseUrl, 'SIL OFL 1.1');
+const emojiBytes = await source(emojiFontUrl);
+const emojiInput = path.join(cache, 'NotoColorEmoji_WindowsCompatible.ttf');
+const emojiTtf = path.join(fonts, 'noto-color-emoji.ttf');
+await writeFile(emojiInput, emojiBytes);
+const unicodes = new Set([0xfe0f]);
+for (const emoji of Object.keys(display.emoji))
+  for (const character of emoji) unicodes.add(character.codePointAt(0));
+const unicodeArg = [...unicodes].map((code) => `U+${code.toString(16).toUpperCase()}`).join(',');
+execFileSync(
+  'uv',
+  [
+    'run',
+    '--managed-python',
+    '--python',
+    '3.13',
+    '--with',
+    'fonttools==4.60.1',
+    '--no-project',
+    'pyftsubset',
+    emojiInput,
+    `--output-file=${emojiTtf}`,
+    `--unicodes=${unicodeArg}`,
+  ],
+  { stdio: 'inherit', windowsHide: true },
+);
+const emojiSubset = await readFile(emojiTtf);
+await save(
+  'display/fonts/noto-color-emoji.ttf',
+  emojiSubset,
+  emojiFontUrl,
+  emojiLicense,
+  hash(emojiBytes),
+);
+await rm(path.join(fonts, 'noto-color-emoji.woff2'), { force: true });
+try {
   await save(
-    `display/emoji/emoji-${code}.png`,
-    await source(url),
-    url,
-    'licenses/twemoji-LICENSE-GRAPHICS',
+    'display/fonts/noto-color-emoji.woff2',
+    Buffer.from(await wawoff2.compress(emojiSubset)),
+    emojiFontUrl,
+    emojiLicense,
+    hash(emojiBytes),
   );
+} catch (error) {
+  console.warn(`Skipping WOFF2 conversion for CBDT emoji font: ${error.message}`);
 }
+await rm(path.join(assets, 'display', 'emoji'), { recursive: true, force: true });
+await rm(path.join(assets, 'licenses', 'twemoji-LICENSE-GRAPHICS'), { force: true });
+console.log('Prepared noto-color-emoji');
 // Obsolete generated files with no verified distribution provenance must not ship. The first
 // group predates the display/ namespace: their contents now live under display/fonts/, and the
 // verify walker rejects any font file the manifest does not list, so the stale copies go.
@@ -138,7 +175,7 @@ await writeFile(
     {
       version: 1,
       googleFontsRevision: revision,
-      twemojiVersion: '14.0.2',
+      notoEmojiRevision,
       files: [...new Map(records.map((r) => [r.file, r])).values()],
     },
     null,

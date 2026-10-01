@@ -214,45 +214,6 @@ func probeStunServers(servers []string) contracts.StunProbeResults {
 	return contracts.StunProbeResults{Results: results}
 }
 
-// stunMappedAddr asks a STUN server for this socket's public mapping (used by the host's STUN
-// signaling socket to advertise itself).
-func stunMappedAddr(conn *net.UDPConn, server string, timeout time.Duration) (*net.UDPAddr, error) {
-	host, port, err := splitStunAddress(server)
-	if err != nil {
-		return nil, err
-	}
-	raddr, err := net.ResolveUDPAddr(stunNetwork(server), net.JoinHostPort(host, port))
-	if err != nil {
-		return nil, err
-	}
-	request := stun.MustBuild(stun.TransactionID, stun.BindingRequest)
-	if _, err := conn.WriteToUDP(request.Raw, raddr); err != nil {
-		return nil, err
-	}
-	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-		return nil, err
-	}
-	buffer := make([]byte, 1500)
-	for {
-		n, _, err := conn.ReadFromUDP(buffer)
-		if err != nil {
-			return nil, err
-		}
-		response := &stun.Message{Raw: buffer[:n]}
-		if err := response.Decode(); err != nil {
-			continue
-		}
-		if response.TransactionID != request.TransactionID {
-			continue
-		}
-		var mapped stun.XORMappedAddress
-		if err := mapped.GetFrom(response); err != nil {
-			return nil, err
-		}
-		return &net.UDPAddr{IP: mapped.IP, Port: mapped.Port}, nil
-	}
-}
-
 // natCheck compares this socket's mapping at two different servers: identical means the mapping
 // does not depend on the remote endpoint (cone), differing means symmetric, where hole punching
 // without a relay cannot work. The peers come from the cached/static NAT-testing list.

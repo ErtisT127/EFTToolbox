@@ -43,14 +43,23 @@ const WireTypeAnnotations = "annotations"
 const WireTypeError = "error"
 
 type SignalRequest struct {
-	Key   string `json:"key"`
-	Offer string `json:"offer"`
+	Nonce   string `json:"nonce"`
+	Payload string `json:"payload"`
 }
 
 type SignalResponse struct {
-	Answer string `json:"answer,omitempty"`
-	Error  string `json:"error,omitempty"`
-	Detail string `json:"detail,omitempty"`
+	Nonce   string `json:"nonce"`
+	Payload string `json:"payload"`
+}
+
+type SignalPayloadRequest struct {
+	Offer string `json:"offer"`
+}
+
+type SignalPayloadResponse struct {
+	Answer string          `json:"answer,omitempty"`
+	Error  SignalErrorCode `json:"error,omitempty"`
+	Detail string          `json:"detail,omitempty"`
 }
 
 type SignalErrorCode string

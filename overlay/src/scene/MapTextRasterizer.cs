@@ -16,6 +16,7 @@ internal sealed record MapText(string Text, string Role, float Size, float Width
 internal sealed class MapTextRasterizer : IDisposable
 {
     private readonly Dictionary<string, (DateTime Stamp, SKTypeface Face)> faces = new();
+    private readonly Dictionary<int, SKTypeface> fallbackFaces = new();
     internal RasterizedSvg Rasterize(string root, MapText request)
     {
         lock (faces)
@@ -42,13 +43,43 @@ internal sealed class MapTextRasterizer : IDisposable
             };
             using var latin = new SKPaint { Typeface = Face(latinFace), TextSize = request.Size * request.Dpi, IsAntialias = true, Color = SKColor.Parse(request.Color) };
             using var cjk = new SKPaint { Typeface = Face(bold ? MapDisplay.CjkBoldFont : MapDisplay.CjkRegularFont), TextSize = latin.TextSize, IsAntialias = true, Color = latin.Color };
+            using var emoji = new SKPaint { Typeface = Face(MapDisplay.EmojiFont), TextSize = latin.TextSize, IsAntialias = true, Color = latin.Color };
             using var latinFont = new SKFont(latin.Typeface, latin.TextSize);
+            using var cjkFont = new SKFont(cjk.Typeface, cjk.TextSize);
+            using var emojiFont = new SKFont(emoji.Typeface, emoji.TextSize);
+            var fallbackPaints = new Dictionary<int, SKPaint>();
+            try
+            {
             IEnumerable<(string Text, SKPaint Paint)> Runs(string text)
             {
                 var buffer = new StringBuilder(); SKPaint? previous = null;
                 foreach (var rune in text.EnumerateRunes())
                 {
-                    var paint = latinFont.ContainsGlyph(rune.Value) ? latin : cjk;
+                    if (rune.Value == 0xfe0f && previous is not null)
+                    {
+                        buffer.Append(rune);
+                        continue;
+                    }
+                    SKPaint paint;
+                    if (request.Role == "annotation" && emojiFont.ContainsGlyph(rune.Value)) paint = emoji;
+                    else if (latinFont.ContainsGlyph(rune.Value)) paint = latin;
+                    else if (emojiFont.ContainsGlyph(rune.Value)) paint = emoji;
+                    else if (cjkFont.ContainsGlyph(rune.Value)) paint = cjk;
+                    else
+                    {
+                        if (!fallbackPaints.TryGetValue(rune.Value, out paint!))
+                        {
+                            if (!fallbackFaces.TryGetValue(rune.Value, out var face))
+                                fallbackFaces[rune.Value] = face = SKFontManager.Default.MatchCharacter(rune.Value);
+                            paint = fallbackPaints[rune.Value] = new SKPaint
+                            {
+                                Typeface = face ?? cjk.Typeface,
+                                TextSize = latin.TextSize,
+                                IsAntialias = true,
+                                Color = latin.Color,
+                            };
+                        }
+                    }
                     if (previous is not null && previous != paint) { yield return (buffer.ToString(), previous); buffer.Clear(); }
                     buffer.Append(rune); previous = paint;
                 }
@@ -118,7 +149,12 @@ internal sealed class MapTextRasterizer : IDisposable
             canvas.Flush();
             var bytes = new byte[bitmap.ByteCount]; Marshal.Copy(bitmap.GetPixels(), bytes, 0, bytes.Length);
             return new(bytes, bitmap.Width, bitmap.Height, bitmap.RowBytes, 0, 0) { DisplaySize = new(width, height) };
+            }
+            finally
+            {
+                foreach (var paint in fallbackPaints.Values) paint.Dispose();
+            }
         }
     }
-    public void Dispose() { lock (faces) { foreach (var face in faces.Values) face.Face.Dispose(); faces.Clear(); } }
+    public void Dispose() { lock (faces) { foreach (var face in faces.Values) face.Face.Dispose(); faces.Clear(); foreach (var face in fallbackFaces.Values) face.Dispose(); fallbackFaces.Clear(); } }
 }

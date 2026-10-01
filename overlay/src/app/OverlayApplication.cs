@@ -260,11 +260,19 @@ internal sealed class OverlayApplication : IDisposable
                     await client.PostRecognitionStartedAsync(run.RequestId, run.Token);
                 }
                 finally { recognitionStart.Release(); }
-                using var bitmap = new System.Drawing.Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
-                using (var graphics = System.Drawing.Graphics.FromImage(bitmap)) graphics.CopyFromScreen(left, top, 0, 0, bitmap.Size);
-                using var stream = new MemoryStream(); bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
-                var image = "data:image/png;base64," + Convert.ToBase64String(stream.ToArray());
-                await RunRecognition(run, image);
+                var bitmap = HdrScreenCapture.TryCapture(new System.Drawing.Rectangle(left, top, width, height));
+                if (bitmap is null)
+                {
+                    bitmap = new System.Drawing.Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+                    using var graphics = System.Drawing.Graphics.FromImage(bitmap);
+                    graphics.CopyFromScreen(left, top, 0, 0, bitmap.Size);
+                }
+                using (bitmap)
+                {
+                    using var stream = new MemoryStream(); bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
+                    var image = "data:image/png;base64," + Convert.ToBase64String(stream.ToArray());
+                    await RunRecognition(run, image);
+                }
             }
             catch (Exception error) { FailRecognition(run, error); }
         });

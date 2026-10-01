@@ -60,6 +60,8 @@ const (
 	heartbeatDropWindow     = 5 * time.Second
 )
 
+var joinTimeout = 15 * time.Second
+
 var regexpPeerID = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 // errAnnotationsInvalid marks a client-caused validation failure inside the multiplayer
@@ -90,9 +92,11 @@ type multiplayerPeer struct {
 	name  string
 	color string
 
-	pc  *webrtc.PeerConnection
-	ctl *webrtc.DataChannel
-	pos *webrtc.DataChannel
+	pc         *webrtc.PeerConnection
+	ctl        *webrtc.DataChannel
+	pos        *webrtc.DataChannel
+	chMu       sync.Mutex
+	joinCancel context.CancelFunc
 
 	lastPong  time.Time
 	misses    int
@@ -105,11 +109,31 @@ type multiplayerPeer struct {
 
 func (p *multiplayerPeer) close() {
 	p.closeOnce.Do(func() {
+		if p.joinCancel != nil {
+			p.joinCancel()
+		}
 		pc := p.pc
 		if pc != nil {
 			go func() { _ = pc.Close() }()
 		}
 	})
+}
+
+func (p *multiplayerPeer) attach(ch *webrtc.DataChannel) {
+	p.chMu.Lock()
+	defer p.chMu.Unlock()
+	switch ch.Label() {
+	case "ctl":
+		p.ctl = ch
+	case "pos":
+		p.pos = ch
+	}
+}
+
+func (p *multiplayerPeer) channels() (*webrtc.DataChannel, *webrtc.DataChannel) {
+	p.chMu.Lock()
+	defer p.chMu.Unlock()
+	return p.ctl, p.pos
 }
 
 // peerRecord is the persisted name/color of every machine this toolbox has shared a room with;
@@ -444,7 +468,7 @@ func (m *multiplayerManager) host(req contracts.MultiplayerHostRequest) (contrac
 
 	var (
 		listener net.Listener
-		udpConn  *net.UDPConn
+		udpConn  *stunSignaler
 		bindIP   net.IP
 		bindPort int
 		mapped   *net.UDPAddr
@@ -469,7 +493,7 @@ func (m *multiplayerManager) host(req contracts.MultiplayerHostRequest) (contrac
 		if lf != nil {
 			return contracts.MultiplayerStatus{}, lf
 		}
-		bindPort = udpConn.LocalAddr().(*net.UDPAddr).Port
+		bindPort = udpConn.conn.LocalAddr().(*net.UDPAddr).Port
 	}
 
 	invite := &contracts.MultiplayerInvite{Key: key, Mode: mode}
@@ -611,7 +635,8 @@ func (m *multiplayerManager) greetHost(peer *multiplayerPeer) {
 		m.mu.Lock()
 		registered := peer.id != ""
 		m.mu.Unlock()
-		if registered || peer.ctl == nil || peer.ctl.ReadyState() != webrtc.DataChannelStateOpen {
+		ctl, _ := peer.channels()
+		if registered || ctl == nil || ctl.ReadyState() != webrtc.DataChannelStateOpen {
 			return
 		}
 		m.sendHello(peer)
@@ -759,12 +784,28 @@ func (m *multiplayerManager) tick() {
 	}
 	now := time.Now()
 	var dropped []string
+	peers := make(map[string]*multiplayerPeer, len(m.peers))
 	for id, peer := range m.peers {
+		peers[id] = peer
 		m.sendPingLocked(peer, now)
 		if peer.evaluateHeartbeat(now) {
 			dropped = append(dropped, id)
 		}
 	}
+	m.mu.Unlock()
+	for id, peer := range peers {
+		if peer.pc == nil {
+			continue
+		}
+		if rtt, ok := peerRoundTripTime(peer.pc.GetStats()); ok {
+			m.mu.Lock()
+			if m.peers[id] == peer {
+				peer.rtt = rtt
+			}
+			m.mu.Unlock()
+		}
+	}
+	m.mu.Lock()
 	var rosterFrame []byte
 	if m.role == multiplayerRoleHost {
 		rosterFrame = mustJSON(wireEnvelope{Type: contracts.WireTypeRoster, Data: mustJSON(wireRoster{Members: m.rosterMembersLocked()})})
@@ -781,10 +822,29 @@ func (m *multiplayerManager) tick() {
 }
 
 func (m *multiplayerManager) sendPingLocked(peer *multiplayerPeer, now time.Time) {
-	if peer.ctl == nil || peer.ctl.ReadyState() != webrtc.DataChannelStateOpen {
+	ctl, _ := peer.channels()
+	if ctl == nil || ctl.ReadyState() != webrtc.DataChannelStateOpen {
 		return
 	}
 	sendWire(peer, mustJSON(wireEnvelope{Type: contracts.WireTypePing, Data: mustJSON(wirePing{T: now.UnixMilli()})}))
+}
+
+func peerRoundTripTime(report webrtc.StatsReport) (time.Duration, bool) {
+	var fallback time.Duration
+	for _, stat := range report {
+		pair, ok := stat.(webrtc.ICECandidatePairStats)
+		if !ok || pair.CurrentRoundTripTime <= 0 || pair.State != webrtc.StatsICECandidatePairStateSucceeded {
+			continue
+		}
+		rtt := time.Duration(pair.CurrentRoundTripTime * float64(time.Second))
+		if pair.Nominated {
+			return rtt, true
+		}
+		if fallback == 0 {
+			fallback = rtt
+		}
+	}
+	return fallback, fallback > 0
 }
 
 // dropPeer removes one peer. For a guest whose peer is the host this ends the whole room, since
@@ -795,21 +855,29 @@ func (m *multiplayerManager) dropPeer(id, reason string) {
 
 func (m *multiplayerManager) dropPeerIf(id, reason string, expected *multiplayerPeer) {
 	m.mu.Lock()
-	peer := m.peers[id]
-	if expected != nil && peer != expected {
-		m.mu.Unlock()
-		return
-	}
-	if peer != nil {
-		delete(m.peers, id)
-	} else {
+	var peer *multiplayerPeer
+	if expected != nil {
+		if m.peers[id] == expected {
+			peer = expected
+			delete(m.peers, id)
+		} else if m.joining[expected] {
+			peer = expected
+			delete(m.joining, expected)
+		} else {
+			m.mu.Unlock()
+			return
+		}
+	} else if peer = m.peers[id]; peer == nil {
 		for candidate := range m.joining {
-			if candidate.id == id && (expected == nil || candidate == expected) {
+			if candidate.id == id {
 				peer = candidate
 				delete(m.joining, candidate)
 				break
 			}
 		}
+	}
+	if expected == nil && peer != nil {
+		delete(m.peers, id)
 	}
 	if peer == nil {
 		m.mu.Unlock()
@@ -1371,9 +1439,10 @@ func mustJSON(value any) json.RawMessage {
 }
 
 func sendWire(peer *multiplayerPeer, data []byte, channels ...string) {
-	channel := peer.ctl
+	ctl, pos := peer.channels()
+	channel := ctl
 	if len(channels) > 0 && channels[0] == "pos" {
-		channel = peer.pos
+		channel = pos
 	}
 	if channel == nil || channel.ReadyState() != webrtc.DataChannelStateOpen {
 		return
@@ -1425,7 +1494,8 @@ func (m *multiplayerManager) broadcastPosExcept(except *multiplayerPeer, frame [
 	}
 	m.mu.Unlock()
 	for _, peer := range peers {
-		if peer.pos != nil && peer.pos.BufferedAmount() > positionBufferLimit {
+		_, pos := peer.channels()
+		if pos != nil && pos.BufferedAmount() > positionBufferLimit {
 			continue
 		}
 		sendWire(peer, frame, "pos")
@@ -1469,6 +1539,9 @@ func (m *multiplayerManager) handleCtlMessage(peer *multiplayerPeer, envelope wi
 			}
 			if peer.id != "" {
 				delete(m.joining, peer)
+				if peer.joinCancel != nil {
+					peer.joinCancel()
+				}
 				m.peers[peer.id] = peer
 				registered = true
 			}
@@ -1518,7 +1591,6 @@ func (m *multiplayerManager) handleCtlMessage(peer *multiplayerPeer, envelope wi
 			return
 		}
 		m.mu.Lock()
-		peer.rtt = time.Since(time.UnixMilli(ping.T))
 		peer.lastPong = time.Now()
 		peer.misses = 0
 		peer.unstable = false
@@ -1544,6 +1616,11 @@ func (m *multiplayerManager) handleHello(peer *multiplayerPeer, data []byte) {
 		m.mu.Unlock()
 		return
 	}
+	if !m.joining[peer] && m.peers[peer.id] != peer {
+		m.mu.Unlock()
+		peer.close()
+		return
+	}
 	previous := m.peers[hello.PeerId]
 	if previous == nil && len(m.peers) >= multiplayerMaxMembers-1 {
 		m.mu.Unlock()
@@ -1557,6 +1634,9 @@ func (m *multiplayerManager) handleHello(peer *multiplayerPeer, data []byte) {
 		previous.close()
 	}
 	delete(m.joining, peer)
+	if peer.joinCancel != nil {
+		peer.joinCancel()
+	}
 	peer.id, peer.name, peer.color = hello.PeerId, hello.Name, hello.Color
 	m.peers[peer.id] = peer
 	m.mu.Unlock()
@@ -1584,16 +1664,17 @@ func (m *multiplayerManager) newPeerConnection(mode, stunServer string) (*webrtc
 
 // wirePeer installs message routing for both channels; frames are JSON envelopes keyed by type.
 func wirePeer(peer *multiplayerPeer, onCtl func(*multiplayerPeer, wireEnvelope), onPos func(*multiplayerPeer, []byte)) {
-	if peer.ctl != nil {
-		peer.ctl.OnMessage(func(msg webrtc.DataChannelMessage) {
+	ctl, pos := peer.channels()
+	if ctl != nil {
+		ctl.OnMessage(func(msg webrtc.DataChannelMessage) {
 			var envelope wireEnvelope
 			if json.Unmarshal(msg.Data, &envelope) == nil {
 				onCtl(peer, envelope)
 			}
 		})
 	}
-	if peer.pos != nil {
-		peer.pos.OnMessage(func(msg webrtc.DataChannelMessage) {
+	if pos != nil {
+		pos.OnMessage(func(msg webrtc.DataChannelMessage) {
 			onPos(peer, msg.Data)
 		})
 	}
@@ -1620,31 +1701,39 @@ func (m *multiplayerManager) acceptGuest(offerSDP string) (string, *apiFailure) 
 		return "", fail(http.StatusServiceUnavailable, "multiplayer_room_full")
 	}
 	mode, stunServer := m.mode, m.stunServer
+	joinCtx, cancel := context.WithTimeout(m.ctx, joinTimeout)
+	peer.joinCancel = cancel
 	m.joining[peer] = true
 	m.mu.Unlock()
+	go func() {
+		<-joinCtx.Done()
+		if joinCtx.Err() == context.DeadlineExceeded {
+			m.dropPeerIf("", "join_timeout", peer)
+		}
+	}()
 
 	pc, err := m.newPeerConnection(mode, stunServer)
 	if err != nil {
 		m.mu.Lock()
 		delete(m.joining, peer)
 		m.mu.Unlock()
+		cancel()
 		return "", fail(http.StatusInternalServerError, "multiplayer_connection_failed")
 	}
 	peer.pc = pc
 	pc.OnDataChannel(func(ch *webrtc.DataChannel) {
-		switch ch.Label() {
-		case "ctl":
-			peer.ctl = ch
-		case "pos":
-			peer.pos = ch
-		default:
+		if ch.Label() != "ctl" && ch.Label() != "pos" {
 			return
 		}
+		peer.attach(ch)
 		wirePeer(peer, m.handleCtlMessage, m.handlePosMessage)
 	})
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
-			m.dropPeerIf(peer.id, "connection_"+state.String(), peer)
+			m.mu.Lock()
+			peerID := peer.id
+			m.mu.Unlock()
+			m.dropPeerIf(peerID, "connection_"+state.String(), peer)
 		}
 	})
 	answer, lf := answerOffer(pc, offerSDP)

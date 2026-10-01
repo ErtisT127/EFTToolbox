@@ -34,6 +34,7 @@ public static class MapDisplay {
   public const string MonoFont = "jetbrains-mono-400";
   public const string CjkRegularFont = "noto-sans-sc-400";
   public const string CjkBoldFont = "noto-sans-sc-700";
+  public const string EmojiFont = "noto-color-emoji";
   public static readonly System.Collections.Generic.IReadOnlyDictionary<string, string> Emoji = new System.Collections.Generic.Dictionary<string, string> {
     ["📝"] = "1f4dd",
     ["👾"] = "1f47e",

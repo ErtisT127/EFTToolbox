@@ -33,6 +33,7 @@ export const mapDisplay = {
   "monoFont": "jetbrains-mono-400",
   "cjkRegularFont": "noto-sans-sc-400",
   "cjkBoldFont": "noto-sans-sc-700",
+  "emojiFont": "noto-color-emoji",
   "emoji": {
     "📝": "1f4dd",
     "👾": "1f47e",

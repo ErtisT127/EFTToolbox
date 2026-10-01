@@ -122,7 +122,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const players = overlay.players;
   const [isFullscreen, setIsFullscreen] = useState(false);
   const initialOptions: ToolOptions = {
-    color: '#5FD3C4',
+    color: '#FF6B35',
     width: 3,
     emoji: '\u{1F4CD}',
     imageId: '',
@@ -203,7 +203,15 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
     void w.initialize();
   };
   const currentCanvasError = canvasError?.mapId === w.activeId ? canvasError.key : '';
-  const blockingError = !w.loading && (w.error || currentCanvasError);
+  const backendDisconnected = overlay.hasConnected && !overlay.connected;
+  const blockingError = backendDisconnected || (!w.loading && (w.error || currentCanvasError));
+  useEffect(() => {
+    if (backendDisconnected) return;
+    if (w.error === 'errors.request_failed' || currentCanvasError === 'errors.request_failed')
+      retryMap();
+    // Retry only on the connection edge; a normal request failure stays user-visible.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backendDisconnected]);
   const atMin = zoomState !== null && zoomState.zoom <= zoomState.min + ZOOM_BOUND_EPSILON;
   const atMax = zoomState !== null && zoomState.zoom >= zoomState.max - ZOOM_BOUND_EPSILON;
   // The overlay owns this flag; the stored settings are only a stand-in until it reports.
@@ -479,7 +487,9 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
         onPointerEnter={cancelCoordinateHide}
         onPointerLeave={scheduleCoordinateHide}
       >
-        {w.loading && !session ? (
+        {backendDisconnected ? (
+          <MapUnavailableState errorKey="errors.request_failed" onRetry={retryMap} />
+        ) : w.loading && !session ? (
           <div className="empty-state" role="status">
             <span className="spinner" />
             <p>{t('map.state.loading')}</p>

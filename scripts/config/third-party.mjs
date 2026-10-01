@@ -1,9 +1,8 @@
-// Third-party software and data this build ships. `scripts/generate-third-party.mjs` renders this
-// one list into both the About page's thanks list and the packaged THIRD-PARTY-NOTICES.txt.
+// Third-party software and data this build ships. `thirdParty` drives the About library list;
+// packaged notices also include `redistributed` and `displayNotices`.
 
 /** The projects the About page thanks. Generated output is sorted A-Z by name. */
 export const thirdParty = [
-  { name: '.NET', license: 'MIT', url: 'https://dotnet.microsoft.com' },
   { name: 'BruTile', license: 'Apache-2.0', url: 'https://github.com/BruTile/BruTile' },
   { name: 'coder/websocket', license: 'MIT', url: 'https://github.com/coder/websocket' },
   { name: 'Floating UI', license: 'MIT', url: 'https://floating-ui.com' },
@@ -32,10 +31,40 @@ export const thirdParty = [
 ];
 
 /**
- * Data this build redistributes: it belongs in the shipped notices, not in the About page's list of
- * projects the app is built from.
+ * Bundled software and data sources that belong in shipped notices, not the About library list.
  */
 export const redistributed = [
+  { name: '.NET', license: 'MIT', url: 'https://dotnet.microsoft.com', note: 'runtime framework' },
+  {
+    name: 'Barlow Condensed',
+    license: 'OFL-1.1',
+    url: 'https://fonts.google.com/specimen/Barlow+Condensed',
+    note: 'bundled display font',
+  },
+  {
+    name: 'JetBrains Mono',
+    license: 'OFL-1.1',
+    url: 'https://fonts.google.com/specimen/JetBrains+Mono',
+    note: 'bundled display font',
+  },
+  {
+    name: 'Noto Color Emoji',
+    license: 'OFL-1.1',
+    url: 'https://github.com/googlefonts/noto-emoji',
+    note: 'bundled display font',
+  },
+  {
+    name: 'Noto Sans',
+    license: 'OFL-1.1',
+    url: 'https://fonts.google.com/noto/specimen/Noto+Sans',
+    note: 'bundled display font',
+  },
+  {
+    name: 'Noto Sans SC',
+    license: 'OFL-1.1',
+    url: 'https://fonts.google.com/noto/specimen/Noto+Sans+SC',
+    note: 'bundled display font',
+  },
   {
     name: 'always-online-stun',
     license: 'MIT',
@@ -50,7 +79,6 @@ export const redistributed = [
  * read.
  */
 export const displayNotices = [
-  'Map fonts: Noto Sans / Noto Sans SC (Google), Barlow Condensed (Jeremy Tribby), JetBrains Mono (JetBrains), SIL Open Font License 1.1. Original copyright notices are in data/upstream/assets/licenses/*.txt.',
-  'Emoji: Twemoji 14.0.2, Copyright Twitter, Inc. and other contributors, CC-BY 4.0, https://github.com/twitter/twemoji. Images are unmodified. License: data/upstream/assets/licenses/twemoji-LICENSE-GRAPHICS.',
+  'Display font license texts: data/upstream/assets/licenses/*.txt, including data/upstream/assets/licenses/noto-emoji-OFL.txt. All display fonts are licensed under SIL Open Font License 1.1.',
   'Source URLs, pinned versions, source hashes and shipped-file hashes: data/upstream/assets/display-resources.json.',
 ];

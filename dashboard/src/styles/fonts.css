@@ -47,3 +47,16 @@
   font-style: normal;
   font-display: block;
 }
+@font-face {
+  font-family: 'Map Emoji';
+  src: url('/api/assets/display/fonts/noto-color-emoji.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+.annotation-emoji,
+.sticker-emoji,
+.recent-sticker-emoji,
+.current-icon {
+  font-family: 'Map Emoji', 'Segoe UI Emoji', sans-serif;
+}

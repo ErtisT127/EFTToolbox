@@ -54,6 +54,7 @@ function createAnnotationLayers(
           weight: a.width + 5,
           opacity: 1,
           dashArray: '6 4',
+          smoothFactor: 1,
           interactive: false,
         }),
       );
@@ -61,6 +62,7 @@ function createAnnotationLayers(
       L.polyline(a.points.map(latLng), {
         color: a.color,
         weight: a.width,
+        smoothFactor: 1,
         interactive: false,
       }),
     );
@@ -111,18 +113,11 @@ function createAnnotationLayers(
       element.append(fallback);
     }
   } else {
-    const code = mapDisplay.emoji[a.emoji as keyof typeof mapDisplay.emoji];
-    if (code) {
-      const emoji = document.createElement('img');
+    if (a.emoji) {
+      const emoji = document.createElement('span');
       emoji.className = 'annotation-emoji';
-      emoji.src = `/api/assets/display/emoji/emoji-${code}.png`;
-      emoji.alt = a.emoji;
+      emoji.textContent = a.emoji;
       element.append(emoji);
-    } else if (a.emoji) {
-      const fallback = document.createElement('span');
-      fallback.className = 'annotation-sticker-missing';
-      fallback.textContent = '?';
-      element.append(fallback);
     }
   }
   return [

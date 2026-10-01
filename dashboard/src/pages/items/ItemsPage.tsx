@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
 import { useSelector } from 'react-redux';
 import {
   ArrowLeft,
@@ -281,7 +280,7 @@ export function ItemsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   };
   const changeCategory = (next: string) => {
     if (next !== category) resetTableScroll();
-    flushSync(() => setCategory(next));
+    setCategory(next);
     saveSettings({ category: next });
   };
   const cancelUpdate = () => {

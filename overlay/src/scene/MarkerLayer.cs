@@ -156,7 +156,7 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
             foreground.Add((p.Y / dpi, () => {
                 var glyph = a.ImageId != "" || a.Emoji != "";
                 if (a.ImageId != "") { stickers.TryGetValue(a.ImageId, out var sticker); Icon(sticker?.IconUrl ?? "", p, MapDisplay.StickerSize, 1, sticker is not null && sticker.Group is not ("extract" or "container"), true, sticker?.Group is not ("boss" or "trader")); }
-                else if (a.Emoji != "") Icon(MapDisplay.Emoji.TryGetValue(a.Emoji, out var code) ? $"/api/assets/display/emoji/emoji-{code}.png" : "", p, MapDisplay.EmojiSize, 1, placeholder: true);
+                else if (a.Emoji != "") Text(a.Emoji, "annotation", MapDisplay.EmojiSize, 0, MapDisplay.LabelColor, p);
                 Text(a.Text, "annotation", (float)a.TextSize, 0, a.Color, p - new Vector2(0, glyph ? MapDisplay.StickerSize / 2 * dpi : 0), bottom: glyph);
             }));
         }

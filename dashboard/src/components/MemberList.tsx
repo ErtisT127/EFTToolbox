@@ -12,11 +12,10 @@ export type MemberRow = {
   self?: boolean;
 };
 
-// A guest measures its RTT to the host, so both sides of that connection show the same value;
-// the host's own row is 0ms because it has no network hop to itself.
+// A guest measures its RTT to the host, so both sides of that connection show the same value.
 export function memberRows(status: MultiplayerStatus): MemberRow[] {
   if (!status.self) return [];
-  const ownLatency = status.self.role === 'host' ? 0 : status.self.latencyMs;
+  const ownLatency = status.self.latencyMs;
   const self: MemberRow = { ...status.self, self: true, latencyMs: ownLatency };
   const members = (status.members || []).map((member) =>
     member.role === 'host' && status.role === 'guest' && ownLatency !== undefined
@@ -71,15 +70,8 @@ export function MemberList({
                 </button>
               )
             )}
-            <span
-              className={`mp-member-latency ${latencyClass(
-                row.state === 'unstable' || row.state === 'lost' ? 997 : row.latencyMs,
-              )}`}
-            >
-              {latencyLabel(
-                row.state === 'unstable' || row.state === 'lost' ? 997 : row.latencyMs,
-                t,
-              )}
+            <span className={`mp-member-latency ${latencyClass(displayLatency(row), row.self)}`}>
+              {latencyLabel(displayLatency(row), t, row.self)}
             </span>
           </li>
         ) : (
@@ -90,13 +82,20 @@ export function MemberList({
   );
 }
 
-function latencyClass(latencyMs?: number) {
+function displayLatency(row: MemberRow) {
+  if (row.self && row.latencyMs === undefined) return undefined;
+  return row.state === 'unstable' || row.state === 'lost' ? 997 : row.latencyMs;
+}
+
+function latencyClass(latencyMs: number | undefined, self?: boolean) {
+  if (latencyMs === undefined && self) return 'neutral';
   if (latencyMs === undefined || latencyMs >= 997) return 'timeout';
   if (latencyMs < 100) return 'good';
   if (latencyMs <= 299) return 'fair';
   return 'bad';
 }
 
-function latencyLabel(latencyMs: number | undefined, t: Translate) {
+function latencyLabel(latencyMs: number | undefined, t: Translate, self?: boolean) {
+  if (latencyMs === undefined && self) return '—';
   return latencyMs === undefined || latencyMs >= 997 ? t('multiplayer.timeout') : `${latencyMs}ms`;
 }

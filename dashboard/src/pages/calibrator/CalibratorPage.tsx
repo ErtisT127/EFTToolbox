@@ -172,6 +172,7 @@ export function CalibratorPage() {
   const { t, locale } = useLocale();
   const w = useWorkspace(workspace);
   const overlay = useOverlay();
+  const backendDisconnected = overlay.hasConnected && !overlay.connected;
   const [tool, setTool] = useState<Tool>('select');
   const [mapLoadError, setMapLoadError] = useState<string | null>(null);
   const [calibrationLoadError, setCalibrationLoadError] = useState<string | null>(null);
@@ -977,6 +978,13 @@ export function CalibratorPage() {
     setReloadToken((value) => value + 1);
     if (w.error) void w.initialize();
   };
+  useEffect(() => {
+    if (backendDisconnected) return;
+    if (w.error === 'errors.request_failed' || mapLoadError === 'errors.request_failed')
+      retryMapLoad();
+    // Retry only after the connection edge; a normal request failure stays user-visible.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backendDisconnected]);
   const resetCalibration = () => {
     setConfirmReset(false);
     void store
@@ -995,6 +1003,12 @@ export function CalibratorPage() {
   };
   const calibrationDataError =
     calibrationLoadError || (w.error === 'errors.calibration_preferences_invalid' ? w.error : null);
+  if (backendDisconnected)
+    return (
+      <section className="calibrator-page">
+        <MapUnavailableState errorKey="errors.request_failed" onRetry={retryMapLoad} />
+      </section>
+    );
   if ((w.error || mapLoadError) && !calibrationDataError)
     return (
       <section className="calibrator-page">

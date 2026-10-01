@@ -26,6 +26,7 @@ import (
 	"efttoolbox/contracts"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
+	"golang.org/x/sys/windows"
 )
 
 //go:embed assets/banner.png
@@ -141,6 +142,15 @@ func (b *hostEvents) close(client *hostEventClient) {
 }
 
 func runDesktop(exeDir, assets, dataRoot string, port int, overlayExe string) error {
+	absoluteDataRoot, err := filepath.Abs(dataRoot)
+	if err != nil {
+		return err
+	}
+	dataRoot = absoluteDataRoot
+	if err := validateStartup(assets, dataRoot, overlayExe); err != nil {
+		showNativeStartupFailure(dataRoot, err)
+		return err
+	}
 	uniqueID := instanceID(exeDir)
 	runtime := &desktopRuntime{
 		dataRoot:   dataRoot,
@@ -157,7 +167,10 @@ func runDesktop(exeDir, assets, dataRoot string, port int, overlayExe string) er
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(os.DirFS(assets)),
 		},
-		Windows: application.WindowsOptions{WndClass: "EFTToolbox"},
+		Windows: application.WindowsOptions{
+			WndClass:            "EFTToolbox",
+			WebviewUserDataPath: filepath.Join(dataRoot, "webview2"),
+		},
 		// The dashboard's title bar posts the window commands through WebView2's own message channel,
 		// so they do not depend on the Wails runtime script (which cannot reach the host from a page
 		// this app serves itself).
@@ -365,10 +378,6 @@ func (r *desktopRuntime) start(assets string, port int, overlayExe string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	if !r.holdState(func() { r.cancel = cancel }) {
 		cancel()
-		return
-	}
-	if err := validateStartup(assets, r.dataRoot, overlayExe); err != nil {
-		r.fail(err)
 		return
 	}
 	if err := server.InstallLogging(filepath.Join(r.dataRoot, "..", "logs")); err != nil {
@@ -694,14 +703,32 @@ func (f keyedFailure) Unwrap() error { return f.err }
 
 func failure(key string, err error) error { return keyedFailure{key: key, err: err} }
 
-func (r *desktopRuntime) fail(err error) {
-	log.Printf("startup failed: %v", err)
-	language := r.language()
+func startupFailureDetail(language string, err error) string {
 	detail := err.Error()
 	var keyed keyedFailure
 	if errors.As(err, &keyed) {
 		detail = contracts.MessageText(language, keyed.key) + ": " + keyed.err.Error()
+		if keyed.key == "host.startupDataDirectory" || keyed.key == "host.startupLog" {
+			detail += "\n\n" + contracts.MessageText(language, "host.startupPermissionHint")
+		}
 	}
+	return detail
+}
+
+func showNativeStartupFailure(dataRoot string, err error) {
+	language := server.HostLanguage(dataRoot)
+	detail := startupFailureDetail(language, err)
+	body, bodyErr := windows.UTF16PtrFromString(detail)
+	title, titleErr := windows.UTF16PtrFromString("EFTToolbox")
+	if bodyErr == nil && titleErr == nil {
+		_, _ = windows.MessageBox(0, body, title, windows.MB_ICONERROR|windows.MB_OK)
+	}
+}
+
+func (r *desktopRuntime) fail(err error) {
+	log.Printf("startup failed: %v", err)
+	language := r.language()
+	detail := startupFailureDetail(language, err)
 	// Startup errors must terminate even though the normal close hook protects the
 	// window while the user is deciding between exit and tray mode.
 	r.allowClose.Store(true)
@@ -746,16 +773,37 @@ func validateStartup(assets, dataRoot, overlayExe string) error {
 			return failure("host.startupResource", fmt.Errorf("%s: %w", path, err))
 		}
 	}
-	if err := os.MkdirAll(filepath.Join(dataRoot, "user"), 0o755); err != nil {
-		return failure("host.startupDataDirectory", err)
+	for _, target := range []struct {
+		path string
+		key  string
+	}{
+		{filepath.Join(dataRoot, "user"), "host.startupDataDirectory"},
+		{filepath.Join(dataRoot, "webview2"), "host.startupDataDirectory"},
+		{filepath.Join(filepath.Dir(dataRoot), "logs"), "host.startupLog"},
+	} {
+		if err := checkStartupDirectory(target.path); err != nil {
+			return failure(target.key, fmt.Errorf("%s: %w", target.path, err))
+		}
 	}
-	probe, err := os.CreateTemp(filepath.Join(dataRoot, "user"), ".startup-write-")
+	return nil
+}
+
+func checkStartupDirectory(path string) error {
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return err
+	}
+	probe, err := os.CreateTemp(path, ".startup-write-")
 	if err != nil {
-		return failure("host.startupDataDirectory", err)
+		return err
 	}
 	name := probe.Name()
-	_ = probe.Close()
-	_ = os.Remove(name)
+	if err := probe.Close(); err != nil {
+		_ = os.Remove(name)
+		return err
+	}
+	if err := os.Remove(name); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -22,10 +22,22 @@ const run = (command, args) =>
   execFileSync(command, args, { cwd: root, stdio: 'inherit', windowsHide: true });
 let stepCount = 0;
 const step = (label) => console.log(`[${++stepCount}/11] ${label}`);
-const copyDirectory = (source, destination) => {
+const copyDirectory = (source, destination, exclude = []) => {
   const result = spawnSync(
     'robocopy',
-    [source, destination, '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:1', '/W:1'],
+    [
+      source,
+      destination,
+      '/E',
+      ...(exclude.length ? ['/XF', ...exclude] : []),
+      '/NFL',
+      '/NDL',
+      '/NJH',
+      '/NJS',
+      '/NP',
+      '/R:1',
+      '/W:1',
+    ],
     { cwd: root, stdio: 'inherit', windowsHide: true },
   );
   if (result.error) throw result.error;
@@ -132,14 +144,13 @@ const copyLiteTiles = async (modes, sourceRoot, destinationRoot, keep) => {
   const selectedManifest = {};
   for (const url of urls) {
     const entry = manifest[url];
-    if (!entry) throw new Error(`Missing tile manifest entry: ${url}`);
     const hash = createHash('sha256').update(url).digest('hex');
     const file = `${hash}.png`;
     await access(path.join(sourceRoot, hash.slice(0, 2), file));
     const files = filesByShard.get(hash.slice(0, 2)) || [];
     files.push(file);
     filesByShard.set(hash.slice(0, 2), files);
-    selectedManifest[url] = entry;
+    if (entry) selectedManifest[url] = entry;
   }
   for (const [shard, files] of filesByShard) {
     const result = spawnSync(
@@ -196,6 +207,7 @@ run(process.execPath, [
   '--outDir',
   '../build/dashboard',
   '--emptyOutDir',
+  ...(debug ? ['--sourcemap'] : []),
 ]);
 await mkdir(output, { recursive: true });
 // The desktop host opens a WebView2 window, so the package entry point must be a GUI binary:
@@ -219,11 +231,16 @@ run('dotnet', [
   path.join(output, 'overlay'),
   '--self-contained',
   'true',
+  `-p:DebugType=${debug ? 'portable' : 'none'}`,
+  `-p:DebugSymbols=${debug}`,
 ]);
 step('Copying package files');
 copyDirectory(path.join(root, 'build/dashboard'), path.join(output, 'dashboard'));
 const data = path.join(output, 'data/upstream');
-copyDirectory(path.join(upstream, 'modes'), path.join(data, 'modes'));
+copyDirectory(path.join(upstream, 'modes'), path.join(data, 'modes'), [
+  'versions.json',
+  'validation-report.json',
+]);
 copyDirectory(path.join(upstream, 'assets'), path.join(data, 'assets'));
 copyDirectory(path.join(upstream, 'items'), path.join(data, 'items'));
 await copyFile(path.join(upstream, 'stickers.json'), path.join(data, 'stickers.json'));

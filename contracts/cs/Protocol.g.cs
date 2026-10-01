@@ -39,22 +39,39 @@ public sealed record WireEnvelope {
 }
 
 public sealed record SignalRequest {
-  [JsonPropertyName("key")] public string Key { get; init; } = "";
-  [JsonPropertyName("offer")] public string Offer { get; init; } = "";
+  [JsonPropertyName("nonce")] public string Nonce { get; init; } = "";
+  [JsonPropertyName("payload")] public string Payload { get; init; } = "";
 }
 
 public sealed record SignalResponse {
+  [JsonPropertyName("nonce")] public string Nonce { get; init; } = "";
+  [JsonPropertyName("payload")] public string Payload { get; init; } = "";
+}
+
+public sealed record SignalPayloadRequest {
+  [JsonPropertyName("offer")] public string Offer { get; init; } = "";
+}
+
+public sealed record SignalPayloadResponse {
   [JsonPropertyName("answer")] public string? Answer { get; init; }
-  [JsonPropertyName("error")] public string? Error { get; init; }
+  [JsonPropertyName("error")] public SignalErrorCode? Error { get; init; }
   [JsonPropertyName("detail")] public string? Detail { get; init; }
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter<SignalErrorCode>))]
 public enum SignalErrorCode {
+  [JsonStringEnumMemberName("multiplayer_signal_invalid")]
   MultiplayerSignalInvalid,
+  [JsonStringEnumMemberName("multiplayer_key_invalid")]
   MultiplayerKeyInvalid,
+  [JsonStringEnumMemberName("multiplayer_room_full")]
   MultiplayerRoomFull,
+  [JsonStringEnumMemberName("multiplayer_share_invalid")]
   MultiplayerShareInvalid,
+  [JsonStringEnumMemberName("multiplayer_connection_failed")]
   MultiplayerConnectionFailed,
+  [JsonStringEnumMemberName("multiplayer_signaling_timeout")]
   MultiplayerSignalingTimeout,
+  [JsonStringEnumMemberName("multiplayer_stun_failed")]
   MultiplayerStunFailed
 }

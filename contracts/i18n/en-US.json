@@ -630,6 +630,7 @@
     "startupResource": "Missing runtime resource",
     "startupDataDirectory": "The user data directory is unavailable",
     "startupLog": "The log directory is not writable",
+    "startupPermissionHint": "Check the directory permissions or run EFTToolbox as administrator.",
     "startupPort": "Could not bind the backend port",
     "startupBackend": "Backend health check failed",
     "startupOverlayStart": "The overlay failed to start",

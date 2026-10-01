@@ -356,9 +356,8 @@
   text-shadow: 0 1px 3px var(--bg);
 }
 .annotation-emoji {
-  width: var(--map-emoji-size);
-  height: var(--map-emoji-size);
-  object-fit: contain;
+  font-size: var(--map-emoji-size);
+  line-height: 1;
   margin: 3px;
 }
 /* A sticker takes the same slot the emoji does, so the marker keeps its anchor geometry. */
@@ -542,6 +541,10 @@ output {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+.current-icon > span:not(.current-icon-missing) {
+  font-size: 26px;
+  line-height: 1;
 }
 /* A sticker id that no longer resolves would otherwise render as nothing at all, because the
    emoji fallback is empty once a sticker has been picked. */

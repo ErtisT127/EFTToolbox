@@ -630,6 +630,7 @@
     "startupResource": "缺少运行资源",
     "startupDataDirectory": "用户数据目录不可用",
     "startupLog": "日志目录不可写",
+    "startupPermissionHint": "请检查目录权限，或以管理员身份启动 EFTToolbox。",
     "startupPort": "后端端口绑定失败",
     "startupBackend": "后端健康检查失败",
     "startupOverlayStart": "悬浮窗启动失败",

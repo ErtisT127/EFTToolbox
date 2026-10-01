@@ -16,7 +16,7 @@ import {
 } from '../defaults.gen.ts';
 import { api, isRevisionConflict } from './api.ts';
 import { errorKeyOf } from '../lib/errors.ts';
-import { selectableFloors } from '../pages/map/lib/floors';
+import { selectableFloors } from '../pages/map/lib/floors.ts';
 import { store, type RootState, waitForAnnotationSaves } from './store.ts';
 import {
   clearAnnotationDraft,
@@ -45,7 +45,7 @@ class DataLoadError extends Error {
   }
 }
 
-export { selectableFloors } from '../pages/map/lib/floors';
+export { selectableFloors } from '../pages/map/lib/floors.ts';
 
 // The UI language, applied at boot from user settings; map data requests follow it so map and
 // marker names render in the same language as the interface.

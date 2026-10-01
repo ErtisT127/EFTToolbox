@@ -51,7 +51,7 @@ type CastLoadKey =
 type Loading = { value: number; key: CastLoadKey };
 
 const emptyOptions: ToolOptions = {
-  color: '#5FD3C4',
+  color: '#FF6B35',
   width: 3,
   emoji: '📍',
   imageId: '',
