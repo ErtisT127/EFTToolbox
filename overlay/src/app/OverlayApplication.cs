@@ -284,6 +284,7 @@ internal sealed class OverlayApplication : IDisposable
                 }
             }
             catch (Exception error) { FailRecognition(run, error); }
+            finally { FinishRecognition(run); }
         });
     }
 
@@ -295,7 +296,7 @@ internal sealed class OverlayApplication : IDisposable
         var cancellation = new CancellationTokenSource();
         recognitionRun = cancellation;
         recognitionRequestId = requestId;
-        var run = new RecognitionRun(requestId, cancellation.Token, recognitionSettings);
+        var run = new RecognitionRun(requestId, cancellation.Token, recognitionSettings, cancellation);
         recognitionWindow.ApplySettings(recognitionSettings);
         // The backend's "started" event already raised the window for an import; this only covers the
         // capture path, which the backend hears about afterwards.
@@ -304,8 +305,14 @@ internal sealed class OverlayApplication : IDisposable
         return run;
     }
 
+    private void FinishRecognition(RecognitionRun run)
+    {
+        if (ReferenceEquals(recognitionRun, run.Stop)) recognitionRun = null;
+        run.Stop.Dispose();
+    }
+
     /// <summary>The request a run works on, plus the token that supersedes it.</summary>
-    private readonly record struct RecognitionRun(string RequestId, CancellationToken Token, RecognitionSettings Settings);
+    private readonly record struct RecognitionRun(string RequestId, CancellationToken Token, RecognitionSettings Settings, CancellationTokenSource Stop);
 
     private sealed record RecognitionScore(RecognitionCandidate Candidate, double Score);
 
@@ -474,7 +481,8 @@ internal sealed class OverlayApplication : IDisposable
         var previous = scene.Zoom;
         scene.Zoom = value;
         scene.ClampZoom();
-        if (fade && scene.Zoom != previous)
+        if (!fade) { zoomTransition = false; return; }
+        if (scene.Zoom != previous)
         {
             var now = Environment.TickCount64;
             if (!zoomTransition || now >= zoomSettledAt) zoomFadeStarted = now;
@@ -554,7 +562,7 @@ internal sealed class OverlayApplication : IDisposable
             scene.Floor = p.FloorId; scene.Basemap = p.Basemap; scene.NormalizeFloor();
         }
         if (force || !old.Center.SequenceEqual(p.Center)) if (p.Center.Length == 2) scene.Center = new((float)p.Center[1], (float)-p.Center[0]);
-        if (force || old.Zoom != p.Zoom) SetZoom(p.Zoom);
+        if (force || old.Zoom != p.Zoom) SetZoom(p.Zoom, fade: false);
         scene.ClampZoom(); Begin("dashboard"); LoadResources(); if (follow) FollowSelf();
     }
     private void LoadMap(string id, MapPreference? preference = null, bool follow = false, bool preserveView = false)
@@ -682,7 +690,7 @@ internal sealed class OverlayApplication : IDisposable
         if (player.MapId != scene.Map?.Id) return;
         if (settings.FollowCenter) scene.Center = new((float)player.MapPosition.X, (float)player.MapPosition.Y);
         if (settings.FollowFloor && player.Resolution.FloorId is { } floor) scene.Floor = floor;
-        if (settings.FollowZoom) SetZoom(settings.PerMapZoom ? settings.MapZooms.FirstOrDefault(z => z.MapId == player.MapId)?.Zoom ?? settings.TargetZoom : settings.TargetZoom);
+        if (settings.FollowZoom) SetZoom(settings.PerMapZoom ? settings.MapZooms.FirstOrDefault(z => z.MapId == player.MapId)?.Zoom ?? settings.TargetZoom : settings.TargetZoom, fade: false);
         scene.ClampZoom(); LoadResources();
     }
     private void Event(ServerEvent e)
@@ -691,7 +699,7 @@ internal sealed class OverlayApplication : IDisposable
         // Owner visibility rides the session: the id on every event, the roster on multiplayer
         // changes, the owner lists on their own event (the file watcher covers external edits).
         if (e.OwnerId is { } owner && owner != ownerId) { ownerId = owner; ApplyOwnerVisibility(); }
-        if (e.MultiplayerStatus is { } roster) { multiplayerStatus = roster; scene.ShowPlayerNames = roster.ShowPlayerNames == true; ApplyOwnerVisibility(); }
+        if (e.MultiplayerStatus is { } roster) { multiplayerStatus = roster; scene.ShowPlayerNames = roster.Enabled && roster.ShowPlayerNames == true; ApplyOwnerVisibility(); }
         if (e.MarkerPreferences is { } ownerLists) { markerPreferences = ownerLists; ApplyOwnerVisibility(); }
         // Automatic monitor switches publish the authoritative map id without rewriting the
         // dashboard's manual map-preference file. Build a local preference snapshot so the native
@@ -748,21 +756,29 @@ internal sealed class OverlayApplication : IDisposable
             {
                 try { await RunRecognition(run, request.ImageData); }
                 catch (Exception error) { FailRecognition(run, error); }
+                finally { FinishRecognition(run); }
             });
         }
-        if (e.Preferences is { } p) Select(p, follow: e.Type == "map_changed");
+        var snapshotSelfChanged = false;
         if (e.Type == "snapshot")
         {
-            lastView = null;
             var previousSelf = scene.Players.Values.FirstOrDefault(p => p.IsSelf);
+            lastView = null;
             scene.Players.Clear(); foreach (var player in e.Players ?? []) scene.Players[player.PlayerId] = player;
-            if (scene.Players.Values.FirstOrDefault(p => p.IsSelf) is { } snapshotSelf && PositionChanged(previousSelf, snapshotSelf)) FollowSelf();
+            var nextSelf = scene.Players.Values.FirstOrDefault(p => p.IsSelf);
+            snapshotSelfChanged = previousSelf is not null && nextSelf is not null && PositionChanged(previousSelf, nextSelf);
+        }
+        if (e.Preferences is { } p)
+        {
+            if (e.Type == "snapshot" && e.GameMonitorStatus?.MapId is { Length: > 0 } mapId && mapId != p.SelectedMap)
+                p = p with { SelectedMap = mapId };
+            Select(p, follow: e.Type == "map_changed" || snapshotSelfChanged);
         }
         if (e.Player is { } value)
         {
             scene.Players.TryGetValue(value.PlayerId, out var old);
             var changed = PositionChanged(old, value);
-            scene.Players[value.PlayerId] = value; if (changed && value.IsSelf) FollowSelf();
+            scene.Players[value.PlayerId] = value; if (e.Type == "player_upsert" && changed && value.IsSelf) FollowSelf();
         }
         if (e.Type == "player_remove" && e.PlayerId is { } id) scene.Players.Remove(id);
         if (e.Type == "annotations_changed" && e.MapId == scene.Map?.Id && bootstrap is { } b)
@@ -775,7 +791,7 @@ internal sealed class OverlayApplication : IDisposable
             if (command.Kind == "edit") { editing = command.Enabled ?? false; if (editing) settings = settings with { Visible = true }; else if (!settings.Visible) editing = false; ApplyWindow(); _ = client.SaveAsync(settings); }
             if (command.Kind == "visible") { settings = settings with { Visible = command.Enabled ?? false }; ApplyWindow(); _ = client.SaveAsync(settings); }
             if (command.Kind == "hotkeys") SuspendHotkeys(!(command.Enabled ?? true));
-            if (command.Kind == "view") { if (command.Center is { } c) scene.Center = new((float)c.X, (float)c.Y); if (command.Zoom is { } z) SetZoom(z); if (command.FloorId is { } f) scene.Floor = f; scene.ClampZoom(); LoadResources(); }
+            if (command.Kind == "view") { if (command.Center is { } c) scene.Center = new((float)c.X, (float)c.Y); if (command.Zoom is { } z) SetZoom(z, fade: false); if (command.FloorId is { } f) scene.Floor = f; scene.ClampZoom(); LoadResources(); }
         }
     }
     /// <summary>The panel labels rasterize from the generated messages and the map bakes its marker names
@@ -857,7 +873,7 @@ internal sealed class OverlayApplication : IDisposable
                 });
             }
         }
-        var mapOpacity = ZoomOpacity(now);
+        var markerOpacity = ZoomOpacity(now);
         if (zoomTransition) dirty = true;
         UpdateSvgView(now);
         // Nothing can be drawn before the bootstrap arrives 鈥?and nothing may be: the font atlas is
@@ -865,8 +881,8 @@ internal sealed class OverlayApplication : IDisposable
         if (dirty && settings.Visible && bootstrap is not null && now >= nextFrame)
         {
             markers.Upload(renderer.Images, renderer.Texts); tiles.Upload(renderer.Tiles);
-            if (bootstrap is { } b3 && mapOpacity > 0) tiles.Update(scene, b3.TileDirectory, renderer.Tiles, operation);
-            renderer.Render(scene, markers, tiles, settings.Shape == "circle", settings.Backdrop, settings.Opacity ?? 100, editing, operation, mapOpacity); renderCount++;
+            if (bootstrap is { } b3) tiles.Update(scene, b3.TileDirectory, renderer.Tiles, operation);
+            renderer.Render(scene, markers, tiles, settings.Shape == "circle", settings.Backdrop, settings.Opacity ?? 100, editing, operation, markerOpacity); renderCount++;
             if (operation is { } op) { op.UpdateTiming(value => value with { DrawMs = renderer.LastDrawMs, PresentMs = renderer.LastPresentMs }); if (!loadingScene && !tiles.Loading && !markers.Loading) { op.Complete(op.ResourceLoad); operation = null; } }
             dirty = false; nextFrame = now + 17;
         }

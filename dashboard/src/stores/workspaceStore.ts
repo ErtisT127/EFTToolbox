@@ -297,6 +297,11 @@ export class Workspace {
   }
   private sequence = 0;
   private pendingSelection = '';
+  private selectionRevision = 0;
+
+  get selectionRevisionValue() {
+    return this.selectionRevision;
+  }
 
   async initialize() {
     const sequence = ++this.sequence;
@@ -400,6 +405,7 @@ export class Workspace {
   }
 
   async select(id: string, reload = false) {
+    this.selectionRevision++;
     const sequence = ++this.sequence;
     this.pendingSelection = id;
     store.dispatch(setWorkspaceState({ error: '', loading: true }));

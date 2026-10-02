@@ -41,9 +41,9 @@ internal sealed class MapTextRasterizer : IDisposable
                 "annotation" => MapDisplay.AnnotationFont,
                 _ => MapDisplay.LandmarkFont,
             };
-            using var latin = new SKPaint { Typeface = Face(latinFace), TextSize = request.Size * request.Dpi, IsAntialias = true, Color = SKColor.Parse(request.Color) };
-            using var cjk = new SKPaint { Typeface = Face(bold ? MapDisplay.CjkBoldFont : MapDisplay.CjkRegularFont), TextSize = latin.TextSize, IsAntialias = true, Color = latin.Color };
-            using var emoji = new SKPaint { Typeface = Face(MapDisplay.EmojiFont), TextSize = latin.TextSize, IsAntialias = true, Color = latin.Color };
+            using var latin = new SKPaint { Typeface = Face(latinFace), TextSize = request.Size * request.Dpi, IsAntialias = true, IsLinearText = false, Color = SKColor.Parse(request.Color) };
+            using var cjk = new SKPaint { Typeface = Face(bold ? MapDisplay.CjkBoldFont : MapDisplay.CjkRegularFont), TextSize = latin.TextSize, IsAntialias = true, IsLinearText = false, Color = latin.Color };
+            using var emoji = new SKPaint { Typeface = Face(MapDisplay.EmojiFont), TextSize = latin.TextSize, IsAntialias = true, IsLinearText = false, Color = latin.Color };
             using var latinFont = new SKFont(latin.Typeface, latin.TextSize);
             using var cjkFont = new SKFont(cjk.Typeface, cjk.TextSize);
             using var emojiFont = new SKFont(emoji.Typeface, emoji.TextSize);
@@ -76,6 +76,7 @@ internal sealed class MapTextRasterizer : IDisposable
                                 Typeface = face ?? cjk.Typeface,
                                 TextSize = latin.TextSize,
                                 IsAntialias = true,
+                                IsLinearText = false,
                                 Color = latin.Color,
                             };
                         }
@@ -124,11 +125,15 @@ internal sealed class MapTextRasterizer : IDisposable
             using var canvas = new SKCanvas(bitmap);
             canvas.Clear(SKColors.Transparent);
             canvas.Scale((float)sampling);
+            // The texture quad is pixel-aligned at draw time; align the glyph origin too so
+            // different label widths do not bake different subpixel coverage into the texture.
+            float Pixel(float value) => MathF.Round(value * (float)sampling) / (float)sampling;
             var metrics = latin.FontMetrics;
             for (var i = 0; i < lines.Count; i++)
             {
                 var x = request.LeftAlign ? pad : (width - Measure(lines[i])) / 2;
                 var y = pad + i * lineHeight + (lineHeight - metrics.Ascent - metrics.Descent) / 2;
+                x = Pixel(x); y = Pixel(y);
                 foreach (var run in Runs(lines[i]))
                 {
                     if (request.Halo)

@@ -155,7 +155,7 @@ internal sealed class OverlayRenderer : IDisposable
 
     internal double LastDrawMs { get; private set; }
     internal double LastPresentMs { get; private set; }
-    internal unsafe void Render(MapScene scene, MarkerLayer markers, TileLayerRenderer tiles, bool circle, bool backdrop, int opacity, bool editing, Operation? operation = null, float mapOpacity = 1)
+    internal unsafe void Render(MapScene scene, MarkerLayer markers, TileLayerRenderer tiles, bool circle, bool backdrop, int opacity, bool editing, Operation? operation = null, float markerOpacity = 1)
     {
         var renderStarted = Stopwatch.GetTimestamp();
         var draw = BeginFrame(opacity);
@@ -167,17 +167,14 @@ internal sealed class OverlayRenderer : IDisposable
             // circle shape clips it in the shader like everything else. Optional, because it also
             // hides the game behind the panel.
             if (backdrop) draw.AddRectFilled(Vector2.Zero, new Vector2(width, height), Backdrop);
-            if (mapOpacity > 0)
+            foreach (var tile in tiles.Visible)
+                if (Tiles.Get(tile.Key) is { } texture) draw.AddImage(texture.NativePointer, scene.Screen(tile.A), scene.Screen(tile.B), Vector2.Zero, Vector2.One, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, tile.Opacity)));
+            if (Svg.Get("map") is { } svg)
             {
-                foreach (var tile in tiles.Visible)
-                    if (Tiles.Get(tile.Key) is { } texture) draw.AddImage(texture.NativePointer, scene.Screen(tile.A), scene.Screen(tile.B), Vector2.Zero, Vector2.One, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, tile.Opacity * mapOpacity)));
-                if (Svg.Get("map") is { } svg)
-                {
-                    var b = scene.SvgRegion is { } region ? new double[] { region.X, region.Y, region.Width, region.Height } : scene.Map.Projection.ViewBox;
-                    draw.AddImage(svg.NativePointer, scene.Screen(new Vector2((float)b[0], (float)b[1])), scene.Screen(new Vector2((float)(b[0] + b[2]), (float)(b[1] + b[3]))), Vector2.Zero, Vector2.One, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, mapOpacity)));
-                }
-                markers.Draw(draw, scene, Images, Texts, operation, mapOpacity);
+                var b = scene.SvgRegion is { } region ? new double[] { region.X, region.Y, region.Width, region.Height } : scene.Map.Projection.ViewBox;
+                draw.AddImage(svg.NativePointer, scene.Screen(new Vector2((float)b[0], (float)b[1])), scene.Screen(new Vector2((float)(b[0] + b[2]), (float)(b[1] + b[3]))));
             }
+            markers.Draw(draw, scene, Images, Texts, operation, markerOpacity);
         }
         if (editing) DrawBorder(draw, circle);
         EndFrame(circle, renderStarted);

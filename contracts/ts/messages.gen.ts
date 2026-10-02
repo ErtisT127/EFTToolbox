@@ -330,6 +330,9 @@ const zhCN = {
       "screenshotName": "粘贴截图名称",
       "update": "更新位置"
     },
+    "player": {
+      "you": "You"
+    },
     "layers": {
       "title": "地图图层",
       "close": "关闭图层",
@@ -1130,6 +1133,9 @@ const enUS = {
       "open": "Update player position",
       "screenshotName": "Paste screenshot name",
       "update": "Update position"
+    },
+    "player": {
+      "you": "You"
     },
     "layers": {
       "title": "Map layers",

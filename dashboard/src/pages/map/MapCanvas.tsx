@@ -63,6 +63,10 @@ type Props = {
   };
   playerFollow?: boolean;
   playerAutoZoom?: { enabled: boolean; zoomLevel: number };
+  playerPositionMapId?: string;
+  playerPositionRevision?: number;
+  onClaimPlayerFollow?: (kind: 'center', revision: number, mapId: string) => boolean;
+  selfPlayerLabel: string;
   showPlayerNames?: boolean;
   readOnly?: boolean;
   /** The local player's id, stamped onto every annotation this client creates. */
@@ -75,9 +79,7 @@ const point = (value: L.LatLng): MapPoint => ({ x: value.lng, y: -value.lat });
 export function MapCanvas(props: Props) {
   const { t } = useTranslation();
   const current = useRef(props);
-  useEffect(() => {
-    current.current = props;
-  });
+  current.current = props;
   const mapRef = useRef<L.Map | null>(null);
   const userLayer = useRef<L.LayerGroup | null>(null);
   const playerLayer = useRef<L.LayerGroup | null>(null);
@@ -99,6 +101,7 @@ export function MapCanvas(props: Props) {
     reportSettled();
   };
   const mount = (map: L.Map) => {
+    const mountedReadOnly = current.current.readOnly;
     const host = map.getContainer();
     const p = current.current;
     mapRef.current = map;
@@ -167,7 +170,6 @@ export function MapCanvas(props: Props) {
       map.fire('resize');
     };
     window.addEventListener('resize', refreshPixelRatio);
-    let followedView = '';
     let followFrame = 0;
     const playerMarkers = new Map<
       string,
@@ -178,24 +180,20 @@ export function MapCanvas(props: Props) {
       const layer = playerLayer.current;
       if (!layer) return;
       const visibleIds = new Set<string>();
-      const self = [...players.values()].find(
-        (player) => player.isSelf && player.mapId === p.data.id,
-      );
-      const positionKey = self
-        ? `${self.playerId}:${self.mapPosition.x}:${self.mapPosition.y}`
-        : '';
+      const self = [...players.values()].find((player) => player.isSelf);
       const zoom = p.playerAutoZoom?.enabled ? p.playerAutoZoom.zoomLevel : undefined;
-      const viewKey = self
-        ? `${positionKey}:${self.resolution.floorId ?? ''}:${p.playerFollow !== false ? 'center' : ''}:${zoom ?? ''}:${ready}`
-        : '';
-      if (self && viewKey !== followedView) {
+      if (
+        self &&
+        p.playerPositionRevision !== undefined &&
+        self.mapId === p.data.id &&
+        p.playerPositionMapId === self.mapId &&
+        p.onClaimPlayerFollow?.('center', p.playerPositionRevision, p.data.id)
+      ) {
         // Centre and zoom follow independently: the settings expose them as separate switches, so
         // either one is allowed to be on alone. A position that follows neither is left alone.
         const center = p.playerFollow === false ? undefined : latLng(self.mapPosition);
-        if (center || zoom !== undefined) {
-          followedView = viewKey;
+        if (center || zoom !== undefined)
           map.setView(center ?? map.getCenter(), zoom ?? map.getZoom(), { animate: false });
-        }
       }
       for (const player of players.values()) {
         if (player.mapId !== p.data.id) continue;
@@ -235,7 +233,7 @@ export function MapCanvas(props: Props) {
         element.style.background = player.color || '';
         // The arrow tip points up at zero degrees; rotate it to the player's heading.
         element.style.transform = `rotate(${player.heading}deg)`;
-        entry.label.textContent = player.displayName;
+        entry.label.textContent = player.isSelf ? p.selfPlayerLabel : player.displayName;
         entry.label.hidden = !p.showPlayerNames;
         element.style.opacity =
           player.resolution.status === 'resolved' &&
@@ -243,7 +241,7 @@ export function MapCanvas(props: Props) {
           player.resolution.floorId !== p.preference.floorId
             ? '0.35'
             : '1';
-        element.title = player.displayName;
+        element.title = player.isSelf ? p.selfPlayerLabel : player.displayName;
       }
       for (const [playerId, entry] of playerMarkers) {
         if (visibleIds.has(playerId)) continue;
@@ -818,7 +816,7 @@ export function MapCanvas(props: Props) {
         lastTwoFingerTap = 0;
       } else lastTwoFingerTap = now;
     };
-    if (current.current.readOnly) {
+    if (mountedReadOnly) {
       map.dragging.enable();
       map.touchZoom.enable();
       host.addEventListener('click', readOnlyDomClick, true);
@@ -854,10 +852,8 @@ export function MapCanvas(props: Props) {
     map.on('zoomend zoomlevelschange', publishZoom);
     current.current.onReady(map);
     publishZoom();
-    // The first player paint can happen while Leaflet is still settling its container size. Apply
-    // the authoritative center and zoom once more on the next frame so a map switch cannot leave
-    // the initial view at the old map's scale.
-    followedView = '';
+    // The first player paint can happen while Leaflet is still settling its container size. Repaint
+    // the player layer after the map settles without reapplying the position-follow action.
     followFrame = requestAnimationFrame(() => {
       followFrame = requestAnimationFrame(() => {
         followFrame = 0;
@@ -875,11 +871,11 @@ export function MapCanvas(props: Props) {
       clearBrush();
       cancelDragPaint();
       host.removeEventListener('wheel', wheelMarkers);
-      if (!current.current.readOnly) {
+      if (!mountedReadOnly) {
         host.removeEventListener('dragstart', preventDrag);
         host.removeEventListener('click', consumeBuiltinClick, true);
       }
-      if (current.current.readOnly) {
+      if (mountedReadOnly) {
         host.removeEventListener('click', readOnlyDomClick, true);
         map.off('click', readOnlyMapClick);
         host.removeEventListener('touchstart', touchStart);
@@ -888,7 +884,7 @@ export function MapCanvas(props: Props) {
         readOnlyTooltip.remove();
       }
       host.classList.remove('markers-zooming');
-      if (!current.current.readOnly) {
+      if (!mountedReadOnly) {
         window.removeEventListener('keydown', keydown);
         window.removeEventListener('keyup', keyup);
         window.removeEventListener('blur', blur);
@@ -937,6 +933,10 @@ export function MapCanvas(props: Props) {
     preference.floorId,
     props.playerFollow,
     props.playerAutoZoom,
+    props.playerPositionMapId,
+    props.playerPositionRevision,
+    props.onClaimPlayerFollow,
+    props.selfPlayerLabel,
     props.showPlayerNames,
     ready,
   ]);

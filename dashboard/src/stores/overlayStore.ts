@@ -76,6 +76,36 @@ class OverlayStore {
     store.dispatch(setOverlayState({ view: value }));
   }
   players = new Map<string, PlayerState>();
+  private playerPositionRevision = 0;
+  private playerPositionMapId = '';
+  private centerFollowRevision = 0;
+  private floorFollowRevision = 0;
+  get playerPositionRevisionValue() {
+    return this.playerPositionRevision;
+  }
+  get playerPositionMapIdValue() {
+    return this.playerPositionMapId;
+  }
+  cancelPendingPlayerFollow() {
+    this.centerFollowRevision = this.playerPositionRevision;
+    this.floorFollowRevision = this.playerPositionRevision;
+  }
+  claimPlayerFollow(kind: 'center' | 'floor', revision: number, mapId: string) {
+    if (
+      revision === 0 ||
+      revision !== this.playerPositionRevision ||
+      mapId !== this.playerPositionMapId
+    )
+      return false;
+    if (kind === 'center') {
+      if (this.centerFollowRevision === revision) return false;
+      this.centerFollowRevision = revision;
+    } else {
+      if (this.floorFollowRevision === revision) return false;
+      this.floorFollowRevision = revision;
+    }
+    return true;
+  }
   private connectedOnce = false;
   get connected() {
     return store.getState().client.overlay.connected;
@@ -420,7 +450,23 @@ class OverlayStore {
           clearTimeout(stale);
           stale = setTimeout(reconnect, 7000);
           if (e.type === 'snapshot') {
+            const previousSelf = [...this.players.values()].find((player) => player.isSelf);
             this.players = new Map((e.players || []).map((p) => [p.playerId, p]));
+            const nextSelf = [...this.players.values()].find((player) => player.isSelf);
+            if (
+              previousSelf &&
+              nextSelf &&
+              (previousSelf.mapId !== nextSelf.mapId ||
+                previousSelf.mapPosition.x !== nextSelf.mapPosition.x ||
+                previousSelf.mapPosition.y !== nextSelf.mapPosition.y ||
+                previousSelf.worldPosition.x !== nextSelf.worldPosition.x ||
+                previousSelf.worldPosition.y !== nextSelf.worldPosition.y ||
+                previousSelf.worldPosition.z !== nextSelf.worldPosition.z ||
+                previousSelf.resolution.floorId !== nextSelf.resolution.floorId)
+            ) {
+              this.playerPositionRevision++;
+              this.playerPositionMapId = nextSelf.mapId;
+            }
             if (workspace.activeId) void workspace.refetchAnnotations(workspace.activeId);
           }
           if (e.type === 'calibration_changed' && e.mapId) {
@@ -432,7 +478,13 @@ class OverlayStore {
           if (e.type === 'annotations_changed' && e.mapId) {
             void workspace.refetchAnnotations(e.mapId);
           }
-          if (e.player) this.players = new Map(this.players).set(e.player.playerId, e.player);
+          if (e.player) {
+            if (e.type === 'player_upsert' && e.player.isSelf) {
+              this.playerPositionRevision++;
+              this.playerPositionMapId = e.player.mapId;
+            }
+            this.players = new Map(this.players).set(e.player.playerId, e.player);
+          }
           if (e.type === 'player_remove' && e.playerId) {
             this.players = new Map(this.players);
             this.players.delete(e.playerId);

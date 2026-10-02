@@ -340,19 +340,22 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   );
   const mapData = session?.data;
   const self = useMemo(
-    () =>
-      id && players
-        ? [...players.values()].find((player) => player.isSelf && player.mapId === id)
-        : undefined,
-    [id, players],
+    () => (players ? [...players.values()].find((player) => player.isSelf) : undefined),
+    [players],
   );
-  const selfFloor = self?.resolution.status === 'resolved' ? self.resolution.floorId : null;
+  const followedFloorRevision = useRef(0);
+  const playerPositionRevision = overlay.playerPositionRevisionValue;
   useEffect(() => {
-    if (!followFloor || !id || !mapData || !selfFloor) return;
-    if (w.preferenceFor(id).floorId === selfFloor) return;
-    if (!mapData.floors.some((entry) => entry.id === selfFloor)) return;
-    w.updatePreference(id, { floorId: selfFloor });
-  }, [followFloor, id, mapData, selfFloor, w]);
+    if (!self || !id || !mapData || self.mapId !== id) return;
+    if (playerPositionRevision === followedFloorRevision.current) return;
+    if (!overlay.claimPlayerFollow('floor', playerPositionRevision, id)) return;
+    followedFloorRevision.current = playerPositionRevision;
+    if (!followFloor) return;
+    const floor = self.resolution.status === 'resolved' ? self.resolution.floorId : null;
+    if (!floor || w.preferenceFor(id).floorId === floor) return;
+    if (!mapData.floors.some((entry) => entry.id === floor)) return;
+    w.updatePreference(id, { floorId: floor });
+  }, [followFloor, id, mapData, overlay, playerPositionRevision, self, w]);
   // Teammate visibility: active members default visible, departed owners default hidden, and a
   // manual hide always wins. Rebuilt whenever the multiplayer store or the map session changes.
   // The arrays are keyed by value: the store hands out a fresh fallback object on every read.
@@ -460,6 +463,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                 cancelCoordinateHide();
                 setCursor(null);
                 setCanvasError(null);
+                overlay.cancelPendingPlayerFollow();
                 void w.select(m.id);
               }}
             >
@@ -483,8 +487,10 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
           aria-label={t('map.tabs.reload')}
           disabled={w.loading}
           onClick={() => {
-            if (id) void w.select(id, true);
-            else void w.initialize();
+            if (id) {
+              overlay.cancelPendingPlayerFollow();
+              void w.select(id, true);
+            } else void w.initialize();
           }}
         >
           <RefreshCw size={16} />
@@ -515,7 +521,6 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
         ) : (
           <>
             <MapCanvas
-              key={id}
               data={session.data}
               preference={preference}
               stickers={stickerIndex}
@@ -523,7 +528,13 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
               players={players}
               playerFollow={followCenter}
               playerAutoZoom={playerAutoZoom}
-              showPlayerNames={mp.showPlayerNames}
+              playerPositionMapId={overlay.playerPositionMapIdValue}
+              playerPositionRevision={playerPositionRevision}
+              onClaimPlayerFollow={(kind, revision, mapId) =>
+                overlay.claimPlayerFollow(kind, revision, mapId)
+              }
+              selfPlayerLabel={t('map.player.you')}
+              showPlayerNames={mp.status.enabled && mp.showPlayerNames}
               tool={tool}
               options={options}
               onCommit={(items) => w.commit(id, items)}

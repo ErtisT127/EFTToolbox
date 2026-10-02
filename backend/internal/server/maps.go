@@ -913,6 +913,10 @@ func (s *mapStore) register(mux *http.ServeMux) {
 			versionedConflict(w, currentRevision, currentETag)
 			return
 		}
+		if data.Revision == int(^uint(0)>>1) {
+			apiError(w, http.StatusInternalServerError, "calibration_save_failed")
+			return
+		}
 		data.Revision++
 		updated := false
 		for i, doc := range documents.Maps {

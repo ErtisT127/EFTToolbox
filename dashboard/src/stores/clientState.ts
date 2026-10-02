@@ -4,6 +4,7 @@ import type {
   CalibratorPreferences,
   CalibrationDocument,
   GameMonitorSettings,
+  GameMonitorStatus,
   ItemsSettings,
   MarkerPreferences,
   MultiplayerSettings,
@@ -94,6 +95,7 @@ export type ClientState = {
   };
   gameMonitor: {
     settingsDraft?: GameMonitorSettings;
+    status?: GameMonitorStatus;
     loading: boolean;
     error: string;
     resourceRevision: number;

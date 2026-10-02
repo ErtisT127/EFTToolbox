@@ -387,10 +387,16 @@ export function CastApp() {
         playerListenersRef.current.forEach((listener) => listener());
         await applyLanguage(value.language);
         try {
-          if (value.preferences)
+          if (value.preferences) {
+            const mapId = value.gameMonitorStatus?.mapId;
+            const preferences =
+              mapId && mapId !== value.preferences.selectedMap
+                ? { ...value.preferences, selectedMap: mapId }
+                : value.preferences;
             // Force the re-read: a cached map or annotation document would otherwise survive a
             // reconnect made within the query cache's window.
-            await applyPreferences(value.preferences, playersRef.current, epoch, true);
+            await applyPreferences(preferences, playersRef.current, epoch, true);
+          }
         } catch (error) {
           if (epoch === epochRef.current)
             setLoadError(error instanceof Error ? error.message : 'cast.mapUnavailable');
@@ -682,7 +688,10 @@ export function CastApp() {
             ownerId=""
             readOnly
             playerFollow={false}
-            showPlayerNames={multiplayerStatus?.showPlayerNames ?? false}
+            selfPlayerLabel={t('map.player.you')}
+            showPlayerNames={
+              multiplayerStatus?.enabled === true && multiplayerStatus.showPlayerNames === true
+            }
             onCommit={() => {}}
             onView={() => {}}
             onUndo={() => {}}

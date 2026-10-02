@@ -98,7 +98,7 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
         var map = scene.Map!; var dpi = scene.Dpi;
         var categories = map.Categories.ToDictionary(c => c.Id); var hidden = scene.Preference.HiddenCategories.ToHashSet(); var tasks = scene.Preference.SelectedTasks.ToHashSet();
         bool InView(Vector2 p, Vector2 half) => p.X + half.X >= 0 && p.Y + half.Y >= 0 && p.X - half.X < scene.Width && p.Y - half.Y < scene.Height;
-        void Text(string text, string role, float size, float width, string color, Vector2 anchor, float opacity = 1, float rotation = 0, bool bottom = false, bool leftAlign = false, bool snapToPixels = false)
+        void Text(string text, string role, float size, float width, string color, Vector2 anchor, float opacity = 1, float rotation = 0, bool bottom = false, bool leftAlign = false, bool snapToPixels = true)
         {
             if (text == "") return;
             var request = new MapText(text, role, size, width, color, dpi, LeftAlign: leftAlign);
@@ -201,8 +201,11 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
             for (var i = 0; i < PlayerArrow.Length; i++) draw.PathLineTo(point(PlayerArrow[i].X, PlayerArrow[i].Y));
             draw.PathFillConvex(color);
             draw.PathStroke(Color("#0A0A0A", opacity), ImDrawFlags.Closed, 1.5f * dpi);
-            if (scene.ShowPlayerNames && player.DisplayName != "")
-                Text(player.DisplayName, "annotation", 12, 0, MapDisplay.LabelColor, p + new Vector2(20 * dpi, 0), opacity, leftAlign: true, snapToPixels: true);
+            if (scene.ShowPlayerNames)
+            {
+                var name = player.IsSelf ? Messages.Get("map.player.you") : player.DisplayName;
+                if (name != "") Text(name, "annotation", 12, 0, MapDisplay.LabelColor, p + new Vector2(20 * dpi, 0), opacity, leftAlign: true, snapToPixels: true);
+            }
         }
     }
     public void Dispose()

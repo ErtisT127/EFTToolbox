@@ -29,7 +29,10 @@ class GameMonitorStore {
     );
   }
   get status() {
-    return api.endpoints.getGameMonitorStatus.select()(store.getState()).data;
+    return (
+      store.getState().client.gameMonitor.status ||
+      api.endpoints.getGameMonitorStatus.select()(store.getState()).data
+    );
   }
   get loading() {
     return store.getState().client.gameMonitor.loading;
@@ -80,7 +83,7 @@ class GameMonitorStore {
   async initialize() {
     this.loading = true;
     try {
-      await Promise.all([
+      const [, status] = await Promise.all([
         store
           .dispatch(
             api.endpoints.getGameMonitorSettings.initiate(undefined, { forceRefetch: true }),
@@ -90,6 +93,7 @@ class GameMonitorStore {
           .dispatch(api.endpoints.getGameMonitorStatus.initiate(undefined, { forceRefetch: true }))
           .unwrap(),
       ]);
+      store.dispatch(setGameMonitorState({ status }));
       this.settingsDraft = undefined;
       this.error = '';
     } catch (error) {
@@ -223,10 +227,12 @@ class GameMonitorStore {
     const incomingStatus = event.gameMonitorStatus;
     const previousMap = this.status?.mapId;
     const previousMode = this.status?.mode;
-    if (incomingStatus)
+    if (incomingStatus) {
+      store.dispatch(setGameMonitorState({ status: incomingStatus }));
       void store.dispatch(
         api.util.upsertQueryData('getGameMonitorStatus', undefined, incomingStatus),
       );
+    }
     if (
       incomingStatus?.mapId &&
       (event.type === 'map_changed' ||

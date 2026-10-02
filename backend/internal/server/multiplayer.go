@@ -2090,6 +2090,7 @@ func (m *multiplayerManager) register(mux *http.ServeMux) {
 		}
 		m.settingsSaveMu.Lock()
 		defer m.settingsSaveMu.Unlock()
+		wasVisible := m.playerNamesVisible()
 		m.mu.Lock()
 		value.PlayerId = m.settings.PlayerId
 		fallback := m.settings
@@ -2111,7 +2112,10 @@ func (m *multiplayerManager) register(mux *http.ServeMux) {
 		m.mu.Lock()
 		m.settings = value
 		m.mu.Unlock()
-		m.hub.updateSelfIdentity(value.PlayerName, value.PlayerColor)
+		m.hub.updateSelfIdentity(value.PlayerColor)
+		if !wasVisible && m.playerNamesVisible() {
+			m.hub.publishRemotePlayers()
+		}
 		m.broadcastIdentity()
 		m.publishStatus()
 		versionedJSONResponse(w, m.currentSettings(), revision, etag)

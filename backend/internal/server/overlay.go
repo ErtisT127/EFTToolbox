@@ -382,6 +382,21 @@ func (h *overlayHub) playerNamesVisible() bool {
 	return h.multiplayer != nil && h.multiplayer.playerNamesVisible()
 }
 
+// publishRemotePlayers refreshes cached identities after name visibility is enabled. The local
+// player is intentionally excluded: publishing it would run position-follow actions for a setting
+// change instead of a position update.
+func (h *overlayHub) publishRemotePlayers() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, player := range h.players {
+		if player.IsSelf {
+			continue
+		}
+		player := player
+		h.publish(contracts.ServerEvent{Type: "player_upsert", Player: &player})
+	}
+}
+
 func (h *overlayHub) changed(kind, mapID, operationID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -1365,6 +1380,10 @@ func (h *overlayHub) projectPlayerOnMode(m contracts.MapData, mode string, v pla
 	if !validPoint(p) || !validPoint(q) {
 		return contracts.PlayerState{}, errors.New("player_invalid")
 	}
+	displayName := v.DisplayName
+	if v.IsSelf {
+		displayName = ""
+	}
 	heading := math.Mod(math.Atan2(q.X-p.X, -(q.Y-p.Y))*180/math.Pi+360, 360)
 	followFloor := true
 	if settings, err := h.settings(); err == nil {
@@ -1390,7 +1409,7 @@ func (h *overlayHub) projectPlayerOnMode(m contracts.MapData, mode string, v pla
 			}
 		}
 	}
-	return contracts.PlayerState{PlayerId: v.PlayerId, DisplayName: v.DisplayName, Color: h.selfColor(), IsSelf: v.IsSelf, MapId: v.MapId, WorldPosition: v.WorldPosition, MapPosition: p, Resolution: resolution, Heading: heading, WorldHeading: v.Heading}, nil
+	return contracts.PlayerState{PlayerId: v.PlayerId, DisplayName: displayName, Color: h.selfColor(), IsSelf: v.IsSelf, MapId: v.MapId, WorldPosition: v.WorldPosition, MapPosition: p, Resolution: resolution, Heading: heading, WorldHeading: v.Heading}, nil
 }
 
 // selfColor is the identity color every locally produced player state carries; the multiplayer

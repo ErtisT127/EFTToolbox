@@ -365,6 +365,57 @@ func TestCalibrationDocumentRequiresCurrentETag(t *testing.T) {
 	}
 }
 
+func TestCalibrationRevisionOverflowDoesNotPersist(t *testing.T) {
+	root, handler := mapFixture(t)
+	path := filepath.Join(root, "user", "calibration", "maps.calibration.json")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var documents contracts.CalibrationDocuments
+	if err := json.Unmarshal(before, &documents); err != nil {
+		t.Fatal(err)
+	}
+	maxInt := int(^uint(0) >> 1)
+	found := false
+	for i := range documents.Maps {
+		if documents.Maps[i].MapId == "fixture" && documents.Maps[i].Basemap == "svg" {
+			documents.Maps[i].Revision = maxInt
+			found = true
+			break
+		}
+	}
+	if !found {
+		documents.Maps = append(documents.Maps, contracts.CalibrationDocument{SchemaVersion: contracts.ContractSchemaVersion, MapId: "fixture", Basemap: "svg", Revision: maxInt, NextRegionNumber: 1})
+	}
+	encoded, err := json.Marshal(documents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, encoded, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	get := callJSON(t, handler, "GET", "/api/maps/fixture/calibration?basemap=svg", nil)
+	if get.Code != http.StatusOK {
+		t.Fatalf("GET max revision: %d %s", get.Code, get.Body.String())
+	}
+	var document contracts.CalibrationDocument
+	if err := json.Unmarshal(get.Body.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	response := callJSON(t, handler, "PUT", "/api/maps/fixture/calibration?basemap=svg", document)
+	if response.Code != http.StatusInternalServerError || !bytes.Contains(response.Body.Bytes(), []byte(`"code":"calibration_save_failed"`)) {
+		t.Fatalf("max revision was accepted: %d %s", response.Code, response.Body.String())
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, encoded) {
+		t.Fatal("overflow attempt changed calibration file")
+	}
+}
+
 func TestCalibrationDocumentsAreIsolatedByBasemap(t *testing.T) {
 	_, handler := mapFixture(t)
 	document := func(basemap, id string) contracts.CalibrationDocument {

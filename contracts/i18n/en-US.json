@@ -325,6 +325,9 @@
       "screenshotName": "Paste screenshot name",
       "update": "Update position"
     },
+    "player": {
+      "you": "You"
+    },
     "layers": {
       "title": "Map layers",
       "close": "Close layers",

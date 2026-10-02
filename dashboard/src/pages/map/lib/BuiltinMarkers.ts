@@ -34,7 +34,6 @@ export class BuiltinMarkers extends L.Layer {
   private outlines = L.layerGroup();
   private raised: number | L.Marker | null = null;
   private raisedOffset = 0;
-  private lifted: L.Marker | null = null;
   private hovered: number | null = null;
   private pinned: number | null = null;
   private frame = 0;
@@ -290,7 +289,7 @@ export class BuiltinMarkers extends L.Layer {
     const url = entry.marker.iconUrl || entry.category.iconUrl;
     const sprite = !entry.named && this.sprite(entry);
     if (sprite) {
-      // The lifted icon uses the same outlined pixels as the stationary canvas icon.
+      // Reuse the same outlined device pixels as the stationary canvas icon.
       const canvas = document.createElement('canvas');
       canvas.width = sprite.width;
       canvas.height = sprite.height;
@@ -398,13 +397,13 @@ export class BuiltinMarkers extends L.Layer {
     // Any icon still decoding keeps the map "unfinished" for the caller's loading overlay, so the
     // cast does not drop the overlay onto a map whose markers have not painted yet.
     let pending = false;
-    for (const { id, p } of visible) {
+    const drawEntry = (id: number, p: L.Point) => {
       const entry = this.entries[id];
       const url = entry.marker.iconUrl || entry.category.iconUrl;
       const sprite = url ? this.sprite(entry) : undefined;
       if (!sprite) {
         if (url && !this.sprites.get(`${url}:${entry.art}`)?.image.complete) pending = true;
-        continue;
+        return;
       }
       ctx.globalAlpha = entry.active ? 1 : 0.2;
       // Copy cached device pixels directly; fractional-DPR resampling softens the thin outline.
@@ -413,6 +412,11 @@ export class BuiltinMarkers extends L.Layer {
         Math.round(p.x * dpr - sprite.width / 2),
         Math.round(p.y * dpr - sprite.height / 2),
       );
+    };
+    for (const { id, p } of visible) drawEntry(id, p);
+    if (typeof this.raised === 'number') {
+      const entry = this.entries[this.raised];
+      if (entry.visible && !entry.named) drawEntry(this.raised, this.position(this.raised));
     }
     if (this.pendingImages.size) pending = true;
     if (this.laidOut && !pending && !this.settled) {
@@ -493,14 +497,7 @@ export class BuiltinMarkers extends L.Layer {
         if (entry.native) {
           this.raisedOffset = entry.native.options.zIndexOffset || 0;
           entry.native.setZIndexOffset(1000000);
-        } else
-          this.lifted = L.marker(latLng(entry.marker.position), {
-            icon: this.icon(entry),
-            opacity: entry.active ? 1 : 0.2,
-            zIndexOffset: 1000000,
-            interactive: false,
-            keyboard: false,
-          }).addTo(this._map);
+        }
       } else if (nearest) {
         this.raisedOffset = nearest.options.zIndexOffset || 0;
         nearest.setZIndexOffset(1000000);
@@ -514,8 +511,6 @@ export class BuiltinMarkers extends L.Layer {
     const marker = typeof this.raised === 'number' ? this.entries[this.raised].native : this.raised;
     marker?.setZIndexOffset(this.raisedOffset);
     this.raised = null;
-    this.lifted?.remove();
-    this.lifted = null;
   }
   clearHover = () => {
     cancelAnimationFrame(this.hoverFrame);

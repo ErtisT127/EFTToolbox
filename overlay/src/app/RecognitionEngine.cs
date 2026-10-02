@@ -39,7 +39,12 @@ internal sealed class RecognitionEngine : IDisposable
             if (warmupProfile == profile) return;
             warmupProfile = profile;
             var previousTask = warmupTask;
-            warmupStop?.Cancel();
+            var previousStop = warmupStop;
+            previousStop?.Cancel();
+            if (previousStop is not null)
+            {
+                _ = DisposeAfter(previousTask, previousStop);
+            }
             if (!settings.OcrWarmup)
             {
                 warmupStop = null;
@@ -49,6 +54,13 @@ internal sealed class RecognitionEngine : IDisposable
             var token = warmupStop.Token;
             warmupTask = Task.Run(() => WarmupAfter(previousTask, token, settings), token);
         }
+    }
+
+    private static async Task DisposeAfter(Task? task, CancellationTokenSource stop)
+    {
+        try { if (task is not null) await task.ConfigureAwait(false); }
+        catch (OperationCanceledException) { }
+        finally { stop.Dispose(); }
     }
 
     private async Task WarmupAfter(Task? previousTask, CancellationToken token, RecognitionSettings settings)

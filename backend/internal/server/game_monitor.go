@@ -259,7 +259,7 @@ func (h *overlayHub) selectedPlayerMap() (contracts.MapData, string, error) {
 
 func (h *overlayHub) projectScreenshotPlayer(m contracts.MapData, mode, mapID string, value gamewatch.Screenshot) (contracts.PlayerState, error) {
 	return h.projectPlayerOnMode(m, mode, playerInput{
-		PlayerId: "self", DisplayName: "You", IsSelf: true, MapId: mapID,
+		PlayerId: "self", IsSelf: true, MapId: mapID,
 		WorldPosition: contracts.WorldPosition{X: value.X, Y: value.Y, Z: value.Z}, Heading: value.Heading,
 	})
 }
@@ -278,17 +278,17 @@ func (h *overlayHub) publishSelfPlayer(player contracts.PlayerState) {
 	h.publish(contracts.ServerEvent{Type: "player_upsert", Player: &player})
 }
 
-func (h *overlayHub) updateSelfIdentity(displayName, color string) {
+func (h *overlayHub) updateSelfIdentity(color string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for id, player := range h.players {
 		if !player.IsSelf {
 			continue
 		}
-		player.DisplayName = displayName
+		player.DisplayName = ""
 		player.Color = color
 		h.players[id] = player
-		h.publish(contracts.ServerEvent{Type: "player_upsert", Player: &player})
+		// Identity edits take effect on the next position event, so they cannot trigger follow actions.
 	}
 }
 

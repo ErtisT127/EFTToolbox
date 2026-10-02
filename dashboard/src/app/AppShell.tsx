@@ -43,6 +43,7 @@ export function AppShell() {
   const hiddenRef = useRef(false);
   const resourceReloadRef = useRef<Promise<void> | null>(null);
   const mapRequestRef = useRef(0);
+  const appliedMapRevisionRef = useRef(0);
   useEffect(() => {
     if (!initialized.current) {
       initialized.current = true;
@@ -137,18 +138,28 @@ export function AppShell() {
   useEffect(() => publishNonClientRegions(), []);
   useEffect(() => {
     const id = monitor.status?.mapId;
-    if (monitor.mapRevision > 0 && id) {
+    if (monitor.mapRevision > 0 && id && monitor.mapRevision !== appliedMapRevisionRef.current) {
+      appliedMapRevisionRef.current = monitor.mapRevision;
       const request = ++mapRequestRef.current;
+      const selectionRevision = workspace.selectionRevisionValue;
       // A backend map change is authoritative. Drop a draft from the previous map/mode
       // before reloading preferences, otherwise workspace.select would keep using the stale draft.
       store.dispatch(setMapPreferencesDraft(undefined));
       const resources = resourceReloadRef.current || Promise.resolve();
       void resources.then(async () => {
-        if (request !== mapRequestRef.current) return;
+        if (
+          request !== mapRequestRef.current ||
+          selectionRevision !== workspace.selectionRevisionValue
+        )
+          return;
         const preferences = await store
           .dispatch(api.endpoints.getMapPreferences.initiate(undefined, { forceRefetch: true }))
           .unwrap();
-        if (request !== mapRequestRef.current) return;
+        if (
+          request !== mapRequestRef.current ||
+          selectionRevision !== workspace.selectionRevisionValue
+        )
+          return;
         // The fetched preference is authoritative for filters; the backend status is authoritative
         // for the map selected by the automatic position update.
         store.dispatch(setMapPreferencesDraft({ ...preferences.value, selectedMap: id }));
