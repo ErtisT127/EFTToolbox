@@ -316,18 +316,25 @@ func (h *overlayHub) positionMap(requested string, useDetected bool) (contracts.
 	currentMode := h.monitorSettings.Mode
 	h.mu.Unlock()
 
-	if useDetected && autoMap && pending != "" {
+	if useDetected && autoMap && (pending != "" || pendingMode != "") {
 		candidateMode := currentMode
 		if pendingMode != "" {
 			candidateMode = pendingMode
 		}
-		if candidate, err := h.store.loadFromMode(pending, candidateMode); err == nil && len(candidate.Floors) > 0 {
-			return candidate, candidateMode, true, nil
-		} else {
-			if err == nil {
-				err = errors.New("map has no floors")
+		candidateID := pending
+		if candidateID == "" {
+			candidateID = requested
+		}
+		if candidateID != "" {
+			candidate, err := h.store.loadFromMode(candidateID, candidateMode)
+			if err == nil && len(candidate.Floors) > 0 {
+				return candidate, candidateMode, true, nil
+			} else {
+				if err == nil {
+					err = errors.New("map has no floors")
+				}
+				h.monitorDiagnostic("warn", "map_apply_failed", fmt.Sprintf("Map %q: %v", candidateID, err))
 			}
-			h.monitorDiagnostic("warn", "map_apply_failed", fmt.Sprintf("Map %q: %v", pending, err))
 		}
 	}
 
@@ -481,7 +488,7 @@ func (h *overlayHub) registerGameMonitor(mux *http.ServeMux) {
 			apiError(w, http.StatusBadRequest, "screenshot_name_invalid")
 			return
 		}
-		m, mode, targetApplied, err := h.positionMap(value.MapId, false)
+		m, mode, targetApplied, err := h.positionMap(value.MapId, true)
 		if err != nil || len(m.Floors) == 0 {
 			apiError(w, http.StatusBadRequest, "map_unknown")
 			return

@@ -53,9 +53,12 @@ internal static class OverlayDiagnostics
             if (stats.Count == 0) stats.Operation = operation;
             else if (stats.Operation?.Id != operation?.Id) stats.Operation = null;
             stats.Count++;
-            stats.MaxMs = Math.Max(stats.MaxMs, totalMs);
-            stats.MaxDrawMs = Math.Max(stats.MaxDrawMs, drawMs);
-            stats.MaxPresentMs = Math.Max(stats.MaxPresentMs, presentMs);
+            if (totalMs > stats.MaxMs)
+            {
+                stats.MaxMs = totalMs;
+                stats.MaxDrawMs = drawMs;
+                stats.MaxPresentMs = presentMs;
+            }
             if (stats.LastReport != 0 && now - stats.LastReport < SlowFrameReportIntervalMs) return;
             stats.LastReport = now;
             count = stats.Count;

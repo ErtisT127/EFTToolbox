@@ -404,8 +404,8 @@ export class Workspace {
     await this.initialize();
   }
 
-  async select(id: string, reload = false) {
-    this.selectionRevision++;
+  async select(id: string, reload = false, manual = false) {
+    if (manual) this.selectionRevision++;
     const sequence = ++this.sequence;
     this.pendingSelection = id;
     store.dispatch(setWorkspaceState({ error: '', loading: true }));

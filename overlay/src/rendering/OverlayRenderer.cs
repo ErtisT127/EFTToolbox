@@ -178,6 +178,7 @@ internal sealed class OverlayRenderer : IDisposable
         }
         if (editing) DrawBorder(draw, circle);
         EndFrame(circle, renderStarted);
+        operation?.UpdateTiming(value => value with { DrawMs = LastDrawMs, PresentMs = LastPresentMs });
         OverlayDiagnostics.RecordSlowFrame("map", LastDrawMs, LastPresentMs, operation);
     }
 

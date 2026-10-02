@@ -464,7 +464,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
                 setCursor(null);
                 setCanvasError(null);
                 overlay.cancelPendingPlayerFollow();
-                void w.select(m.id);
+                void w.select(m.id, false, true);
               }}
             >
               <span className="map-tab-name">
@@ -489,7 +489,7 @@ export function MapPage({ onOpenSettings }: { onOpenSettings: () => void }) {
           onClick={() => {
             if (id) {
               overlay.cancelPendingPlayerFollow();
-              void w.select(id, true);
+              void w.select(id, true, true);
             } else void w.initialize();
           }}
         >
