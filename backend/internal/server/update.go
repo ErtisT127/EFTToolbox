@@ -4,17 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	contracts "efttoolbox/contracts"
+	"github.com/Masterminds/semver/v3"
 )
 
 // The release feed the desktop build is published on. A test points it at its own server.
@@ -106,7 +107,7 @@ func (m *updateManager) fetchLatest(ctx context.Context) (string, error) {
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return "", errors.New("release feed status " + strconv.Itoa(response.StatusCode))
+		return "", fmt.Errorf("release feed status %d", response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, 256<<10))
 	if err != nil {
@@ -152,41 +153,26 @@ func (m *updateManager) writeState(state updateCheckState) {
 	}
 }
 
-// newerVersion reports whether latest is a release the running version does not have yet. Both sides
-// are read as major.minor.patch; a version carrying a suffix ("0.0.0-dev") compares by its numbers,
-// so a development build counts as older than any release.
+// newerVersion reports whether latest is a semver release the running version does not have yet.
+// A development suffix such as "0.0.0-dev" therefore sorts below the corresponding release.
 func newerVersion(latest, current string) bool {
-	latestParts, ok := parseVersion(latest)
+	latestVersion, ok := releaseVersion(latest)
 	if !ok {
 		return false
 	}
-	currentParts, _ := parseVersion(current)
-	for index := range latestParts {
-		if latestParts[index] != currentParts[index] {
-			return latestParts[index] > currentParts[index]
-		}
+	currentVersion, ok := releaseVersion(current)
+	if !ok {
+		return latestVersion.GreaterThan(semver.MustParse("0.0.0"))
 	}
-	return false
+	return latestVersion.GreaterThan(currentVersion)
 }
 
-func parseVersion(value string) ([3]int, bool) {
-	var parts [3]int
+func releaseVersion(value string) (*semver.Version, bool) {
 	value = strings.TrimPrefix(strings.TrimSpace(value), "v")
 	value = strings.TrimPrefix(value, "V")
 	if value == "" {
-		return parts, false
+		return nil, false
 	}
-	numbers := strings.SplitN(value, "-", 2)[0]
-	segments := strings.Split(numbers, ".")
-	for index, segment := range segments {
-		if index == len(parts) {
-			break
-		}
-		number, err := strconv.Atoi(strings.TrimSpace(segment))
-		if err != nil || number < 0 {
-			return parts, false
-		}
-		parts[index] = number
-	}
-	return parts, true
+	version, err := semver.NewVersion(value)
+	return version, err == nil
 }

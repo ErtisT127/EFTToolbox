@@ -337,6 +337,21 @@ func localRequest(w http.ResponseWriter, r *http.Request) bool {
 func (h *overlayHub) publish(e contracts.ServerEvent) {
 	e.Status = h.status
 	e.SentAt = time.Now().UTC().Format(time.RFC3339Nano)
+	if !h.playerNamesVisible() {
+		if e.Player != nil {
+			player := *e.Player
+			player.DisplayName = ""
+			e.Player = &player
+		}
+		if e.Players != nil {
+			players := make([]contracts.PlayerState, len(*e.Players))
+			copy(players, *e.Players)
+			for i := range players {
+				players[i].DisplayName = ""
+			}
+			e.Players = &players
+		}
+	}
 	// The local annotation owner id rides on every event: the cast and the overlay need it for the
 	// shared owner-visibility rule, and a rotated identity then propagates without an extra fetch.
 	if h.multiplayer != nil {
@@ -361,6 +376,10 @@ func (h *overlayHub) publish(e contracts.ServerEvent) {
 	if h.multiplayer != nil {
 		h.multiplayer.onEvent(e)
 	}
+}
+
+func (h *overlayHub) playerNamesVisible() bool {
+	return h.multiplayer != nil && h.multiplayer.playerNamesVisible()
 }
 
 func (h *overlayHub) changed(kind, mapID, operationID string) {
@@ -420,6 +439,11 @@ func (h *overlayHub) mobileSnapshot() contracts.ServerEvent {
 	players := make([]contracts.PlayerState, 0, len(h.players))
 	for _, player := range h.players {
 		players = append(players, player)
+	}
+	if !h.playerNamesVisible() {
+		for i := range players {
+			players[i].DisplayName = ""
+		}
 	}
 	prefs := defaults.MapPreferences()
 	_ = readJSON(h.store.userPath("map-preferences.json"), &prefs)
@@ -494,6 +518,11 @@ func (h *overlayHub) websocket(ctx context.Context, w http.ResponseWriter, r *ht
 	players := make([]contracts.PlayerState, 0, len(h.players))
 	for _, p := range h.players {
 		players = append(players, p)
+	}
+	if !h.playerNamesVisible() {
+		for i := range players {
+			players[i].DisplayName = ""
+		}
 	}
 	annotations := []contracts.SharedAnnotation{}
 	prefs := defaults.MapPreferences()

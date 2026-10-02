@@ -3,38 +3,36 @@
 // 仓库其余脚本统一在 scripts/。
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
+import { parse as parseYaml } from 'yaml';
 
 const root = new URL('./', import.meta.url);
 const schema = JSON.parse(await readFile(new URL('proto/data.schema.json', root), 'utf8'));
 const peerSchema = JSON.parse(await readFile(new URL('proto/peer.schema.json', root), 'utf8'));
 const signalSchema = JSON.parse(await readFile(new URL('proto/signal.schema.json', root), 'utf8'));
 const httpOpenApi = await readFile(new URL('http.openapi.yaml', root), 'utf8');
-const errorCodes = [
-  ...(httpOpenApi.match(/ {4}ErrorCode:[\s\S]*?\n {2}responses:/)?.[0] || '').matchAll(
-    /^ {8}- ([a-z][a-z0-9_]+)$/gm,
-  ),
-].map((match) => match[1]);
-// Paths can declare several methods, so operations are extracted per path block; a single
-// global regex would only ever match the first method of each path.
+const httpDocument = parseYaml(httpOpenApi);
+const errorCodes = httpDocument.components?.schemas?.ErrorCode?.enum;
+if (
+  !Array.isArray(errorCodes) ||
+  !errorCodes.every((value) => typeof value === 'string' && /^[a-z][a-z0-9_]*$/.test(value))
+)
+  throw new Error('OpenAPI ErrorCode enum is missing or invalid');
+
 const operations = [];
-{
-  const pathPattern = /^ {2}(\/[^:]+):\s*$/gm;
-  const methodPattern = /^ {4}(get|put|post|patch|delete|head|options):\s*$/gm;
-  let pathMatch;
-  while ((pathMatch = pathPattern.exec(httpOpenApi))) {
-    const path = pathMatch[1];
-    const end = pathPattern.exec(httpOpenApi)?.index ?? httpOpenApi.length;
-    pathPattern.lastIndex = pathMatch.index + pathMatch[0].length;
-    const block = httpOpenApi.slice(pathMatch.index, end);
-    const methods = [...block.matchAll(methodPattern)];
-    for (const [index, method] of methods.entries()) {
-      const operation = block.slice(method.index, methods[index + 1]?.index);
-      const name = operation.match(/^ {6}operationId:\s*(\S+)/m)?.[1];
-      if (!name) throw new Error(`Missing operationId: ${method[1].toUpperCase()} ${path}`);
-      operations.push({ method: method[1].toUpperCase(), path, name });
-    }
+const methods = new Set(['get', 'put', 'post', 'patch', 'delete', 'head', 'options']);
+if (!httpDocument.paths || typeof httpDocument.paths !== 'object')
+  throw new Error('OpenAPI paths object is missing or invalid');
+for (const [path, pathItem] of Object.entries(httpDocument.paths)) {
+  if (!pathItem || typeof pathItem !== 'object') throw new Error(`Invalid path item: ${path}`);
+  for (const [method, operation] of Object.entries(pathItem)) {
+    if (!methods.has(method)) continue;
+    const name = operation?.operationId;
+    if (typeof name !== 'string' || !name)
+      throw new Error(`Missing operationId: ${method.toUpperCase()} ${path}`);
+    operations.push({ method: method.toUpperCase(), path, name });
   }
 }
+if (operations.length === 0) throw new Error('OpenAPI document has no operations');
 const scalarDefinition = (name) => {
   const definition = schema.$defs[name];
   return definition && !definition.properties ? definition : null;

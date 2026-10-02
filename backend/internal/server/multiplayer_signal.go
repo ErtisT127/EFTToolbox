@@ -464,8 +464,8 @@ func (s *stunListener) run() {
 }
 
 func (s *stunListener) reply(to *net.UDPAddr, value contracts.SignalPayloadResponse) {
-		envelope, err := sealSignal(s.key, value)
-		if err != nil {
+	envelope, err := sealSignal(s.key, value)
+	if err != nil {
 		log.Printf("multiplayer stun signal reply failed: remote=%s stage=seal_response error=%v", to, err)
 		return
 	}

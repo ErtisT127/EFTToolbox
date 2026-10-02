@@ -65,6 +65,9 @@ internal sealed class OverlayApplication : IDisposable
     private int dragSaveQueued;
     private const long SuspendLimit = 120_000;
     private const double TapZoom = 0.32, zoomPerSecond = 1.2;
+    private const long ZoomFadeOut = 120, ZoomSettle = 160, ZoomFadeIn = 120;
+    private long zoomFadeStarted, zoomSettledAt, zoomFadeInUntil;
+    private bool zoomTransition;
     // A held continuous shortcut (zoom, pan) is tracked here and integrated per frame instead of
     // relying on the OS repeating the hotkey.
     private readonly Dictionary<int, long> interactions = new();
@@ -464,8 +467,32 @@ internal sealed class OverlayApplication : IDisposable
     // in visible 0.1 jumps instead of sliding.
     private void ZoomBy(int id, double delta)
     {
-        scene.Zoom += (id == 3 ? delta : -delta);
+        SetZoom(scene.Zoom + (id == 3 ? delta : -delta));
+    }
+    private void SetZoom(double value, bool fade = true)
+    {
+        var previous = scene.Zoom;
+        scene.Zoom = value;
         scene.ClampZoom();
+        if (fade && scene.Zoom != previous)
+        {
+            var now = Environment.TickCount64;
+            if (!zoomTransition || now >= zoomSettledAt) zoomFadeStarted = now;
+            zoomSettledAt = now + ZoomSettle;
+            zoomFadeInUntil = zoomSettledAt + ZoomFadeIn;
+            zoomTransition = true;
+            dirty = true;
+        }
+    }
+    private float ZoomOpacity(long now)
+    {
+        if (!zoomTransition) return 1;
+        if (now < zoomSettledAt)
+            return Math.Clamp(1 - (float)(now - zoomFadeStarted) / ZoomFadeOut, 0, 1);
+        if (now < zoomFadeInUntil)
+            return Math.Clamp((float)(now - zoomSettledAt) / ZoomFadeIn, 0, 1);
+        zoomTransition = false;
+        return 1;
     }
     private void AdvanceInteraction(long now)
     {
@@ -485,7 +512,7 @@ internal sealed class OverlayApplication : IDisposable
         if (direction.LengthSquared() > 1) direction = Vector2.Normalize(direction);
         if (direction == Vector2.Zero && zoom == 0) return;
         scene.Center += direction * panAcceleration * (float)(700 * seconds) * scene.Dpi / scene.Scale;
-        scene.Zoom += zoom; scene.ClampZoom(); Begin("hotkey");
+        SetZoom(scene.Zoom + zoom); Begin("hotkey");
     }
     private void ApplySettings(OverlaySettings value)
     {
@@ -527,7 +554,7 @@ internal sealed class OverlayApplication : IDisposable
             scene.Floor = p.FloorId; scene.Basemap = p.Basemap; scene.NormalizeFloor();
         }
         if (force || !old.Center.SequenceEqual(p.Center)) if (p.Center.Length == 2) scene.Center = new((float)p.Center[1], (float)-p.Center[0]);
-        if (force || old.Zoom != p.Zoom) scene.Zoom = p.Zoom;
+        if (force || old.Zoom != p.Zoom) SetZoom(p.Zoom);
         scene.ClampZoom(); Begin("dashboard"); LoadResources(); if (follow) FollowSelf();
     }
     private void LoadMap(string id, MapPreference? preference = null, bool follow = false, bool preserveView = false)
@@ -640,6 +667,7 @@ internal sealed class OverlayApplication : IDisposable
     private void UpdateSvgView(long now)
     {
         if (!settings.Visible || settings.SvgQualityMode != "auto" || scene.Map is not { } map || map.SvgUrl == "" || scene.Basemap == "tiles" && map.Tiles.Any(t => t.FloorId == scene.Floor)) { svgQualityDue = 0; return; }
+        if (zoomTransition) return;
         if (observedSvgZoom != scene.Zoom || observedSvgDpi != scene.Dpi || observedSvgWidth != scene.Width || observedSvgHeight != scene.Height)
         {
             observedSvgZoom = scene.Zoom; observedSvgDpi = scene.Dpi; observedSvgWidth = scene.Width; observedSvgHeight = scene.Height; svgQualityDue = now + 150;
@@ -654,7 +682,7 @@ internal sealed class OverlayApplication : IDisposable
         if (player.MapId != scene.Map?.Id) return;
         if (settings.FollowCenter) scene.Center = new((float)player.MapPosition.X, (float)player.MapPosition.Y);
         if (settings.FollowFloor && player.Resolution.FloorId is { } floor) scene.Floor = floor;
-        if (settings.FollowZoom) scene.Zoom = settings.PerMapZoom ? settings.MapZooms.FirstOrDefault(z => z.MapId == player.MapId)?.Zoom ?? settings.TargetZoom : settings.TargetZoom;
+        if (settings.FollowZoom) SetZoom(settings.PerMapZoom ? settings.MapZooms.FirstOrDefault(z => z.MapId == player.MapId)?.Zoom ?? settings.TargetZoom : settings.TargetZoom);
         scene.ClampZoom(); LoadResources();
     }
     private void Event(ServerEvent e)
@@ -747,7 +775,7 @@ internal sealed class OverlayApplication : IDisposable
             if (command.Kind == "edit") { editing = command.Enabled ?? false; if (editing) settings = settings with { Visible = true }; else if (!settings.Visible) editing = false; ApplyWindow(); _ = client.SaveAsync(settings); }
             if (command.Kind == "visible") { settings = settings with { Visible = command.Enabled ?? false }; ApplyWindow(); _ = client.SaveAsync(settings); }
             if (command.Kind == "hotkeys") SuspendHotkeys(!(command.Enabled ?? true));
-            if (command.Kind == "view") { if (command.Center is { } c) scene.Center = new((float)c.X, (float)c.Y); if (command.Zoom is { } z) scene.Zoom = z; if (command.FloorId is { } f) scene.Floor = f; scene.ClampZoom(); LoadResources(); }
+            if (command.Kind == "view") { if (command.Center is { } c) scene.Center = new((float)c.X, (float)c.Y); if (command.Zoom is { } z) SetZoom(z); if (command.FloorId is { } f) scene.Floor = f; scene.ClampZoom(); LoadResources(); }
         }
     }
     /// <summary>The panel labels rasterize from the generated messages and the map bakes its marker names
@@ -829,14 +857,16 @@ internal sealed class OverlayApplication : IDisposable
                 });
             }
         }
+        var mapOpacity = ZoomOpacity(now);
+        if (zoomTransition) dirty = true;
         UpdateSvgView(now);
         // Nothing can be drawn before the bootstrap arrives 鈥?and nothing may be: the font atlas is
         // only built once the asset directory is known, and ImGui cannot render an empty one.
         if (dirty && settings.Visible && bootstrap is not null && now >= nextFrame)
         {
             markers.Upload(renderer.Images, renderer.Texts); tiles.Upload(renderer.Tiles);
-            if (bootstrap is { } b3) tiles.Update(scene, b3.TileDirectory, renderer.Tiles, operation);
-            renderer.Render(scene, markers, tiles, settings.Shape == "circle", settings.Backdrop, settings.Opacity ?? 100, editing, operation); renderCount++;
+            if (bootstrap is { } b3 && mapOpacity > 0) tiles.Update(scene, b3.TileDirectory, renderer.Tiles, operation);
+            renderer.Render(scene, markers, tiles, settings.Shape == "circle", settings.Backdrop, settings.Opacity ?? 100, editing, operation, mapOpacity); renderCount++;
             if (operation is { } op) { op.UpdateTiming(value => value with { DrawMs = renderer.LastDrawMs, PresentMs = renderer.LastPresentMs }); if (!loadingScene && !tiles.Loading && !markers.Loading) { op.Complete(op.ResourceLoad); operation = null; } }
             dirty = false; nextFrame = now + 17;
         }
@@ -853,7 +883,7 @@ internal sealed class OverlayApplication : IDisposable
     private OverlayView? lastView;
     internal uint WaitMilliseconds => recognitionWindow.Visible
         ? 16u
-        : settings.Visible && (dirty || interactions.Count != 0)
+        : settings.Visible && (dirty || interactions.Count != 0 || zoomTransition)
             ? (uint)Math.Clamp(nextFrame - Environment.TickCount64, 0, 17)
             : lastFiles != 0 || svgQualityDue != 0 ? 16u : 250u;
     internal nint? Message(nint target, uint message, nuint wParam, nint lParam)
@@ -922,7 +952,7 @@ internal sealed class OverlayApplication : IDisposable
             Begin("drag"); return 0;
         }
         if ((message is Native.WmLButtonUp or Native.WmRButtonUp) && drag != 0) { Native.ReleaseCapture(); if (drag >= 2) _ = client.SaveAsync(settings); drag = 0; return 0; }
-        if (message == Native.WmMouseWheel) { var amount = (short)((long)wParam >> 16); var step = OverlayViewLimits.Zoom.Step; scene.Zoom = Math.Round((scene.Zoom + amount / 1200.0) / step) * step; scene.ClampZoom(); Begin("zoom"); return 0; }
+        if (message == Native.WmMouseWheel) { var amount = (short)((long)wParam >> 16); var step = OverlayViewLimits.Zoom.Step; SetZoom(Math.Round((scene.Zoom + amount / 1200.0) / step) * step); Begin("zoom"); return 0; }
         return null;
     }
     public void Dispose()

@@ -165,7 +165,7 @@ func TestNewerVersionComparesNumbers(t *testing.T) {
 		{"v2.0.0", "2.0.0", false},
 		{"v1.9.9", "1.10.0", false},
 		{"1.0.0", "0.0.0-dev", true},
-		{"v0.0.0", "0.0.0-dev", false},
+		{"v0.0.0", "0.0.0-dev", true},
 		{"", "1.0.0", false},
 		{"nightly", "1.0.0", false},
 	}

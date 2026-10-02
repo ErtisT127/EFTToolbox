@@ -8,6 +8,12 @@
         "resolved": "6.0.0",
         "contentHash": "AwDEphrbCWm+7gywShqyDPXB8Bc//kRJ4z49BLgIihnWkubHRbZGy+RGgq/+MYm1fkReiVZXDfcF9pgvQScb3Q=="
       },
+      "ExCSS": {
+        "type": "Direct",
+        "requested": "[4.3.1, )",
+        "resolved": "4.3.1",
+        "contentHash": "A8UtcghHQlWxPJhJF5bsfEYO7068JHGTuJ7tzyyMjd5fE/N/xY1cVOUhzuLLFwMOCJVnM4mqSQc93W9fGfZ1kA=="
+      },
       "ImGui.NET": {
         "type": "Direct",
         "requested": "[1.91.6.1, )",
@@ -99,11 +105,6 @@
           "Vortice.Direct2D1": "3.8.3",
           "Vortice.DirectX": "3.8.3"
         }
-      },
-      "ExCSS": {
-        "type": "Transitive",
-        "resolved": "4.3.1",
-        "contentHash": "A8UtcghHQlWxPJhJF5bsfEYO7068JHGTuJ7tzyyMjd5fE/N/xY1cVOUhzuLLFwMOCJVnM4mqSQc93W9fGfZ1kA=="
       },
       "Microsoft.Win32.SystemEvents": {
         "type": "Transitive",

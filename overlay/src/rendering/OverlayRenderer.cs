@@ -155,9 +155,9 @@ internal sealed class OverlayRenderer : IDisposable
 
     internal double LastDrawMs { get; private set; }
     internal double LastPresentMs { get; private set; }
-    internal unsafe void Render(MapScene scene, MarkerLayer markers, TileLayerRenderer tiles, bool circle, bool backdrop, int opacity, bool editing, Operation? operation = null)
+    internal unsafe void Render(MapScene scene, MarkerLayer markers, TileLayerRenderer tiles, bool circle, bool backdrop, int opacity, bool editing, Operation? operation = null, float mapOpacity = 1)
     {
-        var renderTimer = Stopwatch.StartNew();
+        var renderStarted = Stopwatch.GetTimestamp();
         var draw = BeginFrame(opacity);
         if (scene.Map is not null)
         {
@@ -167,27 +167,32 @@ internal sealed class OverlayRenderer : IDisposable
             // circle shape clips it in the shader like everything else. Optional, because it also
             // hides the game behind the panel.
             if (backdrop) draw.AddRectFilled(Vector2.Zero, new Vector2(width, height), Backdrop);
-            foreach (var tile in tiles.Visible)
-                if (Tiles.Get(tile.Key) is { } texture) draw.AddImage(texture.NativePointer, scene.Screen(tile.A), scene.Screen(tile.B), Vector2.Zero, Vector2.One, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, tile.Opacity)));
-            if (Svg.Get("map") is { } svg)
+            if (mapOpacity > 0)
             {
-                var b = scene.SvgRegion is { } region ? new double[] { region.X, region.Y, region.Width, region.Height } : scene.Map.Projection.ViewBox;
-                draw.AddImage(svg.NativePointer, scene.Screen(new Vector2((float)b[0], (float)b[1])), scene.Screen(new Vector2((float)(b[0] + b[2]), (float)(b[1] + b[3]))));
+                foreach (var tile in tiles.Visible)
+                    if (Tiles.Get(tile.Key) is { } texture) draw.AddImage(texture.NativePointer, scene.Screen(tile.A), scene.Screen(tile.B), Vector2.Zero, Vector2.One, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, tile.Opacity * mapOpacity)));
+                if (Svg.Get("map") is { } svg)
+                {
+                    var b = scene.SvgRegion is { } region ? new double[] { region.X, region.Y, region.Width, region.Height } : scene.Map.Projection.ViewBox;
+                    draw.AddImage(svg.NativePointer, scene.Screen(new Vector2((float)b[0], (float)b[1])), scene.Screen(new Vector2((float)(b[0] + b[2]), (float)(b[1] + b[3]))), Vector2.Zero, Vector2.One, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, mapOpacity)));
+                }
+                markers.Draw(draw, scene, Images, Texts, operation, mapOpacity);
             }
-            markers.Draw(draw, scene, Images, Texts, operation);
         }
         if (editing) DrawBorder(draw, circle);
-        EndFrame(circle, renderTimer);
+        EndFrame(circle, renderStarted);
+        OverlayDiagnostics.RecordSlowFrame("map", LastDrawMs, LastPresentMs, operation);
     }
 
     /// <summary>The recognition window draws nothing but its panel; it owns its own device, swap
     /// chain and ImGui context, so the frame plumbing is shared but the content is not.</summary>
     internal unsafe void RenderRecognition(RecognitionPanelView panel, int opacity)
     {
-        var renderTimer = Stopwatch.StartNew();
+        var renderStarted = Stopwatch.GetTimestamp();
         var draw = BeginFrame(opacity);
         DrawRecognitionPanel(draw, panel);
-        EndFrame(false, renderTimer);
+        EndFrame(false, renderStarted);
+        OverlayDiagnostics.RecordSlowFrame("recognition", LastDrawMs, LastPresentMs);
     }
 
     /// <summary>Opens a frame and sets the window's one and only alpha: the composition effect group
@@ -205,7 +210,7 @@ internal sealed class OverlayRenderer : IDisposable
         return ImGui.GetBackgroundDrawList();
     }
 
-    private unsafe void EndFrame(bool circle, Stopwatch renderTimer)
+    private unsafe void EndFrame(bool circle, long renderStarted)
     {
         ImGui.Render();
 
@@ -257,10 +262,10 @@ internal sealed class OverlayRenderer : IDisposable
                 context.DrawIndexed(command.ElemCount, command.IdxOffset, (int)command.VtxOffset);
             }
         }
-        LastDrawMs = renderTimer.Elapsed.TotalMilliseconds;
-        var presentTimer = Stopwatch.StartNew();
+        LastDrawMs = Stopwatch.GetElapsedTime(renderStarted).TotalMilliseconds;
+        var presentStarted = Stopwatch.GetTimestamp();
         swapChain.Present(1, PresentFlags.None).CheckError();
-        LastPresentMs = presentTimer.Elapsed.TotalMilliseconds;
+        LastPresentMs = Stopwatch.GetElapsedTime(presentStarted).TotalMilliseconds;
     }
 
     /// <summary>The recognition panel: a title strip that also drags the window, then one scrollable

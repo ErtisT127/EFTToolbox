@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 )
 
 var errRevisionConflict = errors.New("revision_conflict")
@@ -19,6 +20,7 @@ var errRevisionConflict = errors.New("revision_conflict")
 type VersionedFileStore struct {
 	root string
 	mu   sync.Mutex
+	slow *slowOperationLogger
 }
 
 func revisionOf(value any) (string, string, error) {
@@ -147,6 +149,10 @@ func ReadVersionedRepair[T any](s *VersionedFileStore, name string, fallback T, 
 }
 
 func (s *VersionedFileStore) writeLocked(name string, value any) error {
+	started := time.Now()
+	defer func() {
+		s.slow.record(time.Since(started), "slow_store_write", "path="+name, "")
+	}()
 	target := filepath.Join(s.root, name)
 	dir := filepath.Dir(target)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

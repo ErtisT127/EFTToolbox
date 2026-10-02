@@ -19,9 +19,10 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 		log.Printf("initialize daily log writer: %v", err)
 	}
 	logWriter := installedLogWriter
+	slowLogger := newSlowOperationLogger(ctx, logWriter)
 	status := contracts.Status{ProtocolVersion: contracts.ContractProtocolVersion, AppVersion: version, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	mux := http.NewServeMux()
-	store := &mapStore{root: dataRoot, files: &VersionedFileStore{root: dataRoot}}
+	store := &mapStore{root: dataRoot, files: &VersionedFileStore{root: dataRoot, slow: slowLogger}}
 	hub := &overlayHub{store: store, status: status, players: map[string]contracts.PlayerState{}, clients: map[chan contracts.ServerEvent]bool{}, browseActive: map[string]bool{}, indexes: map[string]regionIndexSnapshot{}, overlapDedup: newOverlapDedup()}
 	mobile := newMobileManager(ctx, assets, hub)
 	hub.mobile = mobile
@@ -90,6 +91,14 @@ func New(ctx context.Context, version string, assets http.FileSystem, dataRoot s
 		id := rand.Text()
 		r.Header.Set("X-Operation-ID", id)
 		w.Header().Set("X-Operation-ID", id)
-		mux.ServeHTTP(w, r)
+		if slowLogger == nil || !shouldMeasureAPI(r.URL.Path) {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		started := time.Now()
+		response := &apiResponseWriter{ResponseWriter: w}
+		mux.ServeHTTP(response, r)
+		elapsed := time.Since(started)
+		slowLogger.record(elapsed, "slow_api_request", slowAPIMessage(r, response, elapsed), id)
 	})
 }

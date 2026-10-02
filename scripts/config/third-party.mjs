@@ -4,6 +4,7 @@
 /** The projects the About page thanks. Generated output is sorted A-Z by name. */
 export const thirdParty = [
   { name: 'BruTile', license: 'Apache-2.0', url: 'https://github.com/BruTile/BruTile' },
+  { name: 'ExCSS', license: 'MIT', url: 'https://github.com/TylerBrinks/ExCSS' },
   { name: 'coder/websocket', license: 'MIT', url: 'https://github.com/coder/websocket' },
   { name: 'Floating UI', license: 'MIT', url: 'https://floating-ui.com' },
   { name: 'i18next', license: 'MIT', url: 'https://www.i18next.com' },
@@ -16,7 +17,9 @@ export const thirdParty = [
     license: 'Apache-2.0',
     url: 'https://github.com/raoyutian/PaddleOCRSharp',
   },
+  { name: 'Newtonsoft.Json', license: 'MIT', url: 'https://www.newtonsoft.com/json' },
   { name: 'Pion', license: 'MIT', url: 'https://pion.ly' },
+  { name: 'Masterminds/semver', license: 'MIT', url: 'https://github.com/Masterminds/semver' },
   { name: 'React', license: 'MIT', url: 'https://react.dev' },
   { name: 'Redux Toolkit', license: 'MIT', url: 'https://redux-toolkit.js.org' },
   { name: 'Svg.Skia', license: 'MIT', url: 'https://github.com/wieslawsoltes/Svg.Skia' },

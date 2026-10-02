@@ -601,15 +601,20 @@ for (const [id, meta] of Object.entries(baseline).sort((a, b) => a[1].id - b[1].
       ['stationaryWeapons', '固定机枪', 'weapon', 'Stationary Gun'],
     ]) {
       count(key, (apiMap?.[key] || []).length);
-      for (const e of apiMap?.[key] || [])
+      for (const e of apiMap?.[key] || []) {
+        const lockItem = key === 'locks' ? itemsData.items[e.key] : undefined;
+        if (key === 'locks' && !lockItem) counts.lookupMisses++;
+        const name = lockItem ? text(lockItem.name) : e.name || label;
+        const nameEn = lockItem ? en(lockItem.name) : en(e.name) || labelEn;
         add(
           e.position ? e : { ...e, position: e },
           category(key, label, 'usable', blue, symbol, labelEn),
-          e.name || label,
+          name,
           '',
           undefined,
-          en(e.name) || labelEn,
+          nameEn,
         );
+      }
     }
     count('btrStops', (apiMap?.btrStops || []).length);
     for (const stop of apiMap?.btrStops || [])

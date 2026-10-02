@@ -20,6 +20,7 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
     private string assetRoot = "";
     private int generation, catalogGeneration;
     private int catalogPending;
+    private float contentOpacity = 1;
     internal bool Loading
     {
         get
@@ -77,10 +78,10 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
         });
         running.Add(task);
     }
-    private static uint Color(string hex, float opacity = 1)
+    private uint Color(string hex, float opacity = 1)
     {
         if (!uint.TryParse(hex.TrimStart('#'), System.Globalization.NumberStyles.HexNumber, null, out var rgb)) rgb = 0xc4d35f;
-        return ((uint)(opacity * 255) << 24) | ((rgb & 255) << 16) | (rgb & 0xff00) | ((rgb >> 16) & 255);
+        return ((uint)(opacity * contentOpacity * 255) << 24) | ((rgb & 255) << 16) | (rgb & 0xff00) | ((rgb >> 16) & 255);
     }
     private static string NamedColor(string category) => category switch {
         "extract/scav" => MapDisplay.ExtractScav, "extract/shared" => MapDisplay.ExtractShared,
@@ -90,12 +91,14 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
     // 50%/6% (tip), 91%/91% and 9%/91% (base), 50%/72% (notch) — the same shape here, as offsets
     // from the marker's centre, so both surfaces draw the same arrow.
     private static readonly Vector2[] PlayerArrow = [new(0, -12.32f), new(11.48f, 11.48f), new(0, 6.16f), new(-11.48f, 11.48f)];
-    internal void Draw(ImDrawListPtr draw, MapScene scene, TextureCache images, TextureCache texts, Operation? operation)
+    internal void Draw(ImDrawListPtr draw, MapScene scene, TextureCache images, TextureCache texts, Operation? operation, float contentOpacity = 1)
     {
+        if (contentOpacity <= 0) return;
+        this.contentOpacity = Math.Clamp(contentOpacity, 0, 1);
         var map = scene.Map!; var dpi = scene.Dpi;
         var categories = map.Categories.ToDictionary(c => c.Id); var hidden = scene.Preference.HiddenCategories.ToHashSet(); var tasks = scene.Preference.SelectedTasks.ToHashSet();
         bool InView(Vector2 p, Vector2 half) => p.X + half.X >= 0 && p.Y + half.Y >= 0 && p.X - half.X < scene.Width && p.Y - half.Y < scene.Height;
-        void Text(string text, string role, float size, float width, string color, Vector2 anchor, float opacity = 1, float rotation = 0, bool bottom = false, bool leftAlign = false)
+        void Text(string text, string role, float size, float width, string color, Vector2 anchor, float opacity = 1, float rotation = 0, bool bottom = false, bool leftAlign = false, bool snapToPixels = false)
         {
             if (text == "") return;
             var request = new MapText(text, role, size, width, color, dpi, LeftAlign: leftAlign);
@@ -104,6 +107,11 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
             var half = texts.Size(key) / 2;
             var p = bottom ? anchor - new Vector2(0, half.Y - 4 * dpi) : anchor;
             if (leftAlign) p += new Vector2(half.X, 0);
+            if (snapToPixels && rotation == 0)
+            {
+                var topLeft = p - half;
+                p = new Vector2(MathF.Round(topLeft.X), MathF.Round(topLeft.Y)) + half;
+            }
             var angle = rotation * MathF.PI / 180;
             var extent = new Vector2(MathF.Abs(MathF.Cos(angle)) * half.X + MathF.Abs(MathF.Sin(angle)) * half.Y, MathF.Abs(MathF.Sin(angle)) * half.X + MathF.Abs(MathF.Cos(angle)) * half.Y);
             if (!InView(p, extent)) return;
@@ -194,7 +202,7 @@ internal sealed class MarkerLayer(Action wake) : IDisposable
             draw.PathFillConvex(color);
             draw.PathStroke(Color("#0A0A0A", opacity), ImDrawFlags.Closed, 1.5f * dpi);
             if (scene.ShowPlayerNames && player.DisplayName != "")
-                Text(player.DisplayName, "annotation", 12, 0, MapDisplay.LabelColor, p + new Vector2(20 * dpi, 0), opacity, leftAlign: true);
+                Text(player.DisplayName, "annotation", 12, 0, MapDisplay.LabelColor, p + new Vector2(20 * dpi, 0), opacity, leftAlign: true, snapToPixels: true);
         }
     }
     public void Dispose()

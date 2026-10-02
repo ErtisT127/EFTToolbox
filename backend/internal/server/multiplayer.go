@@ -1038,6 +1038,14 @@ func (m *multiplayerManager) status() contracts.MultiplayerStatus {
 	return status
 }
 
+// playerNamesVisible controls whether player position events may expose the room identity.
+// The cached identity stays internal; output is redacted when the room is inactive or hidden.
+func (m *multiplayerManager) playerNamesVisible() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.role != "" && m.settings.ShowPlayerNames != nil && *m.settings.ShowPlayerNames
+}
+
 // publishStatus pushes multiplayer_changed over the existing /ws fan-out only when the rendered
 // status actually differs, so an idle room costs nothing and a busy one stays around 1/s.
 func (m *multiplayerManager) publishStatus() {

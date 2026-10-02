@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using EFTToolbox.Contracts;
+using ExCSS;
 using SkiaSharp;
 using Svg.Skia;
 using System.Numerics;
@@ -101,21 +102,27 @@ internal sealed class SvgRasterizer : IDisposable
     // over the one below. Copy each class rule onto the elements that use it: a presentation
     // attribute loses to any stylesheet rule, so this cannot override anything a renderer does
     // apply on its own.
-    private static readonly Regex StyleRule = new(@"\.([A-Za-z0-9_-]+)\s*\{([^}]*)\}", RegexOptions.Compiled);
     private static void InlineStyles(XDocument doc)
     {
         var rules = new List<(string Name, List<(string Property, string Value)> Declarations)>();
+        var parser = new StylesheetParser(
+            includeUnknownRules: true,
+            includeUnknownDeclarations: true,
+            tolerateInvalidSelectors: true,
+            tolerateInvalidValues: true,
+            tolerateInvalidConstraints: true,
+            preserveComments: false,
+            preserveDuplicateProperties: true);
         foreach (var style in doc.Descendants().Where(e => e.Name.LocalName == "style").ToArray())
         {
-            foreach (var match in StyleRule.Matches(style.Value).Cast<Match>())
+            var stylesheet = parser.Parse(style.Value);
+            foreach (var rule in stylesheet.StyleRules)
             {
-                var declarations = new List<(string, string)>();
-                foreach (var declaration in match.Groups[2].Value.Split(';', StringSplitOptions.RemoveEmptyEntries))
-                {
-                    var parts = declaration.Split(':', 2);
-                    if (parts.Length == 2) declarations.Add((parts[0].Trim(), parts[1].Trim()));
-                }
-                if (declarations.Count > 0) rules.Add((match.Groups[1].Value, declarations));
+                if (rule.Selector is not ClassSelector selector) continue;
+                var declarations = rule.Style.Declarations
+                    .Select(declaration => (declaration.Name, declaration.Original))
+                    .ToList();
+                if (declarations.Count > 0) rules.Add((selector.Class, declarations));
             }
             style.Remove();
         }

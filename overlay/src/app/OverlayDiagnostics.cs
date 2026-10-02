@@ -14,6 +14,21 @@ internal static class OverlayDiagnostics
     private static readonly Task Worker = Task.Run(SendAsync);
     private static string pipe = "";
     private static long dropped;
+    private const double SlowFrameThresholdMs = 50;
+    private const long SlowFrameReportIntervalMs = 5000;
+    private static readonly object frameGate = new();
+    private sealed class SlowFrameStats(string surface)
+    {
+        internal readonly string Surface = surface;
+        internal long LastReport;
+        internal int Count;
+        internal double MaxMs;
+        internal double MaxDrawMs;
+        internal double MaxPresentMs;
+        internal Operation? Operation;
+    }
+    private static readonly SlowFrameStats mapFrames = new("map");
+    private static readonly SlowFrameStats recognitionFrames = new("recognition");
     internal static void Connect(string name) => Volatile.Write(ref pipe, name);
     internal static void Log(string level, string kind, string message, Operation? operation = null, string resource = "")
     {
@@ -22,6 +37,61 @@ internal static class OverlayDiagnostics
             Interlocked.Increment(ref dropped);
             if (level is "error" or "warn") { Queue.Reader.TryRead(out _); Queue.Writer.TryWrite(value); }
         }
+    }
+    internal static void RecordSlowFrame(string surface, double drawMs, double presentMs, Operation? operation = null)
+    {
+        var totalMs = drawMs + presentMs;
+        if (totalMs < SlowFrameThresholdMs) return;
+
+        var now = Environment.TickCount64;
+        var stats = surface == "recognition" ? recognitionFrames : mapFrames;
+        Operation? reportOperation = null;
+        int count = 0;
+        double maxMs = 0, maxDrawMs = 0, maxPresentMs = 0;
+        lock (frameGate)
+        {
+            if (stats.Count == 0) stats.Operation = operation;
+            else if (stats.Operation?.Id != operation?.Id) stats.Operation = null;
+            stats.Count++;
+            stats.MaxMs = Math.Max(stats.MaxMs, totalMs);
+            stats.MaxDrawMs = Math.Max(stats.MaxDrawMs, drawMs);
+            stats.MaxPresentMs = Math.Max(stats.MaxPresentMs, presentMs);
+            if (stats.LastReport != 0 && now - stats.LastReport < SlowFrameReportIntervalMs) return;
+            stats.LastReport = now;
+            count = stats.Count;
+            maxMs = stats.MaxMs;
+            maxDrawMs = stats.MaxDrawMs;
+            maxPresentMs = stats.MaxPresentMs;
+            reportOperation = stats.Operation;
+            stats.Count = 0;
+            stats.MaxMs = stats.MaxDrawMs = stats.MaxPresentMs = 0;
+            stats.Operation = null;
+        }
+        Log("warn", "frame_slow_summary", $"surface={stats.Surface} count={count} maxMs={maxMs:F1} drawMs={maxDrawMs:F1} presentMs={maxPresentMs:F1}", reportOperation);
+    }
+    private static void FlushSlowFrames()
+    {
+        FlushSlowFrame(mapFrames);
+        FlushSlowFrame(recognitionFrames);
+    }
+    private static void FlushSlowFrame(SlowFrameStats stats)
+    {
+        int count;
+        double maxMs, maxDrawMs, maxPresentMs;
+        Operation? operation;
+        lock (frameGate)
+        {
+            if (stats.Count == 0) return;
+            count = stats.Count;
+            maxMs = stats.MaxMs;
+            maxDrawMs = stats.MaxDrawMs;
+            maxPresentMs = stats.MaxPresentMs;
+            operation = stats.Operation;
+            stats.Count = 0;
+            stats.MaxMs = stats.MaxDrawMs = stats.MaxPresentMs = 0;
+            stats.Operation = null;
+        }
+        Log("warn", "frame_slow_summary", $"surface={stats.Surface} count={count} maxMs={maxMs:F1} drawMs={maxDrawMs:F1} presentMs={maxPresentMs:F1}", operation);
     }
     private static async Task SendAsync()
     {
@@ -51,6 +121,7 @@ internal static class OverlayDiagnostics
     }
     internal static void Shutdown()
     {
+        FlushSlowFrames();
         Operation.FlushWarnings();
         Log("info", "stopped", "Native overlay stopped");
         Queue.Writer.TryComplete();
